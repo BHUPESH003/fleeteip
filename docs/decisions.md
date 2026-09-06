@@ -34,6 +34,7 @@ Short-form record of what was decided and why. Full rationale for each also live
 - **`matha after` can't be driven over a non-TTY pipe.** It reliably fails on the second prompt outside a real terminal. For batch-recording from an agent session without MCP tools loaded yet, the reliable path is calling `Engine`/`mathaRecord` directly from the package's own `dist/` output — the same function `matha_record` (MCP) and `matha after` (CLI) both call.
 - **Docker Postgres on port 5433, not 5432** — another project's container already holds 5432 on this machine.
 - **`pnpm` needed `onlyBuiltDependencies: ["esbuild"]`** in root `package.json` — its default policy silently blocks native postinstall scripts, and the interactive approval prompt can't run non-interactively.
+- **`tsx`'s `watch` subcommand must come immediately after `tsx`, before any flags.** `apps/api`'s `dev` script was `tsx --env-file-if-exists=.env watch src/index.ts` — tsx never recognized `watch` as its subcommand in that position and instead tried to run a script literally named `watch`, failing with `ERR_MODULE_NOT_FOUND`. Fixed to `tsx watch --env-file-if-exists=.env src/index.ts`. Never caught earlier because Stage 5 verification only exercised the built production path (`pnpm build && pnpm start`), never `pnpm dev` itself.
 
 ## Tooling: matha (persisted AI memory)
 

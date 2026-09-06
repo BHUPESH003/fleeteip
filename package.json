@@ -8,8 +8,10 @@
   },
   "scripts": {
     "build": "pnpm -r run build",
+    "dev": "pnpm -r --parallel run dev",
     "dev:api": "pnpm --filter @fleetip/api run dev",
     "dev:web": "pnpm --filter @fleetip/web run dev",
+    "setup": "pnpm install && pnpm run dev",
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
