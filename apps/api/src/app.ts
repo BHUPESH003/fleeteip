@@ -21,6 +21,13 @@ export async function buildApp() {
       reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
       return;
     }
+    // Fastify's own errors (malformed JSON, validation, payload-too-large, ...)
+    // already carry the correct client-error status — surface it as-is instead
+    // of masking every non-AppError as an opaque 500.
+    if (error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500) {
+      reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
+      return;
+    }
     request.log.error({ err: error }, "unhandled error");
     reply.code(500).send({ error: { code: "internal_error", message: "Something went wrong" } });
   });
