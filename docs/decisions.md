@@ -1,0 +1,40 @@
+# Decisions Log
+
+Short-form record of what was decided and why. Full rationale for each also lives in matha (`matha before`, or `matha_brief`/`matha_match` over MCP) — this file is the human-readable summary.
+
+## Architecture (locked, Stage 5)
+
+- **Modular monolith**: Next.js web + Fastify API, one shared PostgreSQL database, no microservices until a measured workload justifies one.
+- **MVP org scope**: Rental Company + Renter only. Transport/OEM/logistics and the legacy news-CMS/admin panel are explicitly out of scope, not deferred-but-scaffolded.
+- **One identity model**: single `users` table; authorization via Organization + Membership + Role + Permission, never org-type string checks.
+- **Repository pattern, no ORM**: Kysely (a query builder, not an ORM) confined to each module's `infrastructure/` layer. Application/domain code depends on hand-written `*RepositoryPort` interfaces, never on Kysely types — verified by grep, zero exceptions.
+- **Auction/RFQ in Postgres**, never Mongo — both need explicit state transitions and a persisted, auditable result (the legacy app has neither; that gap is what the new design must close).
+- **Two distinct quotation concepts**: a marketplace quotation _response_ vs. a formal commercial quotation _document_ — never merged, even though the legacy app uses one word for both.
+- **Auth redesigned freely**: hashed passwords, DB-backed cookie sessions — the legacy OTP/plaintext-password/plaintext-cookie flow was a liability, not a UX to preserve.
+- **No `packages/validation`**: Zod schemas in `packages/contracts` are the single source of truth; a schema is never defined twice.
+
+## Technology choices (with the "why not X")
+
+| Choice                                       | Not                   | Why                                                                                                                                                                                                 |
+| -------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kysely + `pg`                                | Prisma / a custom ORM | Contract explicitly permits "SQL / query builder / driver," rejects an ORM. Kysely gives compile-time-checked SQL with no active-record models, no separate schema DSL competing with Zod.          |
+| Node `crypto.scrypt`                         | `argon2`              | Same security properties (salted, slow KDF, timing-safe compare) with zero native-binding install risk. Deviation from the originally-approved "Argon2" line item — deliberate, documented in code. |
+| pnpm workspaces                              | Turborepo/Nx          | Two apps + a few packages don't need build-graph orchestration yet.                                                                                                                                 |
+| esbuild bundling for `apps/api`'s prod build | Plain `tsc` emit      | `@fleetip/contracts` ships TS source with no dist; plain `node dist/index.js` can't resolve it without a bundler inlining it. tsx/Next/Vitest all transpile on the fly and never hit this.          |
+
+## Corrections made mid-build (also recorded in matha as decisions)
+
+- **Kysely `Generated<ColumnType<...>>` nesting breaks selects.** A `created_at` column typed as `Generated<Timestamp>` where `Timestamp` was already a `ColumnType` produced a doubly-wrapped type Kysely never flattens. Fix: one plain `ColumnType<Date, InsertType, UpdateType>` per column, never `Generated` wrapping an existing `ColumnType`.
+- **`packages/ui` needed `moduleResolution: "Bundler"`, not `NodeNext`.** Webpack (Next's bundler) doesn't understand TS's NodeNext convention that a `./Button.js` import refers to `./Button.tsx` — only `packages/contracts` (consumed by Node/tsx too) keeps NodeNext.
+- **`apps/api/tsconfig.json` needed a build-only variant.** With `include: ["src","test"]` and no explicit `rootDir`, TS built to `dist/src/index.js` instead of `dist/index.js`. Added `tsconfig.build.json` (src-only) for the real build; kept the broader config for typecheck.
+- **ESLint flat-config ignores need a `**/` prefix.** `"dist/**"` only matched a root-level `dist/`, not `apps/*/dist` — every ignore glob had to become `"**/dist/**"` etc.
+- **Repository _interfaces_, not concrete classes, as the application-layer dependency.** First pass had `AuthService`/`PermissionService` depend on concrete `UserRepository`/`MembershipRepository` classes directly — refactored to `domain/ports.ts` interfaces per module, per the architecture contract's explicit repository-interface requirement.
+- **matha's markdown parser truncates line-wrapped bullets.** A manually word-wrapped `requirements.md` silently cut rules off mid-sentence in `.matha/hippocampus/rules.json`. Fixed by re-authoring with one unwrapped line per bullet and re-running `matha init`.
+- **matha's `mcp-config.json` output isn't portable.** It embeds an absolute, machine-local path. The committed `.mcp.json` uses `npx -y @10kdevs/matha@1 serve --project .` instead.
+- **`matha after` can't be driven over a non-TTY pipe.** It reliably fails on the second prompt outside a real terminal. For batch-recording from an agent session without MCP tools loaded yet, the reliable path is calling `Engine`/`mathaRecord` directly from the package's own `dist/` output — the same function `matha_record` (MCP) and `matha after` (CLI) both call.
+- **Docker Postgres on port 5433, not 5432** — another project's container already holds 5432 on this machine.
+- **`pnpm` needed `onlyBuiltDependencies: ["esbuild"]`** in root `package.json` — its default policy silently blocks native postinstall scripts, and the interactive approval prompt can't run non-interactively.
+
+## Tooling: matha (persisted AI memory)
+
+Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.
