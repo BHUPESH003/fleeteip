@@ -1,0 +1,11 @@
+dist/
+build/
+.next/
+coverage/
+node_modules/
+public_html/
+pnpm-lock.yaml
+
+# Rewritten by Next.js's own tooling on every dev/build run — fighting its formatting is pointless.
+apps/web/tsconfig.json
+apps/web/next-env.d.ts

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+*.log
+.env
+.env.local
+.DS_Store
+*.tsbuildinfo
+
+# Claude Code session-local state, not project config (.claude/settings.json,
+# once it exists, is intentionally NOT ignored — that's shared team config).
+.claude/*.lock
+
+# Legacy PHP app is reference material only — not part of this codebase.
+# It has its own git history; excluded here to avoid nested-repo confusion.
+public_html/
+
+# Reference documents (architecture contract, original vision doc)
+*.docx

@@ -1,0 +1,75 @@
+:root {
+  color-scheme: light;
+  --fleetip-border: #d0d5dd;
+  --fleetip-text: #1a1a2e;
+  --fleetip-primary: #1a56db;
+  --fleetip-primary-contrast: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  color: var(--fleetip-text);
+  background: #f7f8fa;
+}
+
+main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.fleetip-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.fleetip-field__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.fleetip-input,
+.fleetip-select {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--fleetip-border);
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.fleetip-button {
+  padding: 0.55rem 1rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.fleetip-button--primary {
+  background: var(--fleetip-primary);
+  color: var(--fleetip-primary-contrast);
+}
+
+.fleetip-button--secondary {
+  background: transparent;
+  border-color: var(--fleetip-border);
+  color: var(--fleetip-text);
+}
+
+.fleetip-card {
+  background: #fff;
+  border: 1px solid var(--fleetip-border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
