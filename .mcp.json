@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "matha": {
+      "command": "npx",
+      "args": ["-y", "@10kdevs/matha@1", "serve", "--project", "."],
+      "description": "MATHA persistent cognitive layer"
+    }
+  }
+}

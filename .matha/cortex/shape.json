@@ -1,0 +1,15 @@
+{
+  "directories": [
+    ".claude",
+    "apps",
+    "docs",
+    "infrastructure",
+    "packages",
+    "public_html"
+  ],
+  "detected_stack": [
+    "node"
+  ],
+  "file_count": 1943,
+  "derived_at": "2026-09-06T09:01:56.762Z"
+}

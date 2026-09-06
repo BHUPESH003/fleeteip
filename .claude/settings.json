@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @10kdevs/matha@1 before"
+          }
+        ]
+      }
+    ]
+  }
+}

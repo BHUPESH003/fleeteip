@@ -1,0 +1,8 @@
+{
+  "boundaries": [
+    "Full transport/logistics marketplace, OEM marketplace, and the legacy internal admin/news-CMS — none of this is part of FleetIP; it stays out of scope even in future phases (an explicit product decision, not an oversight).",
+    "Microservices, MongoDB, and Go — all explicitly deferred until a real, measured workload justifies them. Do not introduce them speculatively.",
+    "Migrating legacy production data automatically — the legacy MySQL data is real production data, but no automatic migration is being built yet; only schema-compatible design awareness.",
+    "Any rewrite of legacy PHP business logic 1:1 into TypeScript — the legacy app is a business-knowledge and terminology reference only, never an architecture to copy."
+  ]
+}

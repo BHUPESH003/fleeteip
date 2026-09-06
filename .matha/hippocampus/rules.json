@@ -1,0 +1,13 @@
+{
+  "rules": [
+    "MVP organization types are strictly Rental Company and Renter. Transport/Logistics and OEM are explicitly deferred to a later phase and must not shape the MVP data model.",
+    "One identity model: a single `users` table for all human identities; authorization is based on Organization + Membership + Role + Permission, never on organization name/type checks scattered through code.",
+    "Tenant isolation must be enforced server-side via `organization_id` foreign keys, never via a client-supplied string or a mutable display name.",
+    "Auction and bid data live in PostgreSQL, never MongoDB — auctions require strong consistency, explicit state transitions, an idempotent close, and a persisted, auditable result (the legacy app never closes an auction explicitly and only computes a \"winner\" for display — this must not be repeated).",
+    "RFQ/requirement \"closing\" must be an explicit status transition, never a destructive move-and-delete (the legacy app deletes closed requirements into a separate table — this must not be repeated).",
+    "Two distinct \"quotation\" concepts must never be merged into one entity: a marketplace quotation response (a rental company's priced reply to an RFQ) vs. a formal commercial quotation (a legal/commercial document with equipment lines, rates and terms).",
+    "Equipment hierarchy is Equipment Category -> Machine Model -> Machine (the physical asset); equipment ownership belongs to the Organization, never to an individual user.",
+    "No custom ORM and no generic CRUD repository framework — repositories are hand-written and business-named; Kysely (a query builder, not an ORM) stays confined to each module's `infrastructure/` layer, never imported by `domain/`/`application/` code.",
+    "Passwords must be hashed (never plaintext, never compared with `==`, never stored in a cookie) and sessions must be server-side/DB-backed, not client-trusted."
+  ]
+}

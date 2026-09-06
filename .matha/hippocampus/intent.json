@@ -1,0 +1,3 @@
+{
+  "why": "FleetIP is a greenfield TypeScript rebuild of an equipment rental and fleet ecosystem platform: a Rental Company + Renter marketplace (requirement -> RFQ -> quotation -> optional auction -> selection -> rental). The only existing implementation is a legacy PHP application (\"FleetEIP\"), which is a business-knowledge reference only — never an architecture to port. The goal is a modular monolith (Next.js web + Fastify API on one shared PostgreSQL database) with strong domain boundaries that can be extracted into services later only when a measured workload justifies it."
+}
