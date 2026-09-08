@@ -27,7 +27,11 @@ export type Organization = z.infer<typeof organizationSchema>;
 export const roleNameSchema = z.enum(["owner", "member"]);
 export type RoleName = z.infer<typeof roleNameSchema>;
 
-export const permissionCodeSchema = z.enum(["organization.manage", "membership.manage"]);
+export const permissionCodeSchema = z.enum([
+  "organization.manage",
+  "membership.manage",
+  "equipment.manage",
+]);
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;
 
 export const membershipStatusSchema = z.enum(["active", "invited", "suspended"]);

@@ -29,3 +29,5 @@ public_html/
 # Convenience printout with an absolute, machine-local path — not portable.
 # The real, portable, team-shared config is the root .mcp.json.
 .matha/mcp-config.json
+
+
