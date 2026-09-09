@@ -44,7 +44,11 @@ export async function up(db: Kysely<any>): Promise<void> {
       { product_category_id: category("LOADER"), code: "BACKHOE", name: "Backhoe Loader" },
       { product_category_id: category("GENERATOR"), code: "DIESEL", name: "Diesel Generator" },
       { product_category_id: category("GENERATOR"), code: "GAS", name: "Gas Generator" },
-      { product_category_id: category("COMPACTOR"), code: "SINGLE_DRUM", name: "Single Drum Roller" },
+      {
+        product_category_id: category("COMPACTOR"),
+        code: "SINGLE_DRUM",
+        name: "Single Drum Roller",
+      },
       { product_category_id: category("COMPACTOR"), code: "TANDEM", name: "Tandem Roller" },
     ])
     .returning(["id", "code"])

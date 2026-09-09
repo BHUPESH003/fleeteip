@@ -3,6 +3,7 @@
 Status: design locked, contracts not yet updated. `apps/api/src/modules/equipment/index.ts` is still the Stage 5 stub.
 
 **Revision history**:
+
 1. Per-organization Machine Model → superseded by a platform-level Product Catalogue (matha decision `1788857313985-dcf5cb2a59ec8446`).
 2. Minimal 4-field Product skeleton → superseded by the richer catalogue design below, after inspecting the legacy schema (116-page phpMyAdmin export) and a representative production data sample (`oem_fleet`, `fleet1`, `images`). Recorded in matha as `1788884744636-b425c76f30890b93`, superseding decision 1.
 
@@ -29,11 +30,11 @@ The Product Catalogue exists so that Rental Companies register machines against 
 
 Unchanged from the prior revision.
 
-| | One module (`modules/equipment`) | Split (`modules/catalogue` + `modules/equipment`) |
-|---|---|---|
-| Matches today's scaffold | Yes, zero new folders | No, one new module folder |
+|                                           | One module (`modules/equipment`)     | Split (`modules/catalogue` + `modules/equipment`)                                                 |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Matches today's scaffold                  | Yes, zero new folders                | No, one new module folder                                                                         |
 | Matches where OEM will eventually plug in | Catalogue and Machine stay entangled | Catalogue is already its own seam — OEM later reads/writes `catalogue`, never touches `equipment` |
-| Cost now | None | Trivial — folder + port split, no extra runtime complexity |
+| Cost now                                  | None                                 | Trivial — folder + port split, no extra runtime complexity                                        |
 
 **Recommendation: split.** `modules/catalogue/` owns `ProductCategory`/`ProductSubcategory`/`Product` (read-only in MVP). `modules/equipment/` owns `Machine`, and depends on `catalogue`'s repository ports to validate a `productId` exists — the same kind of cross-module read dependency `permissions` already has on `organizations`.
 
@@ -94,13 +95,13 @@ No `organization_id` anywhere in the catalogue chain (`product_categories`/`prod
 
 **Why `specifications` is jsonb, grouped not flat**: legacy's `fleet1`/`oem_fleet` spread ~19 category-specific spec fields as flat nullable columns, mostly empty for any given row depending on category. Real co-occurrence in the sample supports grouping by fact-cluster, not by one flat bag: `boomFamily` (boomLength/jibLength/luffingLength), `craneRigging` (wireRope, counterWeight, boomSection, ...), `fluids` (tank capacities, oil grades), `transport` (length/width/height/weight).
 
-**Explicitly deferred, not included**: chassis manufacturer (legacy `chassis`/`chassis_make`). Real data showed one genuine conflicting-value example for the same make/model (`Ashok Leyland` vs. `MAN`), enough to disprove "always fixed by the model" but not enough to confirm systemic variance from a ~118-row sample. Left off both `Product` and `Machine` pending a direct business answer to: *does chassis manufacturer ever vary between two physical units of the identical catalogue Product?*
+**Explicitly deferred, not included**: chassis manufacturer (legacy `chassis`/`chassis_make`). Real data showed one genuine conflicting-value example for the same make/model (`Ashok Leyland` vs. `MAN`), enough to disprove "always fixed by the model" but not enough to confirm systemic variance from a ~118-row sample. Left off both `Product` and `Machine` pending a direct business answer to: _does chassis manufacturer ever vary between two physical units of the identical catalogue Product?_
 
 **Optional, still your call**: `products.is_active boolean not null default true`, to retire a stale catalogue entry without breaking existing `Machine` references. Not load-bearing yet since the catalogue is seed-only.
 
 ## 5. Migration plan
 
-**Practical note before this section applies**: `0003`–`0005` already exist in the repo and have been applied to your local dev database with the old 4-field `Product` shape. Per the project's own rule (never edit an applied migration, add a new one — already documented in `infrastructure/database/migrate.ts` and in matha), the strict path is new additive migrations (`0006`+) that `alterTable` the existing `products`/`machines` tables and `createTable` for `product_subcategories`. The pragmatic alternative — since these three migrations have never left your local dev environment, represent design churn during initial buildout rather than a shipped schema, and were written before this catalogue analysis existed — is to rewrite `0003`–`0005` in place and re-run `migrate:down`/`migrate` locally. Both are defensible; I'd lean toward rewriting in place *this one time* given how early this still is, but flagging it as your call, not mine, since it's a direct exception to a rule you specifically wanted enforced.
+**Practical note before this section applies**: `0003`–`0005` already exist in the repo and have been applied to your local dev database with the old 4-field `Product` shape. Per the project's own rule (never edit an applied migration, add a new one — already documented in `infrastructure/database/migrate.ts` and in matha), the strict path is new additive migrations (`0006`+) that `alterTable` the existing `products`/`machines` tables and `createTable` for `product_subcategories`. The pragmatic alternative — since these three migrations have never left your local dev environment, represent design churn during initial buildout rather than a shipped schema, and were written before this catalogue analysis existed — is to rewrite `0003`–`0005` in place and re-run `migrate:down`/`migrate` locally. Both are defensible; I'd lean toward rewriting in place _this one time_ given how early this still is, but flagging it as your call, not mine, since it's a direct exception to a rule you specifically wanted enforced.
 
 Either way, the migrations needed:
 

@@ -1,7 +1,9 @@
 import { Kysely, PostgresDialect } from "kysely";
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 import { env } from "../config/env.js";
 import type { Database } from "./types.js";
+
+types.setTypeParser(1700, parseFloat); // NUMERIC OID -> number
 
 const pool = new Pool({ connectionString: env.DATABASE_URL });
 

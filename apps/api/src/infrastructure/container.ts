@@ -1,3 +1,9 @@
+import { CatalogueService } from "../modules/catalogue/application/catalogue-service.js";
+import { ProductCategoryRepository } from "../modules/catalogue/infrastructure/product-category-repository.js";
+import { ProductRepository } from "../modules/catalogue/infrastructure/product-repository.js";
+import { ProductSubcategoryRepository } from "../modules/catalogue/infrastructure/product-subcategory-repository.js";
+import { EquipmentService } from "../modules/equipment/application/equipment-service.js";
+import { MachineRepository } from "../modules/equipment/infrastructure/machine-repository.js";
 import { AuthService } from "../modules/identity/application/auth-service.js";
 import { SessionRepository } from "../modules/identity/infrastructure/session-repository.js";
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
@@ -18,6 +24,13 @@ const organizationRepository = new OrganizationRepository(db);
 const membershipRepository = new MembershipRepository(db);
 const roleRepository = new RoleRepository(db);
 
+const productCategoryRepository = new ProductCategoryRepository(db);
+const productSubcategoryRepository = new ProductSubcategoryRepository(db);
+const productRepository = new ProductRepository(db);
+const machineRepository = new MachineRepository(db);
+
+const permissionService = new PermissionService(membershipRepository, roleRepository);
+
 export const container = {
   authService: new AuthService(
     userRepository,
@@ -26,5 +39,13 @@ export const container = {
     membershipRepository,
     roleRepository,
   ),
-  permissionService: new PermissionService(membershipRepository, roleRepository),
+  permissionService,
+
+  catalogueService: new CatalogueService(
+    productCategoryRepository,
+    productSubcategoryRepository,
+    productRepository,
+  ),
+
+  equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),
 };

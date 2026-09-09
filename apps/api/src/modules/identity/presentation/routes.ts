@@ -1,7 +1,8 @@
 import { loginRequestSchema, signupRequestSchema } from "@fleetip/contracts/identity";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { env } from "../../../infrastructure/config/env.js";
 import { container } from "../../../infrastructure/container.js";
+import { getSessionToken } from "../../../shared/auth.js";
 import { UnauthorizedError } from "../../../shared/errors.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
@@ -14,13 +15,6 @@ function setSessionCookie(reply: FastifyReply, token: string, expiresAt: Date): 
     secure: env.NODE_ENV === "production",
     expires: expiresAt,
   });
-}
-
-function getSessionToken(request: FastifyRequest): string | undefined {
-  const raw = request.cookies[env.SESSION_COOKIE_NAME];
-  if (!raw) return undefined;
-  const unsigned = request.unsignCookie(raw);
-  return unsigned.valid ? (unsigned.value ?? undefined) : undefined;
 }
 
 export async function identityRoutes(fastify: FastifyInstance): Promise<void> {

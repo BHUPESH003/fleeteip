@@ -72,4 +72,46 @@ export interface Database {
   role_permissions: RolePermissionsTable;
   memberships: MembershipsTable;
   sessions: SessionsTable;
+  product_categories: ProductCategoriesTable;
+  product_subcategories: ProductSubcategoriesTable;
+  products: ProductsTable;
+  machines: MachinesTable;
+}
+
+export interface ProductCategoriesTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  created_at: CreatedAt;
+}
+
+export interface ProductSubcategoriesTable {
+  id: Generated<string>;
+  product_category_id: string;
+  code: string;
+  name: string;
+  created_at: CreatedAt;
+}
+
+export interface ProductsTable {
+  id: Generated<string>;
+  product_subcategory_id: string;
+  manufacturer: string;
+  name: string;
+  capacity: number | null;
+  capacity_unit: string | null;
+  specifications: unknown | null;
+  created_at: CreatedAt;
+}
+
+export interface MachinesTable {
+  id: Generated<string>;
+  organization_id: string;
+  product_id: string;
+  asset_code: string;
+  chassis_number: string | null;
+  registration_number: string;
+  year_of_manufacture: number | null;
+  status: string;
+  created_at: CreatedAt;
 }
