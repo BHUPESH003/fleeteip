@@ -6,6 +6,14 @@ type Timestamp = ColumnType<Date, Date | string, Date | string>;
 /** A DB-defaulted, never-updated timestamp (every table's created_at). */
 type CreatedAt = ColumnType<Date, Date | string | undefined, never>;
 
+/**
+ * A DB-defaulted timestamp the app must explicitly bump on every update —
+ * no trigger exists for this yet, so the update type is required (not
+ * optional) on purpose: it's a compile-time reminder that every
+ * `.updateTable(...)` call touching this column must set it itself.
+ */
+type UpdatedAt = ColumnType<Date, Date | string | undefined, Date | string>;
+
 export interface OrganizationTypesTable {
   id: Generated<string>;
   code: string;
@@ -76,6 +84,7 @@ export interface Database {
   product_subcategories: ProductSubcategoriesTable;
   products: ProductsTable;
   machines: MachinesTable;
+  rentals: RentalsTable;
 }
 
 export interface ProductCategoriesTable {
@@ -114,4 +123,35 @@ export interface MachinesTable {
   year_of_manufacture: number | null;
   status: string;
   created_at: CreatedAt;
+}
+
+export interface RentalsTable {
+  id: Generated<string>;
+  rental_company_organization_id: string;
+  renter_organization_id: string | null;
+  client_snapshot: unknown | null;
+  machine_id: string;
+  status: string;
+  project_name: string | null;
+  project_location: string | null;
+  // Plain "YYYY-MM-DD" strings — see the DATE OID type parser in client.ts.
+  start_date: string;
+  end_date: string | null;
+  rate: number;
+  rate_unit: string;
+  mobilization_charge: number | null;
+  demobilization_charge: number | null;
+  payment_terms: string | null;
+  shift_structure: string | null;
+  overtime_rate: number | null;
+  sunday_condition: string | null;
+  fuel_norms: string | null;
+  operator_scope: string | null;
+  notice_period_days: number | null;
+  dehire_terms: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+  // commitment_range (generated, daterange) intentionally omitted — the app
+  // never selects it through Kysely's typed builder; the availability query
+  // reaches it via a raw sql template instead.
 }
