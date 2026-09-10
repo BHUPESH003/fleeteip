@@ -31,7 +31,15 @@ export const permissionCodeSchema = z.enum([
   "organization.manage",
   "membership.manage",
   "equipment.manage",
+  "rental.manage",
 ]);
+export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
+  "organization.manage": ["rental_company", "renter"],
+  "membership.manage": ["rental_company", "renter"],
+  "equipment.manage": ["rental_company"],
+  "rental.manage": ["rental_company"],
+};
+
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;
 
 export const membershipStatusSchema = z.enum(["active", "invited", "suspended"]);

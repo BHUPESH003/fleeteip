@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import type {
   ActiveMembershipRecord,
   MembershipRepositoryPort,
@@ -20,9 +21,15 @@ import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/erro
 const OWNER_ROLE_ID = "role-owner";
 const PRODUCT_ID = "product-1";
 
-// Every test grants permission unconditionally — PermissionService's own
-// denial paths already have dedicated coverage in permission-service.test.ts.
-function fakePermissionService(): PermissionService {
+// Every test grants the role/permission unconditionally — PermissionService's
+// own role/permission denial paths already have dedicated coverage in
+// permission-service.test.ts. The organizationTypeCode parameter exists so
+// this file can still exercise the org-type gate (now enforced inside
+// PermissionService itself, not EquipmentService) without duplicating that
+// service's tests.
+function fakePermissionService(
+  organizationTypeCode: OrganizationTypeCode = "rental_company",
+): PermissionService {
   const membershipRepository: MembershipRepositoryPort = {
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
@@ -40,7 +47,11 @@ function fakePermissionService(): PermissionService {
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["equipment.manage"] : [],
   };
-  return new PermissionService(membershipRepository, roleRepository);
+  return new PermissionService(
+    membershipRepository,
+    roleRepository,
+    fakeOrganizationRepository(organizationTypeCode),
+  );
 }
 
 function fakeProductRepository(): ProductRepositoryPort {
@@ -60,10 +71,9 @@ function fakeProductRepository(): ProductRepositoryPort {
   };
 }
 
-// Every test organization is a Rental Company — the one org-type denial
-// path is exercised directly, without going through EquipmentService, since
-// it's a one-line domain rule with nothing else to interact with.
-function fakeOrganizationRepository(): OrganizationRepositoryPort {
+function fakeOrganizationRepository(
+  organizationTypeCode: OrganizationTypeCode,
+): OrganizationRepositoryPort {
   return {
     findTypeByCode: async () => {
       throw new Error("not used in this test");
@@ -76,8 +86,8 @@ function fakeOrganizationRepository(): OrganizationRepositoryPort {
     },
     findWithTypeById: async (id) => ({
       id,
-      organization_type_id: "type-rental-company",
-      organization_type_code: "rental_company",
+      organization_type_id: `type-${organizationTypeCode}`,
+      organization_type_code: organizationTypeCode,
       name: "Test Org",
       code: "TESTORG",
       created_at: new Date(),
@@ -129,7 +139,6 @@ function buildService() {
   return new EquipmentService(
     fakeMachineRepository(),
     fakeProductRepository(),
-    fakeOrganizationRepository(),
     fakePermissionService(),
   );
 }
@@ -185,33 +194,14 @@ describe("EquipmentService", () => {
   });
 
   it("rejects equipment management for a Renter organization", async () => {
-    const renterOrganizationRepository: OrganizationRepositoryPort = {
-      findTypeByCode: async () => {
-        throw new Error("not used in this test");
-      },
-      create: async () => {
-        throw new Error("not used in this test");
-      },
-      findById: async () => {
-        throw new Error("not used in this test");
-      },
-      findWithTypeById: async (id) => ({
-        id,
-        organization_type_id: "type-renter",
-        organization_type_code: "renter",
-        name: "Test Renter",
-        code: "TESTRENTER",
-        created_at: new Date(),
-      }),
-      codeExists: async () => {
-        throw new Error("not used in this test");
-      },
-    };
+    // The org-type gate now lives in PermissionService (see
+    // permission-service.test.ts for its dedicated coverage) — exercised
+    // here end-to-end through EquipmentService to prove the two are wired
+    // together correctly, not just independently correct.
     const service = new EquipmentService(
       fakeMachineRepository(),
       fakeProductRepository(),
-      renterOrganizationRepository,
-      fakePermissionService(),
+      fakePermissionService("renter"),
     );
 
     await expect(service.createMachine("user-1", "renter-org", baseInput)).rejects.toThrow(

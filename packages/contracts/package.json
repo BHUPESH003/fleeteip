@@ -7,7 +7,8 @@
     "./identity": "./src/identity/index.ts",
     "./organization": "./src/organization/index.ts",
     "./equipment": "./src/equipment/index.ts",
-    "./catalogue": "./src/catalogue/index.ts"
+    "./catalogue": "./src/catalogue/index.ts",
+    "./rental": "./src/rental/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

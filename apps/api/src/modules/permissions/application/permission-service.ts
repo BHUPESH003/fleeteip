@@ -1,6 +1,13 @@
-import type { PermissionCode } from "@fleetip/contracts/organization";
+import {
+  OrganizationTypeCode,
+  PERMISSION_ORGANIZATION_TYPES,
+  type PermissionCode,
+} from "@fleetip/contracts/organization";
 import { ForbiddenError } from "../../../shared/errors.js";
-import type { MembershipRepositoryPort } from "../../organizations/domain/ports.js";
+import type {
+  MembershipRepositoryPort,
+  OrganizationRepositoryPort,
+} from "../../organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../domain/ports.js";
 
 /**
@@ -12,8 +19,8 @@ export class PermissionService {
   constructor(
     private readonly membershipRepository: MembershipRepositoryPort,
     private readonly roleRepository: RoleRepositoryPort,
+    private readonly organizationRepository: OrganizationRepositoryPort,
   ) {}
-
   async hasPermission(
     userId: string,
     organizationId: string,
@@ -21,6 +28,16 @@ export class PermissionService {
   ): Promise<boolean> {
     const membership = await this.membershipRepository.findActiveMembership(userId, organizationId);
     if (!membership) return false;
+
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!organization) return false;
+    if (
+      !PERMISSION_ORGANIZATION_TYPES[permission].includes(
+        organization.organization_type_code as OrganizationTypeCode,
+      )
+    ) {
+      return false;
+    }
     return this.roleRepository.hasPermission(membership.role_id, permission);
   }
 

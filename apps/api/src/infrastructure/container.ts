@@ -29,7 +29,11 @@ const productSubcategoryRepository = new ProductSubcategoryRepository(db);
 const productRepository = new ProductRepository(db);
 const machineRepository = new MachineRepository(db);
 
-const permissionService = new PermissionService(membershipRepository, roleRepository);
+const permissionService = new PermissionService(
+  membershipRepository,
+  roleRepository,
+  organizationRepository,
+);
 
 export const container = {
   authService: new AuthService(
@@ -47,10 +51,5 @@ export const container = {
     productRepository,
   ),
 
-  equipmentService: new EquipmentService(
-    machineRepository,
-    productRepository,
-    organizationRepository,
-    permissionService,
-  ),
+  equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),
 };
