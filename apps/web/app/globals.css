@@ -1,13 +1,28 @@
+@import "tailwindcss";
+
+/*
+ * @fleetip/ui lives outside this app's own directory tree (a sibling
+ * workspace package), so Tailwind's automatic content scan doesn't reach
+ * it on its own — without this, any utility class used ONLY inside a
+ * shared component (and nowhere in apps/web's own source) is silently
+ * dropped from the compiled CSS. Confirmed by inspecting the compiled
+ * stylesheet: EmptyState/LoadingState/ErrorState's classes were missing
+ * until this line was added.
+ */
+@source "../../../packages/ui/src";
+
+/*
+ * Design-system convention (no custom Tailwind theme tokens — the default
+ * palette already covers what FleetIP needs):
+ *   - blue-600/700   primary action (buttons, links, active nav)
+ *   - gray-*         neutral surfaces, borders, body text
+ *   - green/amber/red (100 bg + 800 text) status semantics: success/warning/danger
+ * Every component in @fleetip/ui and every page should draw from this set
+ * rather than introducing new colors ad hoc.
+ */
+
 :root {
   color-scheme: light;
-  --fleetip-border: #d0d5dd;
-  --fleetip-text: #1a1a2e;
-  --fleetip-primary: #1a56db;
-  --fleetip-primary-contrast: #ffffff;
-}
-
-* {
-  box-sizing: border-box;
 }
 
 body {
@@ -17,59 +32,4 @@ body {
     -apple-system,
     "Segoe UI",
     sans-serif;
-  color: var(--fleetip-text);
-  background: #f7f8fa;
-}
-
-main {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
-.fleetip-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
-}
-
-.fleetip-field__label {
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.fleetip-input,
-.fleetip-select {
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--fleetip-border);
-  border-radius: 6px;
-  font-size: 0.95rem;
-}
-
-.fleetip-button {
-  padding: 0.55rem 1rem;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-.fleetip-button--primary {
-  background: var(--fleetip-primary);
-  color: var(--fleetip-primary-contrast);
-}
-
-.fleetip-button--secondary {
-  background: transparent;
-  border-color: var(--fleetip-border);
-  color: var(--fleetip-text);
-}
-
-.fleetip-card {
-  background: #fff;
-  border: 1px solid var(--fleetip-border);
-  border-radius: 10px;
-  padding: 1.25rem;
-  margin-bottom: 1.5rem;
 }

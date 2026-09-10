@@ -43,6 +43,7 @@ export class MembershipRepository implements MembershipRepositoryPort {
         "memberships.id as id",
         "memberships.status as status",
         "memberships.created_at as created_at",
+        "memberships.role_id as role_id",
         "roles.name as role_name",
         "organizations.id as organization_id",
         "organizations.name as organization_name",

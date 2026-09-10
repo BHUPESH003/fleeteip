@@ -23,4 +23,14 @@ export class RoleRepository implements RoleRepositoryPort {
       .executeTakeFirst()
       .then((row) => row !== undefined);
   }
+
+  async listPermissionCodesByRoleId(roleId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("role_permissions")
+      .innerJoin("permissions", "permissions.id", "role_permissions.permission_id")
+      .select("permissions.code as code")
+      .where("role_permissions.role_id", "=", roleId)
+      .execute();
+    return rows.map((row) => row.code);
+  }
 }

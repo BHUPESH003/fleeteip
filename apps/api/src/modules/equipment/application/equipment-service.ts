@@ -1,6 +1,7 @@
 import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
-import { ConflictError, NotFoundError } from "../../../shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError } from "../../../shared/errors.js";
 import type { ProductRepositoryPort } from "../../catalogue/domain/ports.js";
+import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/machine-status.js";
 import type { CreateMachineInput, MachineRecord, MachineRepositoryPort } from "../domain/ports.js";
@@ -23,8 +24,24 @@ export class EquipmentService {
   constructor(
     private readonly machineRepository: MachineRepositoryPort,
     private readonly productRepository: ProductRepositoryPort,
+    private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
   ) {}
+
+  /**
+   * Machines are owned and operated by Rental Company organizations only —
+   * a Renter doesn't own fleet. `equipment.manage` alone doesn't express
+   * this: it's granted to every organization's owner regardless of type, so
+   * this is a domain rule, not a permission check, and belongs here rather
+   * than in the permission model (which has no per-organization-type
+   * concept of a role).
+   */
+  private async requireRentalCompanyOrganization(organizationId: string): Promise<void> {
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!organization || organization.organization_type_code !== "rental_company") {
+      throw new ForbiddenError("Only Rental Company organizations can manage equipment");
+    }
+  }
 
   async createMachine(
     userId: string,
@@ -32,6 +49,7 @@ export class EquipmentService {
     input: Omit<CreateMachineInput, "organizationId">,
   ): Promise<Machine> {
     await this.permissionService.requirePermission(userId, organizationId, "equipment.manage");
+    await this.requireRentalCompanyOrganization(organizationId);
 
     const product = await this.productRepository.findById(input.productId);
     if (!product) {
@@ -63,6 +81,7 @@ export class EquipmentService {
     newStatus: MachineStatus,
   ): Promise<Machine> {
     await this.permissionService.requirePermission(userId, organizationId, "equipment.manage");
+    await this.requireRentalCompanyOrganization(organizationId);
     const machine = await this.machineRepository.findById(machineId);
     if (!machine) {
       throw new NotFoundError("Machine not found");
@@ -82,6 +101,7 @@ export class EquipmentService {
 
   async listMachines(userId: string, organizationId: string): Promise<Machine[]> {
     await this.permissionService.requirePermission(userId, organizationId, "equipment.manage");
+    await this.requireRentalCompanyOrganization(organizationId);
     const records = await this.machineRepository.listByOrganization(organizationId);
     return records.map(toMachine);
   }

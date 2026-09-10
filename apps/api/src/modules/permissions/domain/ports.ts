@@ -8,4 +8,5 @@ export interface RoleRecord {
 export interface RoleRepositoryPort {
   findByName(name: string): Promise<RoleRecord | undefined>;
   hasPermission(roleId: string, permissionCode: string): Promise<boolean>;
+  listPermissionCodesByRoleId(roleId: string): Promise<string[]>;
 }

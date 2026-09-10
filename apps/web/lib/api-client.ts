@@ -1,3 +1,6 @@
+import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
+import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export class ApiError extends Error {}
@@ -37,6 +40,14 @@ export interface LoginInput {
   password: string;
 }
 
+export interface CreateMachineInput {
+  productId: string;
+  assetCode: string;
+  chassisNumber?: string;
+  registrationNumber: string;
+  yearOfManufacture?: number;
+}
+
 export const apiClient = {
   signup: (input: SignupInput) =>
     apiRequest("/auth/signup", { method: "POST", body: JSON.stringify(input) }),
@@ -44,4 +55,27 @@ export const apiClient = {
     apiRequest("/auth/login", { method: "POST", body: JSON.stringify(input) }),
   logout: () => apiRequest("/auth/logout", { method: "POST" }),
   me: () => apiRequest("/auth/me", { method: "GET" }),
+
+  listProductCategories: () =>
+    apiRequest<ProductCategory[]>("/product-categories", { method: "GET" }),
+  listProductSubcategories: (categoryId: string) =>
+    apiRequest<ProductSubcategory[]>(`/product-categories/${categoryId}/subcategories`, {
+      method: "GET",
+    }),
+  listProducts: (subcategoryId?: string) =>
+    apiRequest<Product[]>(`/products${subcategoryId ? `?subcategoryId=${subcategoryId}` : ""}`, {
+      method: "GET",
+    }),
+  listMachines: (organizationId: string) =>
+    apiRequest<Machine[]>(`/organizations/${organizationId}/machines`, { method: "GET" }),
+  createMachine: (organizationId: string, input: CreateMachineInput) =>
+    apiRequest<Machine>(`/organizations/${organizationId}/machines`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateMachineStatus: (organizationId: string, machineId: string, status: MachineStatus) =>
+    apiRequest<Machine>(`/organizations/${organizationId}/machines/${machineId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 };

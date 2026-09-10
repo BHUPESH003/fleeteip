@@ -4,7 +4,7 @@ import type {
   SignupRequest,
   User,
 } from "@fleetip/contracts/identity";
-import type { MembershipWithOrganization } from "@fleetip/contracts/organization";
+import type { MembershipWithOrganization, PermissionCode } from "@fleetip/contracts/organization";
 import { ConflictError, UnauthorizedError, ValidationError } from "../../../shared/errors.js";
 import { generateOrganizationCode } from "../../organizations/application/generate-organization-code.js";
 import type {
@@ -103,6 +103,17 @@ export class AuthService {
     if (!user) return null;
 
     const membershipRows = await this.membershipRepository.listWithOrganizationByUserId(user.id);
+
+    // Roles are a small, fixed set today (owner/member) — cache the lookup
+    // per role_id instead of re-querying it once per membership row.
+    const permissionsByRoleId = new Map<string, PermissionCode[]>();
+    for (const row of membershipRows) {
+      if (!permissionsByRoleId.has(row.role_id)) {
+        const codes = await this.roleRepository.listPermissionCodesByRoleId(row.role_id);
+        permissionsByRoleId.set(row.role_id, codes as PermissionCode[]);
+      }
+    }
+
     const memberships: MembershipWithOrganization[] = membershipRows.map((row) => ({
       id: row.id,
       userId: user.id,
@@ -110,6 +121,7 @@ export class AuthService {
       roleName: row.role_name as "owner" | "member",
       status: row.status as "active" | "invited" | "suspended",
       createdAt: new Date(row.created_at).toISOString(),
+      permissions: permissionsByRoleId.get(row.role_id) ?? [],
       organization: {
         id: row.organization_id,
         organizationTypeCode: row.organization_type_code as "rental_company" | "renter",

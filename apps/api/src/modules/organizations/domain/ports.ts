@@ -14,6 +14,10 @@ export interface OrganizationRecord {
   created_at: Date | string;
 }
 
+export interface OrganizationWithTypeRecord extends OrganizationRecord {
+  organization_type_code: string;
+}
+
 export interface OrganizationRepositoryPort {
   findTypeByCode(code: string): Promise<OrganizationTypeRecord | undefined>;
   create(input: {
@@ -22,6 +26,7 @@ export interface OrganizationRepositoryPort {
     code: string;
   }): Promise<OrganizationRecord>;
   findById(id: string): Promise<OrganizationRecord | undefined>;
+  findWithTypeById(id: string): Promise<OrganizationWithTypeRecord | undefined>;
   codeExists(code: string): Promise<boolean>;
 }
 
@@ -38,6 +43,7 @@ export interface MembershipWithOrganizationRow {
   id: string;
   status: string;
   created_at: Date | string;
+  role_id: string;
   role_name: string;
   organization_id: string;
   organization_name: string;

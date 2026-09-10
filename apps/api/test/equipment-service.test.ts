@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ActiveMembershipRecord,
   MembershipRepositoryPort,
+  OrganizationRepositoryPort,
 } from "../src/modules/organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
 import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
@@ -14,7 +15,7 @@ import type {
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
 import { EquipmentService } from "../src/modules/equipment/application/equipment-service.js";
-import { ConflictError, NotFoundError } from "../src/shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const PRODUCT_ID = "product-1";
@@ -36,6 +37,8 @@ function fakePermissionService(): PermissionService {
   const roleRepository: RoleRepositoryPort = {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
+    listPermissionCodesByRoleId: async (roleId) =>
+      roleId === OWNER_ROLE_ID ? ["equipment.manage"] : [],
   };
   return new PermissionService(membershipRepository, roleRepository);
 }
@@ -54,6 +57,34 @@ function fakeProductRepository(): ProductRepositoryPort {
   return {
     listAll: async () => [product],
     findById: async (id) => (id === PRODUCT_ID ? product : undefined),
+  };
+}
+
+// Every test organization is a Rental Company — the one org-type denial
+// path is exercised directly, without going through EquipmentService, since
+// it's a one-line domain rule with nothing else to interact with.
+function fakeOrganizationRepository(): OrganizationRepositoryPort {
+  return {
+    findTypeByCode: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    findWithTypeById: async (id) => ({
+      id,
+      organization_type_id: "type-rental-company",
+      organization_type_code: "rental_company",
+      name: "Test Org",
+      code: "TESTORG",
+      created_at: new Date(),
+    }),
+    codeExists: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -98,6 +129,7 @@ function buildService() {
   return new EquipmentService(
     fakeMachineRepository(),
     fakeProductRepository(),
+    fakeOrganizationRepository(),
     fakePermissionService(),
   );
 }
@@ -150,5 +182,40 @@ describe("EquipmentService", () => {
     await expect(
       service.updateMachineStatus("user-2", "org-B", machine.id, "under_maintenance"),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  it("rejects equipment management for a Renter organization", async () => {
+    const renterOrganizationRepository: OrganizationRepositoryPort = {
+      findTypeByCode: async () => {
+        throw new Error("not used in this test");
+      },
+      create: async () => {
+        throw new Error("not used in this test");
+      },
+      findById: async () => {
+        throw new Error("not used in this test");
+      },
+      findWithTypeById: async (id) => ({
+        id,
+        organization_type_id: "type-renter",
+        organization_type_code: "renter",
+        name: "Test Renter",
+        code: "TESTRENTER",
+        created_at: new Date(),
+      }),
+      codeExists: async () => {
+        throw new Error("not used in this test");
+      },
+    };
+    const service = new EquipmentService(
+      fakeMachineRepository(),
+      fakeProductRepository(),
+      renterOrganizationRepository,
+      fakePermissionService(),
+    );
+
+    await expect(service.createMachine("user-1", "renter-org", baseInput)).rejects.toThrow(
+      ForbiddenError,
+    );
   });
 });

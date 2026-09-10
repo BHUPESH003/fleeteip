@@ -33,6 +33,26 @@ export class OrganizationRepository implements OrganizationRepositoryPort {
       .executeTakeFirst();
   }
 
+  findWithTypeById(id: string) {
+    return this.db
+      .selectFrom("organizations")
+      .innerJoin(
+        "organization_types",
+        "organization_types.id",
+        "organizations.organization_type_id",
+      )
+      .select([
+        "organizations.id as id",
+        "organizations.organization_type_id as organization_type_id",
+        "organizations.name as name",
+        "organizations.code as code",
+        "organizations.created_at as created_at",
+        "organization_types.code as organization_type_code",
+      ])
+      .where("organizations.id", "=", id)
+      .executeTakeFirst();
+  }
+
   codeExists(code: string) {
     return this.db
       .selectFrom("organizations")

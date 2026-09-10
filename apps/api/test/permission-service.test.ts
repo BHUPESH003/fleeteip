@@ -28,6 +28,8 @@ function fakeRoleRepository(): RoleRepositoryPort {
       name === "owner" ? { id: OWNER_ROLE_ID, name } : { id: MEMBER_ROLE_ID, name },
     hasPermission: async (roleId, permissionCode) =>
       roleId === OWNER_ROLE_ID && permissionCode === "organization.manage",
+    listPermissionCodesByRoleId: async (roleId) =>
+      roleId === OWNER_ROLE_ID ? ["organization.manage"] : [],
   };
 }
 

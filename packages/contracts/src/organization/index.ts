@@ -49,5 +49,6 @@ export type Membership = z.infer<typeof membershipSchema>;
 
 export const membershipWithOrganizationSchema = membershipSchema.extend({
   organization: organizationSchema,
+  permissions: z.array(permissionCodeSchema),
 });
 export type MembershipWithOrganization = z.infer<typeof membershipWithOrganizationSchema>;
