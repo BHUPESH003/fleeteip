@@ -1,5 +1,11 @@
 import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
+import type {
+  CreateRentalRequest,
+  Rental,
+  RentalStatus,
+  UpdateRentalTermsRequest,
+} from "@fleetip/contracts/rental";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -78,4 +84,42 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  listRentals: (organizationId: string) =>
+    apiRequest<Rental[]>(`/organizations/${organizationId}/rentals`, { method: "GET" }),
+  createRental: (organizationId: string, input: CreateRentalRequest) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getRental: (organizationId: string, rentalId: string) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}`, { method: "GET" }),
+  updateRentalTerms: (
+    organizationId: string,
+    rentalId: string,
+    updates: UpdateRentalTermsRequest,
+  ) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/terms`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
+  updateRentalStatus: (organizationId: string, rentalId: string, status: RentalStatus) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  checkRentalAvailability: (
+    organizationId: string,
+    machineId: string,
+    startDate: string,
+    endDate?: string,
+  ) =>
+    apiRequest<{ available: boolean }>(
+      `/organizations/${organizationId}/rentals/availability?${new URLSearchParams({
+        machineId,
+        startDate,
+        ...(endDate ? { endDate } : {}),
+      }).toString()}`,
+      { method: "GET" },
+    ),
 };

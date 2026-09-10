@@ -1,0 +1,233 @@
+import type {
+  CheckMachineAvailabilityQuery,
+  CreateRentalRequest,
+  Rental,
+  RentalStatus,
+  UpdateRentalTermsRequest,
+} from "@fleetip/contracts/rental";
+import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
+import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
+import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
+import { PermissionService } from "../../../permissions/application/permission-service.js";
+import { canTransition } from "../domain/rental-status.js";
+import type { RentalRecord, RentalRepositoryPort } from "../domain/ports.js";
+
+function toRental(record: RentalRecord): Rental {
+  return {
+    id: record.id,
+    rentalCompanyOrganizationId: record.rental_company_organization_id,
+    renterOrganizationId: record.renter_organization_id,
+    clientSnapshot: record.client_snapshot,
+    machineId: record.machine_id,
+    status: record.status,
+    projectName: record.project_name,
+    projectLocation: record.project_location,
+    // start_date/end_date already come back as plain "YYYY-MM-DD" strings
+    // (see the DATE type parser in infrastructure/database/client.ts) — no
+    // Date conversion here, that would reintroduce the timezone bug it fixed.
+    startDate: record.start_date,
+    endDate: record.end_date,
+    rate: record.rate,
+    rateUnit: record.rate_unit,
+    mobilizationCharge: record.mobilization_charge,
+    demobilizationCharge: record.demobilization_charge,
+    paymentTerms: record.payment_terms,
+    shiftStructure: record.shift_structure,
+    overtimeRate: record.overtime_rate,
+    sundayCondition: record.sunday_condition,
+    fuelNorms: record.fuel_norms,
+    operatorScope: record.operator_scope,
+    noticePeriodDays: record.notice_period_days,
+    dehireTerms: record.dehire_terms,
+    createdAt: new Date(record.created_at).toISOString(),
+    updatedAt: new Date(record.updated_at).toISOString(),
+  };
+}
+
+export class RentalService {
+  constructor(
+    private readonly rentalRepository: RentalRepositoryPort,
+    private readonly machineRepository: MachineRepositoryPort,
+    private readonly organizationRepository: OrganizationRepositoryPort,
+    private readonly permissionService: PermissionService,
+  ) {}
+
+  async createRental(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    input: CreateRentalRequest,
+  ): Promise<Rental> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+
+    const machine = await this.machineRepository.findById(input.machineId);
+    if (!machine) {
+      throw new NotFoundError("Machine not found");
+    }
+    if (machine.organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Machine not found in this organization");
+    }
+    if (machine.status === "retired") {
+      throw new ConflictError("Machine is retired and cannot be rented");
+    }
+
+    // Exactly-one-of-party is already enforced by createRentalRequestSchema's
+    // refine — this is a different check: the referenced organization must
+    // actually be a Renter, not the acting organization's own type (that's
+    // already covered by requirePermission above via PERMISSION_ORGANIZATION_TYPES).
+    if (input.renterOrganizationId) {
+      const renterOrganization = await this.organizationRepository.findWithTypeById(
+        input.renterOrganizationId,
+      );
+      if (!renterOrganization || renterOrganization.organization_type_code !== "renter") {
+        throw new ValidationError("renterOrganizationId must reference a Renter organization");
+      }
+    }
+
+    const available = await this.rentalRepository.isAvailable(
+      input.machineId,
+      input.startDate,
+      input.endDate ?? null,
+    );
+    if (!available) {
+      throw new ConflictError("Machine is not available for the requested period");
+    }
+
+    const record = await this.rentalRepository.create({
+      rentalCompanyOrganizationId,
+      renterOrganizationId: input.renterOrganizationId,
+      clientSnapshot: input.clientSnapshot,
+      machineId: input.machineId,
+      status: "confirmed",
+      projectName: input.projectName,
+      projectLocation: input.projectLocation,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      rate: input.rate,
+      rateUnit: input.rateUnit,
+      mobilizationCharge: input.mobilizationCharge,
+      demobilizationCharge: input.demobilizationCharge,
+      paymentTerms: input.paymentTerms,
+      shiftStructure: input.shiftStructure,
+      overtimeRate: input.overtimeRate,
+      sundayCondition: input.sundayCondition,
+      fuelNorms: input.fuelNorms,
+      operatorScope: input.operatorScope,
+      noticePeriodDays: input.noticePeriodDays,
+      dehireTerms: input.dehireTerms,
+    });
+    return toRental(record);
+  }
+
+  async getRental(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    rentalId: string,
+  ): Promise<Rental> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+    const record = await this.rentalRepository.findById(rentalId);
+    if (!record) {
+      throw new NotFoundError("Rental not found");
+    }
+    if (record.rental_company_organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Rental not found in this organization");
+    }
+    return toRental(record);
+  }
+
+  async listRentals(userId: string, rentalCompanyOrganizationId: string): Promise<Rental[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+    const records = await this.rentalRepository.listByOrganization(rentalCompanyOrganizationId);
+    return records.map(toRental);
+  }
+
+  async updateRentalTerms(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    rentalId: string,
+    updates: UpdateRentalTermsRequest,
+  ): Promise<Rental> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+    const existing = await this.rentalRepository.findById(rentalId);
+    if (!existing) {
+      throw new NotFoundError("Rental not found");
+    }
+    if (existing.rental_company_organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Rental not found in this organization");
+    }
+    if (existing.status !== "confirmed") {
+      throw new ConflictError("Terms can only be edited while the rental is confirmed");
+    }
+
+    const record = await this.rentalRepository.updateTerms(rentalId, updates);
+    return toRental(record);
+  }
+
+  async updateRentalStatus(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    rentalId: string,
+    newStatus: RentalStatus,
+  ): Promise<Rental> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+    const existing = await this.rentalRepository.findById(rentalId);
+    if (!existing) {
+      throw new NotFoundError("Rental not found");
+    }
+    if (existing.rental_company_organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Rental not found in this organization");
+    }
+    if (!canTransition(existing.status, newStatus)) {
+      throw new ConflictError(`Cannot transition rental from ${existing.status} to ${newStatus}`);
+    }
+    if (newStatus === "active") {
+      const machine = await this.machineRepository.findById(existing.machine_id);
+      if (!machine || machine.status === "retired") {
+        throw new ConflictError("Machine is retired and cannot be activated");
+      }
+    }
+
+    const record = await this.rentalRepository.updateStatus(rentalId, newStatus);
+    return toRental(record);
+  }
+
+  async checkAvailability(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    query: CheckMachineAvailabilityQuery,
+  ): Promise<boolean> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+    const machine = await this.machineRepository.findById(query.machineId);
+    if (!machine || machine.organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Machine not found in this organization");
+    }
+    return this.rentalRepository.isAvailable(
+      query.machineId,
+      query.startDate,
+      query.endDate ?? null,
+    );
+  }
+}

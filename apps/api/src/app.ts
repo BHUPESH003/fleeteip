@@ -7,6 +7,7 @@ import { logger } from "./infrastructure/logging/logger.js";
 import { catalogueRoutes } from "./modules/catalogue/presentation/routes.js";
 import { equipmentRoutes } from "./modules/equipment/presentation/routes.js";
 import { identityRoutes } from "./modules/identity/presentation/routes.js";
+import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { AppError } from "./shared/errors.js";
 
 export async function buildApp() {
@@ -40,6 +41,7 @@ export async function buildApp() {
   await app.register(identityRoutes);
   await app.register(catalogueRoutes);
   await app.register(equipmentRoutes);
+  await app.register(rentalRoutes);
 
   return app;
 }

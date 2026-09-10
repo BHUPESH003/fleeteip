@@ -7,6 +7,8 @@ import { MachineRepository } from "../modules/equipment/infrastructure/machine-r
 import { AuthService } from "../modules/identity/application/auth-service.js";
 import { SessionRepository } from "../modules/identity/infrastructure/session-repository.js";
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
+import { RentalService } from "../modules/marketplace/rental/application/rental-service.js";
+import { RentalRepository } from "../modules/marketplace/rental/infrastructure/rental-repository.js";
 import { MembershipRepository } from "../modules/organizations/infrastructure/membership-repository.js";
 import { OrganizationRepository } from "../modules/organizations/infrastructure/organization-repository.js";
 import { PermissionService } from "../modules/permissions/application/permission-service.js";
@@ -28,6 +30,7 @@ const productCategoryRepository = new ProductCategoryRepository(db);
 const productSubcategoryRepository = new ProductSubcategoryRepository(db);
 const productRepository = new ProductRepository(db);
 const machineRepository = new MachineRepository(db);
+const rentalRepository = new RentalRepository(db);
 
 const permissionService = new PermissionService(
   membershipRepository,
@@ -52,4 +55,11 @@ export const container = {
   ),
 
   equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),
+
+  rentalService: new RentalService(
+    rentalRepository,
+    machineRepository,
+    organizationRepository,
+    permissionService,
+  ),
 };

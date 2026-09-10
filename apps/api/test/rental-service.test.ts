@@ -1,0 +1,393 @@
+import { describe, expect, it } from "vitest";
+import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
+import type {
+  ActiveMembershipRecord,
+  MembershipRepositoryPort,
+  OrganizationRepositoryPort,
+} from "../src/modules/organizations/domain/ports.js";
+import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
+import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
+import type {
+  MachineRecord,
+  MachineRepositoryPort,
+} from "../src/modules/equipment/domain/ports.js";
+import type {
+  CreateRentalInput,
+  RentalRecord,
+  RentalRepositoryPort,
+  UpdateRentalTermsInput,
+} from "../src/modules/marketplace/rental/domain/ports.js";
+import { RentalService } from "../src/modules/marketplace/rental/application/rental-service.js";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "../src/shared/errors.js";
+
+const OWNER_ROLE_ID = "role-owner";
+const RC_ORG_ID = "org-rental-company";
+// A second, distinct Rental Company — real and permission-granted in its own
+// right, used only to prove RentalService's own ownership check (not
+// PermissionService rejecting an unrecognized org) is what hides another
+// organization's rental behind NotFoundError.
+const OTHER_RC_ORG_ID = "org-other-rental-company";
+const RENTER_ORG_ID = "org-renter";
+const MACHINE_ID = "machine-1";
+const RETIRED_MACHINE_ID = "machine-retired";
+
+function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "rental_company") {
+  const membershipRepository: MembershipRepositoryPort = {
+    findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
+      id: "membership-1",
+      status: "active",
+      role_id: OWNER_ROLE_ID,
+    }),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listWithOrganizationByUserId: async () => [],
+  };
+  const roleRepository: RoleRepositoryPort = {
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
+    listPermissionCodesByRoleId: async (roleId) =>
+      roleId === OWNER_ROLE_ID ? ["rental.manage"] : [],
+  };
+  return new PermissionService(
+    membershipRepository,
+    roleRepository,
+    fakeOrganizationTypeRepository({
+      [RC_ORG_ID]: organizationTypeCode,
+      [OTHER_RC_ORG_ID]: "rental_company",
+    }),
+  );
+}
+
+// A single-purpose lookup fake shared by both PermissionService (checking
+// the acting organization's type) and RentalService (checking a referenced
+// renterOrganizationId's type) — the two are independent dependencies in
+// real wiring, but a test only needs one lookup table backing both.
+function fakeOrganizationTypeRepository(
+  organizationTypes: Record<string, OrganizationTypeCode>,
+): OrganizationRepositoryPort {
+  return {
+    findTypeByCode: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    findWithTypeById: async (id) => {
+      const organizationTypeCode = organizationTypes[id];
+      if (!organizationTypeCode) return undefined;
+      return {
+        id,
+        organization_type_id: `type-${organizationTypeCode}`,
+        organization_type_code: organizationTypeCode,
+        name: "Test Org",
+        code: "TESTORG",
+        created_at: new Date(),
+      };
+    },
+    codeExists: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+}
+
+function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort {
+  return {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async (id) => machines.find((machine) => machine.id === id),
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    assetCodeExists: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+}
+
+function machine(overrides: Partial<MachineRecord> = {}): MachineRecord {
+  return {
+    id: MACHINE_ID,
+    organization_id: RC_ORG_ID,
+    product_id: "product-1",
+    asset_code: "EXC-001",
+    chassis_number: null,
+    registration_number: "RJ01AB1234",
+    year_of_manufacture: null,
+    status: "active",
+    created_at: new Date(),
+    ...overrides,
+  };
+}
+
+// A real overlap check over the inclusive [start, end] convention (§9),
+// mirroring what the Postgres exclusion constraint/isAvailable query does —
+// close enough to exercise RentalService's own logic without a real DB.
+function overlaps(
+  aStart: string,
+  aEnd: string | null,
+  bStart: string,
+  bEnd: string | null,
+): boolean {
+  const aEndBound = aEnd ?? "9999-12-31";
+  const bEndBound = bEnd ?? "9999-12-31";
+  return aStart <= bEndBound && bStart <= aEndBound;
+}
+
+function fakeRentalRepository(): RentalRepositoryPort {
+  const rentals = new Map<string, RentalRecord>();
+  let nextId = 1;
+
+  return {
+    create: async (input: CreateRentalInput) => {
+      const record: RentalRecord = {
+        id: `rental-${nextId++}`,
+        rental_company_organization_id: input.rentalCompanyOrganizationId,
+        renter_organization_id: input.renterOrganizationId ?? null,
+        client_snapshot: input.clientSnapshot ?? null,
+        machine_id: input.machineId,
+        status: input.status,
+        project_name: input.projectName ?? null,
+        project_location: input.projectLocation ?? null,
+        start_date: input.startDate,
+        end_date: input.endDate ?? null,
+        rate: input.rate,
+        rate_unit: input.rateUnit,
+        mobilization_charge: input.mobilizationCharge ?? null,
+        demobilization_charge: input.demobilizationCharge ?? null,
+        payment_terms: input.paymentTerms ?? null,
+        shift_structure: input.shiftStructure ?? null,
+        overtime_rate: input.overtimeRate ?? null,
+        sunday_condition: input.sundayCondition ?? null,
+        fuel_norms: input.fuelNorms ?? null,
+        operator_scope: input.operatorScope ?? null,
+        notice_period_days: input.noticePeriodDays ?? null,
+        dehire_terms: input.dehireTerms ?? null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      rentals.set(record.id, record);
+      return record;
+    },
+    findById: async (id) => rentals.get(id),
+    listByOrganization: async (organizationId) =>
+      [...rentals.values()].filter((r) => r.rental_company_organization_id === organizationId),
+    updateTerms: async (id: string, updates: UpdateRentalTermsInput) => {
+      const existing = rentals.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated: RentalRecord = {
+        ...existing,
+        ...(updates.rate !== undefined && { rate: updates.rate }),
+        ...(updates.rateUnit !== undefined && { rate_unit: updates.rateUnit }),
+        ...(updates.projectName !== undefined && { project_name: updates.projectName }),
+        updated_at: new Date(),
+      };
+      rentals.set(id, updated);
+      return updated;
+    },
+    updateStatus: async (id, status) => {
+      const existing = rentals.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated = { ...existing, status, updated_at: new Date() };
+      rentals.set(id, updated);
+      return updated;
+    },
+    isAvailable: async (machineId, startDate, endDate) => {
+      const committed = [...rentals.values()].filter(
+        (r) => r.machine_id === machineId && ["confirmed", "active", "off_rent"].includes(r.status),
+      );
+      return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
+    },
+  };
+}
+
+function buildService(machines: MachineRecord[] = [machine()]) {
+  return new RentalService(
+    fakeRentalRepository(),
+    fakeMachineRepository(machines),
+    fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
+    fakePermissionService(),
+  );
+}
+
+const baseInput = {
+  machineId: MACHINE_ID,
+  clientSnapshot: { name: "Acme Construction" },
+  startDate: "2026-03-01",
+  endDate: "2026-03-10",
+  rate: 5000,
+  rateUnit: "day" as const,
+};
+
+describe("RentalService", () => {
+  it("rejects creating a rental against an unknown machine", async () => {
+    const service = buildService();
+    await expect(
+      service.createRental("user-1", RC_ORG_ID, { ...baseInput, machineId: "unknown-machine" }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("hides a machine belonging to a different organization behind NotFoundError", async () => {
+    const service = buildService([machine({ organization_id: "some-other-org" })]);
+    await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it("rejects creating a rental against a retired machine", async () => {
+    const service = buildService([machine({ id: RETIRED_MACHINE_ID, status: "retired" })]);
+    await expect(
+      service.createRental("user-1", RC_ORG_ID, { ...baseInput, machineId: RETIRED_MACHINE_ID }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects a renterOrganizationId that isn't a Renter-type organization", async () => {
+    const service = buildService();
+    await expect(
+      service.createRental("user-1", RC_ORG_ID, {
+        machineId: MACHINE_ID,
+        renterOrganizationId: RC_ORG_ID, // a rental_company, not a renter
+        startDate: "2026-03-01",
+        rate: 5000,
+        rateUnit: "day",
+      }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("creates a rental against a real Renter organization", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, {
+      machineId: MACHINE_ID,
+      renterOrganizationId: RENTER_ORG_ID,
+      startDate: "2026-03-01",
+      rate: 5000,
+      rateUnit: "day",
+    });
+    expect(rental.renterOrganizationId).toBe(RENTER_ORG_ID);
+    expect(rental.status).toBe("confirmed");
+  });
+
+  it("rejects an overlapping commitment for the same machine", async () => {
+    const service = buildService();
+    await service.createRental("user-1", RC_ORG_ID, baseInput);
+    await expect(
+      service.createRental("user-1", RC_ORG_ID, {
+        ...baseInput,
+        startDate: "2026-03-05",
+        endDate: "2026-03-15",
+      }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("allows a non-overlapping rental for the same machine once the first completes", async () => {
+    const service = buildService();
+    await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      startDate: "2026-01-01",
+      endDate: "2026-01-10",
+    });
+    const second = await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      startDate: "2026-02-01",
+      endDate: "2026-02-10",
+    });
+    expect(second.status).toBe("confirmed");
+  });
+
+  it("hides a rental that belongs to a different organization behind NotFoundError", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    await expect(service.getRental("user-2", OTHER_RC_ORG_ID, rental.id)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it("rejects editing terms once the rental is no longer confirmed", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active");
+
+    await expect(
+      service.updateRentalTerms("user-1", RC_ORG_ID, rental.id, { rate: 6000 }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("allows editing terms while still confirmed", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    const updated = await service.updateRentalTerms("user-1", RC_ORG_ID, rental.id, { rate: 6000 });
+    expect(updated.rate).toBe(6000);
+  });
+
+  it("rejects an illegal status transition", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    await expect(
+      service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "completed"),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects activating a rental whose machine has since been retired", async () => {
+    const machines = [machine()];
+    const service = buildService(machines);
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    machines[0]!.status = "retired";
+
+    await expect(
+      service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active"),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("runs the full confirmed -> active -> off_rent -> completed lifecycle", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active");
+    await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "off_rent");
+    const completed = await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "completed");
+    expect(completed.status).toBe("completed");
+  });
+
+  it("checks machine availability for the acting organization's own machine", async () => {
+    const service = buildService();
+    await expect(
+      service.checkAvailability("user-1", RC_ORG_ID, {
+        machineId: MACHINE_ID,
+        startDate: "2026-05-01",
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("hides another organization's machine behind NotFoundError when checking availability", async () => {
+    const service = buildService([machine({ organization_id: "some-other-org" })]);
+    await expect(
+      service.checkAvailability("user-1", RC_ORG_ID, {
+        machineId: MACHINE_ID,
+        startDate: "2026-05-01",
+      }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("rejects rental management for a Renter organization", async () => {
+    const service = new RentalService(
+      fakeRentalRepository(),
+      fakeMachineRepository([machine()]),
+      fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
+      fakePermissionService("renter"),
+    );
+    await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
+      ForbiddenError,
+    );
+  });
+});

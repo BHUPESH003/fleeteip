@@ -20,6 +20,12 @@ export const NAV_ITEMS: NavItem[] = [
     requiredPermission: "equipment.manage",
     requiredOrganizationType: "rental_company",
   },
+  {
+    label: "Rentals",
+    href: "/rentals",
+    requiredPermission: "rental.manage",
+    requiredOrganizationType: "rental_company",
+  },
   { label: "Settings", href: "/settings" },
 ];
 
