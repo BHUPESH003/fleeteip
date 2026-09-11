@@ -45,6 +45,8 @@ import type {
   UpdateCommercialQuotationTermsInput,
 } from "../src/modules/marketplace/commercial-quotation/domain/ports.js";
 import { CommercialQuotationService } from "../src/modules/marketplace/commercial-quotation/application/commercial-quotation-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import {
   ConflictError,
   ForbiddenError,
@@ -64,6 +66,7 @@ const RESPONSE_ID = "response-1";
 const WON_AUCTION_ID = "auction-won";
 const LOST_AUCTION_ID = "auction-lost";
 const OPEN_AUCTION_ID = "auction-open";
+const UNSELECTED_LEADING_AUCTION_ID = "auction-unselected-leader";
 
 function fakePermissionService(rcOrgType: OrganizationTypeCode = "rental_company") {
   const membershipRepository: MembershipRepositoryPort = {
@@ -92,6 +95,30 @@ function fakePermissionService(rcOrgType: OrganizationTypeCode = "rental_company
       [RENTER_ORG_ID]: "renter",
     }),
   );
+}
+
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient — this file isn't testing notification
+// behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
 }
 
 function fakeOrganizationTypeRepository(
@@ -290,6 +317,19 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
       created_at: new Date(),
       updated_at: new Date(),
     },
+    [UNSELECTED_LEADING_AUCTION_ID]: {
+      id: UNSELECTED_LEADING_AUCTION_ID,
+      requirement_id: OPEN_REQUIREMENT_ID,
+      created_by_organization_id: RENTER_ORG_ID,
+      bidding_direction: "ascending",
+      base_price: 1000,
+      max_bids_per_participant: null,
+      starts_at: new Date(),
+      ends_at: new Date(),
+      status: "closed",
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
   };
   const results: Record<string, AuctionResultRecord> = {
     [WON_AUCTION_ID]: {
@@ -320,19 +360,37 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
       amount: 1400,
       created_at: new Date(),
     },
+    {
+      id: "bid-rc-unselected",
+      auction_id: UNSELECTED_LEADING_AUCTION_ID,
+      participant_id: "participant-rc-unselected",
+      amount: 1600,
+      created_at: new Date(),
+    },
   ];
   const participants: Record<string, AuctionParticipantRecord> = {
+    // The auction owner has already selected this participant — the only
+    // state that lets it formalize the win into a quotation.
     "participant-rc": {
       id: "participant-rc",
       auction_id: WON_AUCTION_ID,
       rental_company_organization_id: RC_ORG_ID,
-      status: "approved",
+      status: "selected",
       created_at: new Date(),
     },
     "participant-other": {
       id: "participant-other",
       auction_id: LOST_AUCTION_ID,
       rental_company_organization_id: OTHER_RC_ORG_ID,
+      status: "selected",
+      created_at: new Date(),
+    },
+    // Holds the leading bid but was never selected by the auction owner —
+    // proves bid rank alone is not enough (see the regression test below).
+    "participant-rc-unselected": {
+      id: "participant-rc-unselected",
+      auction_id: UNSELECTED_LEADING_AUCTION_ID,
+      rental_company_organization_id: RC_ORG_ID,
       status: "approved",
       created_at: new Date(),
     },
@@ -358,9 +416,10 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     addParticipant: async () => {
       throw new Error("not used in this test");
     },
-    findParticipantByOrganization: async () => {
-      throw new Error("not used in this test");
-    },
+    findParticipantByOrganization: async (auctionId, organizationId) =>
+      Object.values(participants).find(
+        (p) => p.auction_id === auctionId && p.rental_company_organization_id === organizationId,
+      ),
     findParticipantById: async (id) => participants[id],
     listParticipants: async () => {
       throw new Error("not used in this test");
@@ -428,6 +487,8 @@ function fakeRentalRepository(): RentalRepositoryPort {
     findById: async (id) => rentals.get(id),
     listByOrganization: async (organizationId) =>
       [...rentals.values()].filter((r) => r.rental_company_organization_id === organizationId),
+    listByRenterOrganization: async (renterOrganizationId) =>
+      [...rentals.values()].filter((r) => r.renter_organization_id === renterOrganizationId),
     updateTerms: async (id: string, updates: UpdateRentalTermsInput) => {
       const existing = rentals.get(id);
       if (!existing) throw new Error("not used in this test");
@@ -486,6 +547,7 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         validity_date: input.validityDate,
         commercial_notes: input.commercialNotes ?? null,
         status: "draft",
+        renter_accepted_at: null,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -525,6 +587,7 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         ...(updates.commercialNotes !== undefined && {
           commercial_notes: updates.commercialNotes,
         }),
+        renter_accepted_at: null,
         updated_at: new Date(),
       };
       quotations.set(id, updated);
@@ -539,6 +602,7 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         rate_unit: input.rateUnit,
         start_date: input.startDate,
         end_date: input.endDate,
+        renter_accepted_at: null,
         updated_at: new Date(),
       };
       quotations.set(id, updated);
@@ -548,6 +612,17 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       const existing = quotations.get(id);
       if (!existing) throw new Error("not used in this test");
       const updated = { ...existing, status, updated_at: new Date() };
+      quotations.set(id, updated);
+      return updated;
+    },
+    setRenterAccepted: async (id, accepted) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated: CommercialQuotationRecord = {
+        ...existing,
+        renter_accepted_at: accepted ? new Date() : null,
+        updated_at: new Date(),
+      };
       quotations.set(id, updated);
       return updated;
     },
@@ -654,6 +729,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
     fakeAuctionRepository(),
     rentalService,
     fakePermissionService(),
+    fakeNotificationService(),
   );
 }
 
@@ -742,6 +818,19 @@ describe("CommercialQuotationService", () => {
       sourceAuctionId: WON_AUCTION_ID,
     });
     expect(quotation.sourceAuctionId).toBe(WON_AUCTION_ID);
+  });
+
+  // Regression: holding the leading bid is not, on its own, authorization —
+  // only the auction owner's explicit selection is. Without this gate a
+  // Rental Company could award itself with zero Renter action.
+  it("rejects formalizing a quotation for the leading bidder when the owner never selected it", async () => {
+    const service = buildService();
+    await expect(
+      service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        sourceAuctionId: UNSELECTED_LEADING_AUCTION_ID,
+      }),
+    ).rejects.toThrow(ValidationError);
   });
 
   it("allows editing terms while draft, rejects once withdrawn", async () => {
@@ -846,6 +935,7 @@ describe("CommercialQuotationService", () => {
       fakeAuctionRepository(),
       rentalService,
       fakePermissionService(),
+      fakeNotificationService(),
     );
 
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
@@ -856,6 +946,7 @@ describe("CommercialQuotationService", () => {
       quotationResponseId: RESPONSE_ID,
     });
     await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
 
     const awarded = await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
     expect(awarded.status).toBe("awarded");
@@ -869,6 +960,73 @@ describe("CommercialQuotationService", () => {
 
     await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
       ConflictError,
+    );
+  });
+
+  // Regression: a Rental Company could previously send a Path A/B quotation
+  // to a real in-app Renter and award it with zero Renter action — the same
+  // "award to self" shape already closed for the auction path.
+  it("rejects awarding a Path A quotation to a real Renter who has not accepted it", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      quotationResponseId: RESPONSE_ID,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
+      ConflictError,
+    );
+  });
+
+  it("does not require Renter acceptance for a Path C quotation — the auction selection is that consent", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      sourceAuctionId: WON_AUCTION_ID,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    const awarded = await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
+    expect(awarded.status).toBe("awarded");
+  });
+
+  it("does not require Renter acceptance for an external client quotation — there is no in-app Renter to click Accept", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    const awarded = await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
+    expect(awarded.status).toBe("awarded");
+  });
+
+  it("clears a prior Renter acceptance when the Rental Company edits terms directly, requiring re-acceptance", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
+    await service.updateTerms("user-1", RC_ORG_ID, quotation.id, { paymentTerms: "Net 15" });
+    await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
+      ConflictError,
+    );
+  });
+
+  it("rejects a Rental Company accepting its own quotation on the Renter's behalf", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    await expect(service.acceptQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
+      ForbiddenError,
     );
   });
 
@@ -944,5 +1102,17 @@ describe("CommercialQuotationService", () => {
     await expect(service.listRenterOrganizations("user-1", RENTER_ORG_ID)).rejects.toThrow(
       ForbiddenError,
     );
+  });
+
+  it("lists Rental Company organizations for a Renter's own quotations list, gated by quotation.respond", async () => {
+    const service = buildService();
+    const rentalCompanies = await service.listRentalCompanyOrganizations("user-1", RENTER_ORG_ID);
+    expect(rentalCompanies).toHaveLength(1);
+    expect(rentalCompanies[0]?.id).toBe(RC_ORG_ID);
+    expect(rentalCompanies[0]?.organizationTypeCode).toBe("rental_company");
+
+    await expect(
+      service.listRentalCompanyOrganizations("user-1", RC_ORG_ID),
+    ).rejects.toThrow(ForbiddenError);
   });
 });

@@ -43,12 +43,16 @@ export const permissionCodeSchema = z.enum([
   "logsheet.manage",
   "billing.manage",
   "billing.respond",
+  "rental.respond",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
   "membership.manage": ["rental_company", "renter"],
   "equipment.manage": ["rental_company"],
   "rental.manage": ["rental_company"],
+  // Read-only view of a Renter's own rentals — same split as
+  // quotation.manage/.respond and billing.manage/.respond.
+  "rental.respond": ["renter"],
   // Renter posts/closes a Requirement; Rental Company browses/responds to it.
   "rfq.manage": ["renter"],
   "rfq.respond": ["rental_company"],

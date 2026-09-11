@@ -124,6 +124,9 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
+    listByRenterOrganization: async () => {
+      throw new Error("not used in this test");
+    },
     updateTerms: async () => {
       throw new Error("not used in this test");
     },

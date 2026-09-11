@@ -25,6 +25,8 @@ import type {
   CreateAuctionInput,
 } from "../src/modules/marketplace/auction/domain/ports.js";
 import { AuctionService } from "../src/modules/marketplace/auction/application/auction-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import {
   ConflictError,
   ForbiddenError,
@@ -69,6 +71,39 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
   );
 }
 
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient wherever this file isn't testing
+// notification behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
+}
+
+function fakeOrgRepo(): OrganizationRepositoryPort {
+  return fakeOrganizationTypeRepository({
+    [RENTER_ORG_ID]: "renter",
+    [OTHER_RENTER_ORG_ID]: "renter",
+    [RC_ORG_ID]: "rental_company",
+    [OTHER_RC_ORG_ID]: "rental_company",
+  });
+}
+
 function fakeOrganizationTypeRepository(
   organizationTypes: Record<string, OrganizationTypeCode>,
 ): OrganizationRepositoryPort {
@@ -79,8 +114,16 @@ function fakeOrganizationTypeRepository(
     create: async () => {
       throw new Error("not used in this test");
     },
-    findById: async () => {
-      throw new Error("not used in this test");
+    findById: async (id) => {
+      const organizationTypeCode = organizationTypes[id];
+      if (!organizationTypeCode) return undefined;
+      return {
+        id,
+        organization_type_id: `type-${organizationTypeCode}`,
+        name: `Org ${id}`,
+        code: "TESTORG",
+        created_at: new Date(),
+      };
     },
     findWithTypeById: async (id) => {
       const organizationTypeCode = organizationTypes[id];
@@ -89,7 +132,7 @@ function fakeOrganizationTypeRepository(
         id,
         organization_type_id: `type-${organizationTypeCode}`,
         organization_type_code: organizationTypeCode,
-        name: "Test Org",
+        name: `Org ${id}`,
         code: "TESTORG",
         created_at: new Date(),
       };
@@ -306,6 +349,8 @@ function buildService(requirements?: RequirementRecord[]) {
     fakeAuctionRepository(),
     fakeRequirementRepository(requirements),
     fakePermissionService(),
+    fakeOrgRepo(),
+    fakeNotificationService(),
   );
 }
 
@@ -378,6 +423,8 @@ describe("AuctionService", () => {
       fakeAuctionRepository(),
       fakeRequirementRepository(),
       fakePermissionService("rental_company"),
+      fakeOrgRepo(),
+      fakeNotificationService(),
     );
     await expect(createRunningAuction(service)).rejects.toThrow(ForbiddenError);
   });
@@ -441,6 +488,8 @@ describe("AuctionService", () => {
       fakeAuctionRepository(),
       fakeRequirementRepository(),
       fakePermissionService(),
+      fakeOrgRepo(),
+      fakeNotificationService(),
     );
     const auction = await service.createAuction("user-1", RENTER_ORG_ID, {
       requirementId: REQUIREMENT_ID,
@@ -536,5 +585,65 @@ describe("AuctionService", () => {
     await expect(service.cancelAuction("user-1", RENTER_ORG_ID, auction.id)).rejects.toThrow(
       ConflictError,
     );
+  });
+
+  describe("selectParticipant", () => {
+    it("lets the owner select an approved participant once the auction has closed", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      const participant = await approvedParticipant(service, auction.id);
+      await service.placeBid("user-2", RC_ORG_ID, auction.id, 1200);
+      await service.closeAuctionEarly("user-1", RENTER_ORG_ID, auction.id);
+
+      const selected = await service.selectParticipant(
+        "user-1",
+        RENTER_ORG_ID,
+        auction.id,
+        participant.id,
+      );
+      expect(selected.status).toBe("selected");
+      expect(selected.rentalCompanyOrganizationName).toBe(`Org ${RC_ORG_ID}`);
+    });
+
+    it("rejects selecting a participant before the auction has closed", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      const participant = await approvedParticipant(service, auction.id);
+      await expect(
+        service.selectParticipant("user-1", RENTER_ORG_ID, auction.id, participant.id),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects selecting a participant who was never approved", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      const participant = await service.requestToJoin("user-2", RC_ORG_ID, auction.id);
+      await service.closeAuctionEarly("user-1", RENTER_ORG_ID, auction.id);
+      await expect(
+        service.selectParticipant("user-1", RENTER_ORG_ID, auction.id, participant.id),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects selecting a second participant once one has already been selected", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      const first = await approvedParticipant(service, auction.id, RC_ORG_ID);
+      const second = await approvedParticipant(service, auction.id, OTHER_RC_ORG_ID);
+      await service.closeAuctionEarly("user-1", RENTER_ORG_ID, auction.id);
+      await service.selectParticipant("user-1", RENTER_ORG_ID, auction.id, first.id);
+      await expect(
+        service.selectParticipant("user-1", RENTER_ORG_ID, auction.id, second.id),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects a Rental Company (non-owner) attempting to select a participant", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      const participant = await approvedParticipant(service, auction.id);
+      await service.closeAuctionEarly("user-1", RENTER_ORG_ID, auction.id);
+      await expect(
+        service.selectParticipant("user-2", RC_ORG_ID, auction.id, participant.id),
+      ).rejects.toThrow(ForbiddenError);
+    });
   });
 });

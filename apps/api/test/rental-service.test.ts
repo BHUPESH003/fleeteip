@@ -61,6 +61,7 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
     fakeOrganizationTypeRepository({
       [RC_ORG_ID]: organizationTypeCode,
       [OTHER_RC_ORG_ID]: "rental_company",
+      [RENTER_ORG_ID]: "renter",
     }),
   );
 }
@@ -79,8 +80,16 @@ function fakeOrganizationTypeRepository(
     create: async () => {
       throw new Error("not used in this test");
     },
-    findById: async () => {
-      throw new Error("not used in this test");
+    findById: async (id) => {
+      const organizationTypeCode = organizationTypes[id];
+      if (!organizationTypeCode) return undefined;
+      return {
+        id,
+        organization_type_id: `type-${organizationTypeCode}`,
+        name: "Test Org",
+        code: "TESTORG",
+        created_at: new Date(),
+      };
     },
     findWithTypeById: async (id) => {
       const organizationTypeCode = organizationTypes[id];
@@ -188,6 +197,8 @@ function fakeRentalRepository(): RentalRepositoryPort {
     findById: async (id) => rentals.get(id),
     listByOrganization: async (organizationId) =>
       [...rentals.values()].filter((r) => r.rental_company_organization_id === organizationId),
+    listByRenterOrganization: async (renterOrganizationId) =>
+      [...rentals.values()].filter((r) => r.renter_organization_id === renterOrganizationId),
     updateTerms: async (id: string, updates: UpdateRentalTermsInput) => {
       const existing = rentals.get(id);
       if (!existing) throw new Error("not used in this test");
@@ -437,5 +448,33 @@ describe("RentalService", () => {
     await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,
     );
+  });
+
+  it("lets a Renter list its own rentals, resolving machine/company names it has no permission to look up itself", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const rentals = await service.listRentals("user-2", RENTER_ORG_ID);
+
+    expect(rentals).toHaveLength(1);
+    expect(rentals[0]?.id).toBe(rental.id);
+    expect(rentals[0]?.machineAssetCode).toBe("EXC-001");
+    expect(rentals[0]?.rentalCompanyOrganizationName).toBe("Test Org");
+  });
+
+  it("leaves machineAssetCode/rentalCompanyOrganizationName null on the Rental Company's own listing", async () => {
+    const service = buildService();
+    await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const asRentalCompany = await service.listRentals("user-1", RC_ORG_ID);
+    expect(asRentalCompany).toHaveLength(1);
+    expect(asRentalCompany[0]?.machineAssetCode).toBeNull();
+    expect(asRentalCompany[0]?.rentalCompanyOrganizationName).toBeNull();
   });
 });

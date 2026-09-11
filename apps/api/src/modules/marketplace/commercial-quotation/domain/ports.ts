@@ -28,6 +28,7 @@ export interface CommercialQuotationRecord {
   validity_date: string;
   commercial_notes: string | null;
   status: CommercialQuotationStatus;
+  renter_accepted_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -97,6 +98,11 @@ export interface CommercialQuotationRepositoryPort {
     input: ApplyAcceptedOfferInput,
   ): Promise<CommercialQuotationRecord>;
   updateStatus(id: string, status: CommercialQuotationStatus): Promise<CommercialQuotationRecord>;
+  // Sets/clears renter_accepted_at — the Renter's explicit "I accept these
+  // terms" signal, independent of `status` (see 0018's migration comment).
+  // Any subsequent term change (a direct edit or a new negotiation offer)
+  // clears it back to null so a stale acceptance can never cover new terms.
+  setRenterAccepted(id: string, accepted: boolean): Promise<CommercialQuotationRecord>;
   // Lazily flips sent/negotiating -> expired once validityDate has passed —
   // a plain guarded UPDATE, no lock needed (unlike Auction's close, nothing
   // else races against this transition). See

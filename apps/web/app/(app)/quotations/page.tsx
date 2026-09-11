@@ -1,5 +1,6 @@
 "use client";
 
+import type { AuctionDetail } from "@fleetip/contracts/auction";
 import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
@@ -50,6 +51,7 @@ function QuotationRow({
   organizationType,
   machinesById,
   renterOrganizationsById,
+  rentalCompanyOrganizationsById,
   onChanged,
 }: {
   quotation: CommercialQuotation;
@@ -57,6 +59,7 @@ function QuotationRow({
   organizationType: "renter" | "rental_company";
   machinesById: Record<string, Machine>;
   renterOrganizationsById: Record<string, Organization>;
+  rentalCompanyOrganizationsById: Record<string, Organization>;
   onChanged: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -108,11 +111,12 @@ function QuotationRow({
     }
   }
 
-  async function handleAction(action: "send" | "withdraw" | "reject" | "award") {
+  async function handleAction(action: "send" | "withdraw" | "accept" | "reject" | "award") {
     setError(null);
     try {
       if (action === "send") await apiClient.sendQuotation(organizationId, quotation.id);
       if (action === "withdraw") await apiClient.withdrawQuotation(organizationId, quotation.id);
+      if (action === "accept") await apiClient.acceptQuotation(organizationId, quotation.id);
       if (action === "reject") await apiClient.rejectQuotation(organizationId, quotation.id);
       if (action === "award") await apiClient.awardQuotation(organizationId, quotation.id);
       onChanged();
@@ -121,11 +125,29 @@ function QuotationRow({
     }
   }
 
-  const customer = quotation.clientSnapshot
-    ? quotation.clientSnapshot.name
-    : (quotation.renterOrganizationId && renterOrganizationsById[quotation.renterOrganizationId]?.name) ||
-      `Renter ${quotation.renterOrganizationId?.slice(0, 8)}…`;
+  // The "customer" column always shows the counterparty relative to the
+  // viewer — a Renter looking at its own quotations wants to know which
+  // Rental Company sent it, not its own organization id.
+  const customer =
+    organizationType === "renter"
+      ? rentalCompanyOrganizationsById[quotation.rentalCompanyOrganizationId]?.name ??
+        `Rental Company ${quotation.rentalCompanyOrganizationId.slice(0, 8)}…`
+      : (quotation.clientSnapshot?.name ??
+        (quotation.renterOrganizationId && renterOrganizationsById[quotation.renterOrganizationId]?.name) ??
+        `Renter ${quotation.renterOrganizationId?.slice(0, 8)}…`);
   const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
+  // Awarding now requires the Renter's explicit acceptance whenever a real
+  // in-app Renter is on the other end — an auction-sourced quotation is
+  // exempt (the Renter's earlier participant selection already is that
+  // consent). Mirrors the server-side gate in awardQuotation/acceptQuotation
+  // — the server remains the real enforcement point regardless of what's
+  // rendered here.
+  const needsRenterAcceptance =
+    Boolean(quotation.renterOrganizationId) &&
+    !quotation.sourceAuctionId &&
+    !quotation.renterAcceptedAt;
+  const canAccept =
+    !isOwner && organizationType === "renter" && canNegotiate && needsRenterAcceptance;
 
   return (
     <>
@@ -168,7 +190,7 @@ function QuotationRow({
                 Withdraw
               </button>
             )}
-            {isOwner && canNegotiate && (
+            {isOwner && canNegotiate && !needsRenterAcceptance && (
               <button
                 onClick={() => void handleAction("award")}
                 className="rounded-md border border-green-300 bg-green-50 px-2 py-1 text-xs text-green-700 hover:bg-green-100"
@@ -176,6 +198,28 @@ function QuotationRow({
                 Award
               </button>
             )}
+            {isOwner && canNegotiate && needsRenterAcceptance && (
+              <span className="self-center text-xs text-gray-500">
+                Awaiting the Renter&rsquo;s acceptance
+              </span>
+            )}
+            {canAccept && (
+              <button
+                onClick={() => void handleAction("accept")}
+                className="rounded-md border border-green-300 bg-green-50 px-2 py-1 text-xs text-green-700 hover:bg-green-100"
+              >
+                Accept
+              </button>
+            )}
+            {!isOwner &&
+              organizationType === "renter" &&
+              !needsRenterAcceptance &&
+              quotation.renterAcceptedAt &&
+              canNegotiate && (
+                <span className="self-center text-xs text-gray-500">
+                  You accepted — awaiting award
+                </span>
+              )}
             {!isOwner && organizationType === "renter" && canNegotiate && (
               <button
                 onClick={() => void handleAction("reject")}
@@ -316,10 +360,12 @@ function RequirementContext({
 function CreateQuotationForm({
   organizationId,
   requirementIdParam,
+  sourceAuctionIdParam,
   onCreated,
 }: {
   organizationId: string;
   requirementIdParam: string | null;
+  sourceAuctionIdParam: string | null;
   onCreated: () => void;
 }) {
   const isFromRequirement = Boolean(requirementIdParam);
@@ -327,10 +373,14 @@ function CreateQuotationForm({
   const [renterOrganizations, setRenterOrganizations] = useState<Organization[]>([]);
   const [requirement, setRequirement] = useState<Requirement | null>(null);
   const [subcategoryName, setSubcategoryName] = useState<string | null>(null);
+  const [prefilledRate, setPrefilledRate] = useState<number | null>(null);
   const [customerMode, setCustomerMode] = useState<"external" | "renter">(
     isFromRequirement ? "renter" : "external",
   );
   const [loadingContext, setLoadingContext] = useState(isFromRequirement);
+  const [loadingAuctionPrefill, setLoadingAuctionPrefill] = useState(
+    Boolean(sourceAuctionIdParam),
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -366,6 +416,29 @@ function CreateQuotationForm({
     })();
   }, [organizationId, requirementIdParam]);
 
+  useEffect(() => {
+    if (!sourceAuctionIdParam) return;
+    void (async () => {
+      try {
+        const detail = (await apiClient.getAuctionDetail(
+          organizationId,
+          sourceAuctionIdParam,
+        )) as AuctionDetail;
+        // The selected participant's own bids only (never a competitor's) —
+        // the last one placed is always their best, since every accepted
+        // bid must strictly improve on the one before it.
+        const ownParticipantId = detail.participants[0]?.id;
+        const ownBids = detail.bids.filter((bid) => bid.participantId === ownParticipantId);
+        const lastBid = ownBids[ownBids.length - 1];
+        if (lastBid) setPrefilledRate(lastBid.amount);
+      } catch {
+        // Best-effort pre-fill only — the form still works without it.
+      } finally {
+        setLoadingAuctionPrefill(false);
+      }
+    })();
+  }, [organizationId, sourceAuctionIdParam]);
+
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -377,6 +450,7 @@ function CreateQuotationForm({
       await apiClient.createQuotation(organizationId, {
         machineId: String(form.get("machineId")),
         requirementId: requirementIdParam ?? undefined,
+        sourceAuctionId: sourceAuctionIdParam ?? undefined,
         ...(customerMode === "renter"
           ? { renterOrganizationId: String(form.get("renterOrganizationId")) }
           : { clientSnapshot: { name: String(form.get("clientName")) } }),
@@ -404,7 +478,7 @@ function CreateQuotationForm({
     <Card className="mb-8 mt-4">
       <h2 className="mb-4 text-lg font-medium text-gray-900">Create a quotation</h2>
       {error && <ErrorState message={error} />}
-      {loadingContext ? (
+      {loadingContext || loadingAuctionPrefill ? (
         <LoadingState label="Loading requirement…" />
       ) : activeMachines.length === 0 ? (
         <EmptyState
@@ -490,7 +564,14 @@ function CreateQuotationForm({
               defaultValue={requirement?.requestedStartDate}
             />
             <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
-            <Input label="Rate" name="rate" type="number" step="0.01" required />
+            <Input
+              label="Rate"
+              name="rate"
+              type="number"
+              step="0.01"
+              required
+              defaultValue={prefilledRate ?? undefined}
+            />
             <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
             <Input
               label="Valid until"
@@ -516,10 +597,14 @@ export default function QuotationsPage() {
   const organizationType = currentMembership?.organization.organizationTypeCode;
   const searchParams = useSearchParams();
   const requirementIdParam = searchParams.get("requirementId");
+  const sourceAuctionIdParam = searchParams.get("sourceAuctionId");
 
   const [quotations, setQuotations] = useState<CommercialQuotation[]>([]);
   const [machinesById, setMachinesById] = useState<Record<string, Machine>>({});
   const [renterOrganizationsById, setRenterOrganizationsById] = useState<
+    Record<string, Organization>
+  >({});
+  const [rentalCompanyOrganizationsById, setRentalCompanyOrganizationsById] = useState<
     Record<string, Organization>
   >({});
   const [loading, setLoading] = useState(true);
@@ -546,6 +631,13 @@ export default function QuotationsPage() {
           ]);
           setMachinesById(Object.fromEntries(machines.map((m) => [m.id, m])));
           setRenterOrganizationsById(Object.fromEntries(renterOrganizations.map((o) => [o.id, o])));
+        } else {
+          const rentalCompanyOrganizations = (await apiClient.listRentalCompanyOrganizations(
+            organizationId,
+          )) as Organization[];
+          setRentalCompanyOrganizationsById(
+            Object.fromEntries(rentalCompanyOrganizations.map((o) => [o.id, o])),
+          );
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load quotations");
@@ -572,6 +664,7 @@ export default function QuotationsPage() {
             <CreateQuotationForm
               organizationId={organizationId}
               requirementIdParam={requirementIdParam}
+              sourceAuctionIdParam={sourceAuctionIdParam}
               onCreated={() => void refresh()}
             />
           )}
@@ -588,7 +681,9 @@ export default function QuotationsPage() {
                     <tr className="border-b border-gray-200 text-gray-500">
                       <th className="py-2 pr-4 font-medium">Reference</th>
                       <th className="hidden py-2 pr-4 font-medium sm:table-cell">Machine</th>
-                      <th className="hidden py-2 pr-4 font-medium sm:table-cell">Customer</th>
+                      <th className="hidden py-2 pr-4 font-medium sm:table-cell">
+                        {organizationType === "rental_company" ? "Customer" : "From"}
+                      </th>
                       <th className="py-2 pr-4 font-medium">Rate</th>
                       <th className="py-2 pr-4 font-medium">Status</th>
                       <th className="py-2 pr-4 font-medium">Actions</th>
@@ -603,6 +698,7 @@ export default function QuotationsPage() {
                         organizationType={organizationType}
                         machinesById={machinesById}
                         renterOrganizationsById={renterOrganizationsById}
+                        rentalCompanyOrganizationsById={rentalCompanyOrganizationsById}
                         onChanged={() => void refresh()}
                       />
                     ))}

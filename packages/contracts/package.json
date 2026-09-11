@@ -15,7 +15,8 @@
     "./maintenance": "./src/maintenance/index.ts",
     "./transport": "./src/transport/index.ts",
     "./logsheet": "./src/logsheet/index.ts",
-    "./billing": "./src/billing/index.ts"
+    "./billing": "./src/billing/index.ts",
+    "./notification": "./src/notification/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

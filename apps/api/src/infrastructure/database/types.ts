@@ -102,6 +102,7 @@ export interface Database {
   invoice_line_items: InvoiceLineItemsTable;
   payments: PaymentsTable;
   invoice_reference_sequences: InvoiceReferenceSequencesTable;
+  notifications: NotificationsTable;
 }
 
 export interface ProductCategoriesTable {
@@ -283,6 +284,7 @@ export interface CommercialQuotationsTable {
   validity_date: string;
   commercial_notes: string | null;
   status: string;
+  renter_accepted_at: Date | string | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }
@@ -297,6 +299,18 @@ export interface QuotationOffersTable {
   end_date: string | null;
   notes: string | null;
   status: string;
+  created_at: CreatedAt;
+}
+
+export interface NotificationsTable {
+  id: Generated<string>;
+  recipient_organization_id: string;
+  type: string;
+  title: string;
+  message: string;
+  related_resource_type: string | null;
+  related_resource_id: string | null;
+  read_at: Date | string | null;
   created_at: CreatedAt;
 }
 

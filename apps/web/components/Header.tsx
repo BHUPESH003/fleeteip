@@ -1,6 +1,7 @@
 "use client";
 
 import { Dropdown, DropdownItem } from "@fleetip/ui";
+import { NotificationBell } from "./NotificationBell";
 import { useSession } from "../lib/session-context";
 
 export function Header({ onMenuClick }: { onMenuClick: () => void }) {
@@ -16,20 +17,22 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
       >
         ☰
       </button>
-      <span />
-      <Dropdown
-        align="right"
-        trigger={
-          <span className="text-sm font-medium text-gray-700">
-            {session?.user.displayName ?? "Account"}
-          </span>
-        }
-      >
-        <div className="border-b border-gray-100 px-3 py-2 text-xs text-gray-500">
-          {session?.user.email}
-        </div>
-        <DropdownItem onClick={() => void logout()}>Log out</DropdownItem>
-      </Dropdown>
+      <div className="ml-auto flex items-center gap-4">
+        <NotificationBell />
+        <Dropdown
+          align="right"
+          trigger={
+            <span className="text-sm font-medium text-gray-700">
+              {session?.user.displayName ?? "Account"}
+            </span>
+          }
+        >
+          <div className="border-b border-gray-100 px-3 py-2 text-xs text-gray-500">
+            {session?.user.email}
+          </div>
+          <DropdownItem onClick={() => void logout()}>Log out</DropdownItem>
+        </Dropdown>
+      </div>
     </header>
   );
 }

@@ -21,6 +21,7 @@ import { PermissionService } from "../../../permissions/application/permission-s
 import type { AuctionRepositoryPort } from "../../auction/domain/ports.js";
 import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
 import type { QuotationResponseRepositoryPort } from "../../quotation-response/domain/ports.js";
+import { NotificationService } from "../../../notification/application/notification-service.js";
 import { RentalService } from "../../rental/application/rental-service.js";
 import { canTransition } from "../domain/quotation-status.js";
 import type {
@@ -58,6 +59,9 @@ function toQuotation(record: CommercialQuotationRecord): CommercialQuotation {
     validityDate: record.validity_date,
     commercialNotes: record.commercial_notes,
     status: record.status,
+    renterAcceptedAt: record.renter_accepted_at
+      ? new Date(record.renter_accepted_at).toISOString()
+      : null,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
   };
@@ -101,7 +105,19 @@ export class CommercialQuotationService {
     private readonly auctionRepository: AuctionRepositoryPort,
     private readonly rentalService: RentalService,
     private readonly permissionService: PermissionService,
+    private readonly notificationService: NotificationService,
   ) {}
+
+  // Notification failures must never block the real business action they're
+  // attached to — this is a best-effort side effect, not part of the
+  // transaction.
+  private async notify(input: Parameters<NotificationService["notify"]>[0]): Promise<void> {
+    try {
+      await this.notificationService.notify(input);
+    } catch {
+      // swallow — see comment above.
+    }
+  }
 
   async createQuotation(
     userId: string,
@@ -162,7 +178,7 @@ export class CommercialQuotationService {
     }
 
     if (input.sourceAuctionId) {
-      await this.assertWonAuction(input.sourceAuctionId, rentalCompanyOrganizationId);
+      await this.assertSelectedParticipant(input.sourceAuctionId, rentalCompanyOrganizationId);
     }
 
     const referenceNumber = await this.quotationRepository.nextReferenceNumber(
@@ -198,10 +214,13 @@ export class CommercialQuotationService {
     return toQuotation(record);
   }
 
-  // Only the auction's actual winning bidder may formalize the win into a
-  // quotation. See docs/marketplace-core-loop-design.md §8 "From
-  // AuctionResult to Award".
-  private async assertWonAuction(
+  // Only the participant the auction owner explicitly selected (post-close)
+  // may formalize the win into a quotation — deliberately NOT "whoever had
+  // the leading bid". The bid-computed leader is only ever a suggestion;
+  // without this gate a Rental Company could award itself with zero Renter
+  // action once it happened to be ranked first. See
+  // docs/marketplace-core-loop-design.md §8 and AuctionService.selectParticipant.
+  private async assertSelectedParticipant(
     sourceAuctionId: string,
     rentalCompanyOrganizationId: string,
   ): Promise<void> {
@@ -210,20 +229,13 @@ export class CommercialQuotationService {
     if (auction.status !== "closed") {
       throw new ConflictError("Auction has not closed yet");
     }
-    const result = await this.auctionRepository.findResult(sourceAuctionId);
-    const bids = result?.winning_bid_id
-      ? await this.auctionRepository.listBids(sourceAuctionId)
-      : [];
-    const winningBid = bids.find((bid) => bid.id === result?.winning_bid_id);
-    const winningParticipant = winningBid
-      ? await this.auctionRepository.findParticipantById(winningBid.participant_id)
-      : undefined;
-    if (
-      !winningParticipant ||
-      winningParticipant.rental_company_organization_id !== rentalCompanyOrganizationId
-    ) {
+    const participant = await this.auctionRepository.findParticipantByOrganization(
+      sourceAuctionId,
+      rentalCompanyOrganizationId,
+    );
+    if (!participant || participant.status !== "selected") {
       throw new ValidationError(
-        "Only the auction's winning Rental Company may formalize this quotation",
+        "Only the participant selected by the auction owner may formalize this quotation",
       );
     }
   }
@@ -240,6 +252,22 @@ export class CommercialQuotationService {
       "quotation.manage",
     );
     const records = await this.organizationRepository.listByType("renter");
+    return records.map(toOrganization);
+  }
+
+  // Mirrors listRenterOrganizations for the other side — lets a Renter
+  // resolve which Rental Company sent it a quotation, instead of showing a
+  // raw organization id in its own quotations list.
+  async listRentalCompanyOrganizations(
+    userId: string,
+    renterOrganizationId: string,
+  ): Promise<Organization[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      renterOrganizationId,
+      "quotation.respond",
+    );
+    const records = await this.organizationRepository.listByType("rental_company");
     return records.map(toOrganization);
   }
 
@@ -337,6 +365,37 @@ export class CommercialQuotationService {
     );
   }
 
+  // The Renter's explicit consent gate awardQuotation checks — see the
+  // comment above that method.
+  async acceptQuotation(
+    userId: string,
+    renterOrganizationId: string,
+    quotationId: string,
+  ): Promise<CommercialQuotation> {
+    await this.permissionService.requirePermission(
+      userId,
+      renterOrganizationId,
+      "quotation.respond",
+    );
+    const existing = await this.quotationRepository.findById(quotationId);
+    if (!existing || existing.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Quotation not found in this organization");
+    }
+    if (existing.status !== "sent" && existing.status !== "negotiating") {
+      throw new ConflictError(`Cannot accept a quotation that is ${existing.status}`);
+    }
+    const record = await this.quotationRepository.setRenterAccepted(quotationId, true);
+    await this.notify({
+      recipientOrganizationId: record.rental_company_organization_id,
+      type: "quotation.accepted",
+      title: "Quotation accepted",
+      message: `The Renter accepted your quotation (${record.reference_number}) — you can now award it.`,
+      relatedResourceType: "quotation",
+      relatedResourceId: record.id,
+    });
+    return toQuotation(record);
+  }
+
   async rejectQuotation(
     userId: string,
     renterOrganizationId: string,
@@ -355,6 +414,14 @@ export class CommercialQuotationService {
       throw new ConflictError(`Cannot reject a quotation that is ${existing.status}`);
     }
     const record = await this.quotationRepository.updateStatus(quotationId, "rejected");
+    await this.notify({
+      recipientOrganizationId: record.rental_company_organization_id,
+      type: "quotation.rejected",
+      title: "Quotation rejected",
+      message: `Your quotation (${record.reference_number}) was rejected.`,
+      relatedResourceType: "quotation",
+      relatedResourceId: record.id,
+    });
     return toQuotation(record);
   }
 
@@ -374,6 +441,16 @@ export class CommercialQuotationService {
       throw new ConflictError(`Cannot transition quotation from ${existing.status} to ${status}`);
     }
     const record = await this.quotationRepository.updateStatus(quotationId, status);
+    if (status === "sent" && record.renter_organization_id) {
+      await this.notify({
+        recipientOrganizationId: record.renter_organization_id,
+        type: "quotation.sent",
+        title: "Quotation received",
+        message: `A Rental Company sent you a quotation (${record.reference_number}).`,
+        relatedResourceType: "quotation",
+        relatedResourceId: record.id,
+      });
+    }
     return toQuotation(record);
   }
 
@@ -399,8 +476,23 @@ export class CommercialQuotationService {
       endDate: input.endDate,
       notes: input.notes,
     });
-    if (existing.status === "sent") {
+    const isFirstOffer = existing.status === "sent";
+    if (isFirstOffer) {
       await this.quotationRepository.updateStatus(quotationId, "negotiating");
+    }
+    const recipientOrganizationId =
+      organizationId === existing.rental_company_organization_id
+        ? existing.renter_organization_id
+        : existing.rental_company_organization_id;
+    if (recipientOrganizationId) {
+      await this.notify({
+        recipientOrganizationId,
+        type: "quotation.negotiation_offer",
+        title: isFirstOffer ? "Negotiation started" : "New counter-offer",
+        message: `A counter-offer of ${input.rate}/${input.rateUnit} was made on quotation ${existing.reference_number}.`,
+        relatedResourceType: "quotation",
+        relatedResourceId: quotationId,
+      });
     }
     return toOffer(offer);
   }
@@ -443,12 +535,29 @@ export class CommercialQuotationService {
       startDate: accepted.start_date,
       endDate: accepted.end_date,
     });
+    await this.notify({
+      recipientOrganizationId: accepted.offered_by_organization_id,
+      type: "quotation.offer_accepted",
+      title: "Offer accepted",
+      message: `Your offer of ${accepted.rate}/${accepted.rate_unit} on quotation ${record.reference_number} was accepted.`,
+      relatedResourceType: "quotation",
+      relatedResourceId: quotationId,
+    });
     return toQuotation(record);
   }
 
-  // Awarding is always the Rental Company's action in this MVP — Rental
-  // creation requires rental.manage, which only a Rental Company holds. See
-  // docs/marketplace-core-loop-design.md §2/§6.
+  // Awarding always converts the quotation into a Rental via the Rental
+  // Company's own action (Rental creation requires rental.manage, which only
+  // a Rental Company holds — see docs/marketplace-core-loop-design.md §2/§6).
+  // But the Rental Company can no longer award unilaterally: whenever a real
+  // in-app Renter is on the other end, the Renter must have explicitly
+  // accepted first (acceptQuotation, below) — closes the same "award to
+  // self" gap already closed for the auction path (selectParticipant/
+  // assertSelectedParticipant). An external client (clientSnapshot, no
+  // renterOrganizationId) has no user account to click Accept, so that
+  // sub-case is unchanged. A Path C (sourceAuctionId) quotation is also
+  // exempt — the Renter's explicit auction selection already is that
+  // consent; requiring a second Accept click would be pure friction.
   async awardQuotation(
     userId: string,
     rentalCompanyOrganizationId: string,
@@ -462,6 +571,13 @@ export class CommercialQuotationService {
     const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
     if (!canTransition(existing.status, "awarded")) {
       throw new ConflictError(`Cannot award a quotation that is ${existing.status}`);
+    }
+    if (
+      existing.renter_organization_id &&
+      !existing.source_auction_id &&
+      !existing.renter_accepted_at
+    ) {
+      throw new ConflictError("The Renter has not accepted this quotation yet");
     }
 
     await this.rentalService.createRental(userId, rentalCompanyOrganizationId, {
@@ -492,6 +608,16 @@ export class CommercialQuotationService {
     }
 
     const record = await this.quotationRepository.updateStatus(quotationId, "awarded");
+    if (record.renter_organization_id) {
+      await this.notify({
+        recipientOrganizationId: record.renter_organization_id,
+        type: "quotation.awarded",
+        title: "Quotation awarded",
+        message: `Quotation ${record.reference_number} was awarded — a Rental has been created.`,
+        relatedResourceType: "quotation",
+        relatedResourceId: record.id,
+      });
+    }
     return toQuotation(record);
   }
 

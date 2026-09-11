@@ -4,6 +4,7 @@ import type {
 } from "@fleetip/contracts/quotation";
 import { ConflictError, NotFoundError } from "../../../../shared/errors.js";
 import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
+import { NotificationService } from "../../../notification/application/notification-service.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import type { QuotationResponseRecord, QuotationResponseRepositoryPort } from "../domain/ports.js";
 
@@ -26,6 +27,7 @@ export class QuotationResponseService {
     private readonly quotationResponseRepository: QuotationResponseRepositoryPort,
     private readonly requirementRepository: RequirementRepositoryPort,
     private readonly permissionService: PermissionService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async submitResponse(
@@ -48,6 +50,14 @@ export class QuotationResponseService {
       throw new ConflictError("Cannot respond to a requirement that is not open");
     }
 
+    // Submitting is upsert-shaped (a Rental Company may revise its reply) —
+    // only notify on the first response, not every revision, to avoid
+    // spamming the Renter on the same event.
+    const isFirstResponse = !(await this.quotationResponseRepository.findByRequirementAndOrganization(
+      requirementId,
+      rentalCompanyOrganizationId,
+    ));
+
     const record = await this.quotationResponseRepository.submit({
       requirementId,
       rentalCompanyOrganizationId,
@@ -56,6 +66,20 @@ export class QuotationResponseService {
       indicativeRateUnit: input.indicativeRateUnit,
       notes: input.notes,
     });
+    if (isFirstResponse) {
+      try {
+        await this.notificationService.notify({
+          recipientOrganizationId: requirement.renter_organization_id,
+          type: "requirement.response_received",
+          title: "New response to your requirement",
+          message: "A Rental Company responded to your requirement.",
+          relatedResourceType: "requirement",
+          relatedResourceId: requirementId,
+        });
+      } catch {
+        // Notification failures must never block the real business action.
+      }
+    }
     return toQuotationResponse(record);
   }
 

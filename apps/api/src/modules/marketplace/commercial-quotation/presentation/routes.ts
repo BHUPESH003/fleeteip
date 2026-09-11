@@ -22,6 +22,19 @@ export async function commercialQuotationRoutes(fastify: FastifyInstance): Promi
     },
   );
 
+  // Mirrors the route above for the Renter side — see
+  // CommercialQuotationService.listRentalCompanyOrganizations.
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/rental-company-organizations",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.commercialQuotationService.listRentalCompanyOrganizations(
+        userId,
+        request.params.organizationId,
+      );
+    },
+  );
+
   fastify.post<{ Params: { organizationId: string } }>(
     "/organizations/:organizationId/quotations",
     async (request, reply) => {
@@ -91,6 +104,18 @@ export async function commercialQuotationRoutes(fastify: FastifyInstance): Promi
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
       return container.commercialQuotationService.withdrawQuotation(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; quotationId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/accept",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.commercialQuotationService.acceptQuotation(
         userId,
         request.params.organizationId,
         request.params.quotationId,

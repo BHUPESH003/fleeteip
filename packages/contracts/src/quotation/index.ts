@@ -78,6 +78,11 @@ export const commercialQuotationSchema = z.object({
   validityDate: z.string().date(),
   commercialNotes: z.string().min(1).max(2000).nullable(),
   status: commercialQuotationStatusSchema,
+  // The Renter's explicit "I accept these terms" signal — independent of
+  // `status` (no separate "accepted" status; see docs/marketplace-core-loop-
+  // design.md §6). Gates awardQuotation whenever a real in-app Renter is on
+  // the other end; cleared back to null by any subsequent term change.
+  renterAcceptedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

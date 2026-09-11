@@ -61,6 +61,9 @@ const STATUS_TONE: Record<RentalStatus, "success" | "warning" | "neutral" | "dan
 export default function RentalsPage() {
   const router = useRouter();
   const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [organizationType, setOrganizationType] = useState<"rental_company" | "renter" | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,12 +75,13 @@ export default function RentalsPage() {
     void (async () => {
       try {
         const session = (await apiClient.me()) as AuthenticatedSession;
-        const firstOrganizationId = session.memberships[0]?.organization.id;
-        if (!firstOrganizationId) {
+        const firstMembership = session.memberships[0];
+        if (!firstMembership) {
           router.replace("/");
           return;
         }
-        setOrganizationId(firstOrganizationId);
+        setOrganizationId(firstMembership.organization.id);
+        setOrganizationType(firstMembership.organization.organizationTypeCode);
       } catch {
         router.replace("/");
       }
@@ -85,11 +89,16 @@ export default function RentalsPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!organizationId) return;
+    if (!organizationId || !organizationType) return;
     void (async () => {
       try {
+        // A Renter has no equipment.manage permission on the Rental
+        // Company's org and can't list its machines — listRentals already
+        // resolves the machine/company names it needs server-side.
         const [machineList, rentalList] = await Promise.all([
-          apiClient.listMachines(organizationId),
+          organizationType === "rental_company"
+            ? apiClient.listMachines(organizationId)
+            : Promise.resolve([]),
           apiClient.listRentals(organizationId),
         ]);
         setMachines(machineList as Machine[]);
@@ -100,7 +109,7 @@ export default function RentalsPage() {
         setLoading(false);
       }
     })();
-  }, [organizationId]);
+  }, [organizationId, organizationType]);
 
   async function refreshRentals() {
     if (!organizationId) return;
@@ -190,12 +199,22 @@ export default function RentalsPage() {
     );
   }
 
+  const isRenter = organizationType === "renter";
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-      <PageHeader title="Rentals" description="Machines currently committed to a customer." />
+      <PageHeader
+        title="Rentals"
+        description={
+          isRenter
+            ? "Machines you currently have on rent."
+            : "Machines currently committed to a customer."
+        }
+      />
 
       {error && <ErrorState message={error} />}
 
+      {isRenter ? null : (
       <Card className="mb-8 mt-4">
         <h2 className="mb-4 text-lg font-medium text-gray-900">Create a rental</h2>
 
@@ -295,33 +314,48 @@ export default function RentalsPage() {
           </form>
         )}
       </Card>
+      )}
 
       <Card>
-        <h2 className="mb-4 text-lg font-medium text-gray-900">All rentals</h2>
+        <h2 className="mb-4 text-lg font-medium text-gray-900">
+          {isRenter ? "Your rentals" : "All rentals"}
+        </h2>
         {rentals.length === 0 ? (
-          <EmptyState title="No rentals yet" description="Create one above to get started." />
+          <EmptyState
+            title="No rentals yet"
+            description={
+              isRenter
+                ? "Rentals you're awarded will show up here."
+                : "Create one above to get started."
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-200 text-gray-500">
                   <th className="py-2 pr-4 font-medium">Machine</th>
-                  <th className="py-2 pr-4 font-medium">Customer</th>
+                  <th className="py-2 pr-4 font-medium">{isRenter ? "Rental company" : "Customer"}</th>
                   <th className="py-2 pr-4 font-medium">Period</th>
                   <th className="py-2 pr-4 font-medium">Rate</th>
                   <th className="py-2 pr-4 font-medium">Status</th>
-                  <th className="py-2 pr-4 font-medium">Actions</th>
+                  {isRenter ? null : <th className="py-2 pr-4 font-medium">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {rentals.map((rental) => {
                   const machine = machines.find((candidate) => candidate.id === rental.machineId);
-                  const customer = rental.clientSnapshot
-                    ? rental.clientSnapshot.name
-                    : `Renter ${rental.renterOrganizationId?.slice(0, 8)}…`;
+                  const machineLabel = isRenter
+                    ? rental.machineAssetCode ?? rental.machineId
+                    : machine?.assetCode ?? rental.machineId;
+                  const customer = isRenter
+                    ? rental.rentalCompanyOrganizationName ?? "Unknown"
+                    : rental.clientSnapshot
+                      ? rental.clientSnapshot.name
+                      : `Renter ${rental.renterOrganizationId?.slice(0, 8)}…`;
                   return (
                     <tr key={rental.id} className="border-b border-gray-100">
-                      <td className="py-2 pr-4">{machine?.assetCode ?? rental.machineId}</td>
+                      <td className="py-2 pr-4">{machineLabel}</td>
                       <td className="py-2 pr-4">{customer}</td>
                       <td className="py-2 pr-4">
                         {rental.startDate} → {rental.endDate ?? "open-ended"}
@@ -334,6 +368,7 @@ export default function RentalsPage() {
                           {STATUS_LABEL[rental.status]}
                         </Badge>
                       </td>
+                      {isRenter ? null : (
                       <td className="py-2 pr-4">
                         <div className="flex gap-2">
                           <a
@@ -353,6 +388,7 @@ export default function RentalsPage() {
                           ))}
                         </div>
                       </td>
+                      )}
                     </tr>
                   );
                 })}

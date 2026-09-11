@@ -31,6 +31,8 @@ import { UtilizationService } from "../modules/logsheet/application/utilization-
 import { LogsheetRepository } from "../modules/logsheet/infrastructure/logsheet-repository.js";
 import { BillingService } from "../modules/billing/application/billing-service.js";
 import { InvoiceRepository } from "../modules/billing/infrastructure/invoice-repository.js";
+import { NotificationService } from "../modules/notification/application/notification-service.js";
+import { NotificationRepository } from "../modules/notification/infrastructure/notification-repository.js";
 import { db } from "./database/client.js";
 
 /**
@@ -58,12 +60,15 @@ const maintenanceRepository = new MaintenanceRepository(db);
 const transportRepository = new TransportRepository(db);
 const logsheetRepository = new LogsheetRepository(db);
 const invoiceRepository = new InvoiceRepository(db);
+const notificationRepository = new NotificationRepository(db);
 
 const permissionService = new PermissionService(
   membershipRepository,
   roleRepository,
   organizationRepository,
 );
+
+const notificationService = new NotificationService(notificationRepository, permissionService);
 
 const rentalService = new RentalService(
   rentalRepository,
@@ -99,12 +104,19 @@ export const container = {
     permissionService,
   ),
 
-  auctionService: new AuctionService(auctionRepository, requirementRepository, permissionService),
+  auctionService: new AuctionService(
+    auctionRepository,
+    requirementRepository,
+    permissionService,
+    organizationRepository,
+    notificationService,
+  ),
 
   quotationResponseService: new QuotationResponseService(
     quotationResponseRepository,
     requirementRepository,
     permissionService,
+    notificationService,
   ),
 
   commercialQuotationService: new CommercialQuotationService(
@@ -117,6 +129,7 @@ export const container = {
     auctionRepository,
     rentalService,
     permissionService,
+    notificationService,
   ),
 
   maintenanceService: new MaintenanceService(
@@ -138,4 +151,6 @@ export const container = {
   ),
 
   billingService: new BillingService(invoiceRepository, rentalRepository, permissionService),
+
+  notificationService,
 };
