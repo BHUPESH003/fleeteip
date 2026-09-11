@@ -8,7 +8,10 @@
     "./organization": "./src/organization/index.ts",
     "./equipment": "./src/equipment/index.ts",
     "./catalogue": "./src/catalogue/index.ts",
-    "./rental": "./src/rental/index.ts"
+    "./rental": "./src/rental/index.ts",
+    "./rfq": "./src/rfq/index.ts",
+    "./quotation": "./src/quotation/index.ts",
+    "./auction": "./src/auction/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

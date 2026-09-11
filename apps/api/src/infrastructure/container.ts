@@ -9,6 +9,8 @@ import { SessionRepository } from "../modules/identity/infrastructure/session-re
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
 import { RentalService } from "../modules/marketplace/rental/application/rental-service.js";
 import { RentalRepository } from "../modules/marketplace/rental/infrastructure/rental-repository.js";
+import { RequirementService } from "../modules/marketplace/rfq/application/requirement-service.js";
+import { RequirementRepository } from "../modules/marketplace/rfq/infrastructure/requirement-repository.js";
 import { MembershipRepository } from "../modules/organizations/infrastructure/membership-repository.js";
 import { OrganizationRepository } from "../modules/organizations/infrastructure/organization-repository.js";
 import { PermissionService } from "../modules/permissions/application/permission-service.js";
@@ -31,6 +33,7 @@ const productSubcategoryRepository = new ProductSubcategoryRepository(db);
 const productRepository = new ProductRepository(db);
 const machineRepository = new MachineRepository(db);
 const rentalRepository = new RentalRepository(db);
+const requirementRepository = new RequirementRepository(db);
 
 const permissionService = new PermissionService(
   membershipRepository,
@@ -60,6 +63,12 @@ export const container = {
     rentalRepository,
     machineRepository,
     organizationRepository,
+    permissionService,
+  ),
+
+  requirementService: new RequirementService(
+    requirementRepository,
+    productSubcategoryRepository,
     permissionService,
   ),
 };

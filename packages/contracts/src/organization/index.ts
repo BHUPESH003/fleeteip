@@ -32,12 +32,29 @@ export const permissionCodeSchema = z.enum([
   "membership.manage",
   "equipment.manage",
   "rental.manage",
+  "rfq.manage",
+  "rfq.respond",
+  "quotation.manage",
+  "quotation.respond",
+  "auction.manage",
+  "auction.participate",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
   "membership.manage": ["rental_company", "renter"],
   "equipment.manage": ["rental_company"],
   "rental.manage": ["rental_company"],
+  // Renter posts/closes a Requirement; Rental Company browses/responds to it.
+  "rfq.manage": ["renter"],
+  "rfq.respond": ["rental_company"],
+  // Rental Company drafts/sends/withdraws/awards a Quotation; Renter accepts/
+  // negotiates/rejects it. See docs/marketplace-core-loop-design.md §6.
+  "quotation.manage": ["rental_company"],
+  "quotation.respond": ["renter"],
+  // Renter runs the auction (create/approve participants/close); Rental
+  // Company joins and bids.
+  "auction.manage": ["renter"],
+  "auction.participate": ["rental_company"],
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;

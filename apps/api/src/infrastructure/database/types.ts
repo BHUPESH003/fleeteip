@@ -85,6 +85,16 @@ export interface Database {
   products: ProductsTable;
   machines: MachinesTable;
   rentals: RentalsTable;
+  requirements: RequirementsTable;
+  auctions: AuctionsTable;
+  auction_participants: AuctionParticipantsTable;
+  auction_bids: AuctionBidsTable;
+  auction_events: AuctionEventsTable;
+  auction_results: AuctionResultsTable;
+  quotation_responses: QuotationResponsesTable;
+  quotation_reference_sequences: QuotationReferenceSequencesTable;
+  commercial_quotations: CommercialQuotationsTable;
+  quotation_offers: QuotationOffersTable;
 }
 
 export interface ProductCategoriesTable {
@@ -154,4 +164,131 @@ export interface RentalsTable {
   // commitment_range (generated, daterange) intentionally omitted — the app
   // never selects it through Kysely's typed builder; the availability query
   // reaches it via a raw sql template instead.
+}
+
+export interface RequirementsTable {
+  id: Generated<string>;
+  renter_organization_id: string;
+  product_subcategory_id: string;
+  capacity: number | null;
+  capacity_unit: string | null;
+  quantity: number;
+  project_name: string | null;
+  project_location: string | null;
+  requested_start_date: string;
+  expected_duration_value: number | null;
+  expected_duration_unit: string | null;
+  shift_requirement: string | null;
+  validity_date: string;
+  status: string;
+  notes: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface AuctionsTable {
+  id: Generated<string>;
+  requirement_id: string;
+  created_by_organization_id: string;
+  bidding_direction: string;
+  base_price: number;
+  max_bids_per_participant: number | null;
+  starts_at: Timestamp;
+  ends_at: Timestamp;
+  status: string;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface AuctionParticipantsTable {
+  id: Generated<string>;
+  auction_id: string;
+  rental_company_organization_id: string;
+  status: string;
+  created_at: CreatedAt;
+}
+
+export interface AuctionBidsTable {
+  id: Generated<string>;
+  auction_id: string;
+  participant_id: string;
+  amount: number;
+  created_at: CreatedAt;
+}
+
+export interface AuctionEventsTable {
+  id: Generated<string>;
+  auction_id: string;
+  event_type: string;
+  actor_organization_id: string | null;
+  payload: unknown | null;
+  created_at: CreatedAt;
+}
+
+export interface AuctionResultsTable {
+  auction_id: string;
+  winning_bid_id: string | null;
+  winning_amount: number | null;
+  closed_at: CreatedAt;
+}
+
+export interface QuotationResponsesTable {
+  id: Generated<string>;
+  requirement_id: string;
+  rental_company_organization_id: string;
+  status: string;
+  indicative_rate: number | null;
+  indicative_rate_unit: string | null;
+  notes: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface QuotationReferenceSequencesTable {
+  organization_id: string;
+  next_value: number;
+}
+
+export interface CommercialQuotationsTable {
+  id: Generated<string>;
+  rental_company_organization_id: string;
+  renter_organization_id: string | null;
+  client_snapshot: unknown | null;
+  requirement_id: string | null;
+  quotation_response_id: string | null;
+  source_auction_id: string | null;
+  reference_number: string;
+  machine_id: string;
+  start_date: string;
+  end_date: string | null;
+  rate: number;
+  rate_unit: string;
+  mobilization_charge: number | null;
+  demobilization_charge: number | null;
+  overtime_rate: number | null;
+  payment_terms: string | null;
+  shift_structure: string | null;
+  sunday_condition: string | null;
+  fuel_norms: string | null;
+  dehire_terms: string | null;
+  operator_scope: string | null;
+  notice_period_days: number | null;
+  validity_date: string;
+  commercial_notes: string | null;
+  status: string;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface QuotationOffersTable {
+  id: Generated<string>;
+  quotation_id: string;
+  offered_by_organization_id: string;
+  rate: number;
+  rate_unit: string;
+  start_date: string;
+  end_date: string | null;
+  notes: string | null;
+  status: string;
+  created_at: CreatedAt;
 }

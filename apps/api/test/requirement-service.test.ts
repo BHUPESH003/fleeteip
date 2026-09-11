@@ -1,0 +1,257 @@
+import { describe, expect, it } from "vitest";
+import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
+import type { RequirementStatus } from "@fleetip/contracts/rfq";
+import type {
+  ActiveMembershipRecord,
+  MembershipRepositoryPort,
+  OrganizationRepositoryPort,
+} from "../src/modules/organizations/domain/ports.js";
+import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
+import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
+import type {
+  ProductSubcategoryRecord,
+  ProductSubcategoryRepositoryPort,
+} from "../src/modules/catalogue/domain/ports.js";
+import type {
+  CreateRequirementInput,
+  RequirementRecord,
+  RequirementRepositoryPort,
+} from "../src/modules/marketplace/rfq/domain/ports.js";
+import { RequirementService } from "../src/modules/marketplace/rfq/application/requirement-service.js";
+import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+
+const OWNER_ROLE_ID = "role-owner";
+const RENTER_ORG_ID = "org-renter";
+const OTHER_RENTER_ORG_ID = "org-other-renter";
+const RC_ORG_ID = "org-rental-company";
+const SUBCATEGORY_ID = "subcategory-1";
+
+function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "renter") {
+  const membershipRepository: MembershipRepositoryPort = {
+    findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
+      id: "membership-1",
+      status: "active",
+      role_id: OWNER_ROLE_ID,
+    }),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listWithOrganizationByUserId: async () => [],
+  };
+  const roleRepository: RoleRepositoryPort = {
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
+    listPermissionCodesByRoleId: async (roleId) =>
+      roleId === OWNER_ROLE_ID ? ["rfq.manage", "rfq.respond"] : [],
+  };
+  return new PermissionService(
+    membershipRepository,
+    roleRepository,
+    fakeOrganizationTypeRepository({
+      [RENTER_ORG_ID]: organizationTypeCode,
+      [OTHER_RENTER_ORG_ID]: "renter",
+      [RC_ORG_ID]: "rental_company",
+    }),
+  );
+}
+
+function fakeOrganizationTypeRepository(
+  organizationTypes: Record<string, OrganizationTypeCode>,
+): OrganizationRepositoryPort {
+  return {
+    findTypeByCode: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    findWithTypeById: async (id) => {
+      const organizationTypeCode = organizationTypes[id];
+      if (!organizationTypeCode) return undefined;
+      return {
+        id,
+        organization_type_id: `type-${organizationTypeCode}`,
+        organization_type_code: organizationTypeCode,
+        name: "Test Org",
+        code: "TESTORG",
+        created_at: new Date(),
+      };
+    },
+    codeExists: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+}
+
+function fakeProductSubcategoryRepository(
+  subcategories: ProductSubcategoryRecord[] = [
+    {
+      id: SUBCATEGORY_ID,
+      product_category_id: "category-1",
+      code: "TRACKED",
+      name: "Tracked Excavator",
+      created_at: new Date(),
+    },
+  ],
+): ProductSubcategoryRepositoryPort {
+  return {
+    listByCategory: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async (id) => subcategories.find((subcategory) => subcategory.id === id),
+  };
+}
+
+function fakeRequirementRepository(): RequirementRepositoryPort {
+  const requirements = new Map<string, RequirementRecord>();
+  let nextId = 1;
+
+  return {
+    create: async (input: CreateRequirementInput) => {
+      const record: RequirementRecord = {
+        id: `requirement-${nextId++}`,
+        renter_organization_id: input.renterOrganizationId,
+        product_subcategory_id: input.productSubcategoryId,
+        capacity: input.capacity ?? null,
+        capacity_unit: input.capacityUnit ?? null,
+        quantity: input.quantity,
+        project_name: input.projectName ?? null,
+        project_location: input.projectLocation ?? null,
+        requested_start_date: input.requestedStartDate,
+        expected_duration_value: input.expectedDurationValue ?? null,
+        expected_duration_unit: input.expectedDurationUnit ?? null,
+        shift_requirement: input.shiftRequirement ?? null,
+        validity_date: input.validityDate,
+        status: "open",
+        notes: input.notes ?? null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      requirements.set(record.id, record);
+      return record;
+    },
+    findById: async (id) => requirements.get(id),
+    listByRenter: async (renterOrganizationId) =>
+      [...requirements.values()].filter((r) => r.renter_organization_id === renterOrganizationId),
+    listOpenForDiscovery: async () =>
+      [...requirements.values()].filter(
+        (r) => r.status === "open" && r.validity_date >= "2026-01-01",
+      ),
+    updateStatus: async (id: string, status: RequirementStatus) => {
+      const existing = requirements.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated = { ...existing, status, updated_at: new Date() };
+      requirements.set(id, updated);
+      return updated;
+    },
+  };
+}
+
+function buildService(subcategories?: ProductSubcategoryRecord[]) {
+  return new RequirementService(
+    fakeRequirementRepository(),
+    fakeProductSubcategoryRepository(subcategories),
+    fakePermissionService(),
+  );
+}
+
+const baseInput = {
+  productSubcategoryId: SUBCATEGORY_ID,
+  quantity: 1,
+  requestedStartDate: "2026-03-01",
+  validityDate: "2026-02-15",
+};
+
+describe("RequirementService", () => {
+  it("rejects creating a requirement against an unknown product subcategory", async () => {
+    const service = buildService();
+    await expect(
+      service.createRequirement("user-1", RENTER_ORG_ID, {
+        ...baseInput,
+        productSubcategoryId: "unknown-subcategory",
+      }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("creates an open requirement for a real product subcategory", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    expect(requirement.status).toBe("open");
+    expect(requirement.renterOrganizationId).toBe(RENTER_ORG_ID);
+  });
+
+  it("rejects requirement management for a Rental Company organization", async () => {
+    const service = new RequirementService(
+      fakeRequirementRepository(),
+      fakeProductSubcategoryRepository(),
+      fakePermissionService("rental_company"),
+    );
+    await expect(service.createRequirement("user-1", RENTER_ORG_ID, baseInput)).rejects.toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("hides a requirement belonging to a different organization behind NotFoundError", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    await expect(
+      service.getRequirement("user-2", OTHER_RENTER_ORG_ID, requirement.id),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("lists requirements only for the acting organization", async () => {
+    const service = buildService();
+    await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    const list = await service.listRequirements("user-1", RENTER_ORG_ID);
+    expect(list).toHaveLength(1);
+  });
+
+  it("rejects an illegal requirement status transition", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    await service.updateRequirementStatus("user-1", RENTER_ORG_ID, requirement.id, "cancelled");
+    await expect(
+      service.updateRequirementStatus("user-1", RENTER_ORG_ID, requirement.id, "closed"),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("allows closing an open requirement", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    const closed = await service.updateRequirementStatus(
+      "user-1",
+      RENTER_ORG_ID,
+      requirement.id,
+      "closed",
+    );
+    expect(closed.status).toBe("closed");
+  });
+
+  it("lets a Rental Company discover open requirements broadcast by any Renter", async () => {
+    const requirementRepository = fakeRequirementRepository();
+    const service = new RequirementService(
+      requirementRepository,
+      fakeProductSubcategoryRepository(),
+      fakePermissionService(),
+    );
+    await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+
+    const rentalCompanyService = new RequirementService(
+      requirementRepository,
+      fakeProductSubcategoryRepository(),
+      fakePermissionService("rental_company"),
+    );
+    const discovered = await rentalCompanyService.discoverRequirements("user-2", RC_ORG_ID);
+    expect(discovered).toHaveLength(1);
+  });
+
+  it("rejects discovery for a Renter organization (rfq.respond is Rental-Company-only)", async () => {
+    const service = buildService();
+    await expect(service.discoverRequirements("user-1", RENTER_ORG_ID)).rejects.toThrow(
+      ForbiddenError,
+    );
+  });
+});
