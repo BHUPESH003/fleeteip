@@ -34,7 +34,7 @@ tablet (768px), and mobile (375px) screenshots of every page above.
 
 1. **Whole-page horizontal overflow on mobile.** `(app)/layout.tsx`'s content flex column
    (`<div className="flex flex-1 flex-col">`) had no `min-w-0`, so a flex item's default
-   `min-width: auto` let a wide `<table>` inside it force the *entire page* wider than the viewport
+   `min-width: auto` let a wide `<table>` inside it force the _entire page_ wider than the viewport
    — not contained by the table's own `overflow-x-auto` wrapper. Confirmed empirically: a 375px-wide
    viewport screenshot came back 699px wide before the fix, exactly 375px after. Fixed by adding
    `min-w-0` to that flex column and to `<main>`. This was a **pre-existing bug** affecting the

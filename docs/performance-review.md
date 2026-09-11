@@ -29,7 +29,7 @@ One real, demonstrated gap, fixed in `0015_index_products_subcategory.ts`:
   shape is already in production use.
 
 Two columns are informational-only (no index, but also not currently used as a query filter — only
-as a stored reference resolved by *its own* primary key elsewhere), left alone per "do not add indexes
+as a stored reference resolved by _its own_ primary key elsewhere), left alone per "do not add indexes
 blindly":
 
 - `commercial_quotations.requirement_id` / `.quotation_response_id` / `.source_auction_id` — nothing

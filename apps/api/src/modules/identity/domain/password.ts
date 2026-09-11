@@ -25,3 +25,9 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   if (derivedKey.length !== storedKey.length) return false;
   return timingSafeEqual(derivedKey, storedKey);
 }
+
+// A fixed, valid-shaped hash with no corresponding real password — used to
+// run the same slow KDF on a login attempt against an email that doesn't
+// exist, so the response time doesn't reveal account existence. See the
+// security-review danger zone recorded for auth-service.ts's login().
+export const DUMMY_PASSWORD_HASH = `${"00".repeat(16)}:${"00".repeat(KEY_LENGTH)}`;

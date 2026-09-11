@@ -17,21 +17,35 @@ function setSessionCookie(reply: FastifyReply, token: string, expiresAt: Date): 
   });
 }
 
-export async function identityRoutes(fastify: FastifyInstance): Promise<void> {
-  fastify.post("/auth/signup", async (request, reply) => {
-    const body = parseWithSchema(signupRequestSchema, request.body);
-    const result = await container.authService.signup(body);
-    setSessionCookie(reply, result.token, result.expiresAt);
-    reply.code(201);
-    return { user: result.user };
-  });
+// Brute-force/enumeration protection — keyed by IP, not email, since an
+// attacker controls the email field. Deliberately generous (this guards
+// against automated credential-stuffing, not a legitimate user mistyping a
+// password a few times).
+const AUTH_RATE_LIMIT = { max: 10, timeWindow: "1 minute" };
 
-  fastify.post("/auth/login", async (request, reply) => {
-    const body = parseWithSchema(loginRequestSchema, request.body);
-    const result = await container.authService.login(body);
-    setSessionCookie(reply, result.token, result.expiresAt);
-    return { user: result.user };
-  });
+export async function identityRoutes(fastify: FastifyInstance): Promise<void> {
+  fastify.post(
+    "/auth/signup",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const body = parseWithSchema(signupRequestSchema, request.body);
+      const result = await container.authService.signup(body);
+      setSessionCookie(reply, result.token, result.expiresAt);
+      reply.code(201);
+      return { user: result.user };
+    },
+  );
+
+  fastify.post(
+    "/auth/login",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const body = parseWithSchema(loginRequestSchema, request.body);
+      const result = await container.authService.login(body);
+      setSessionCookie(reply, result.token, result.expiresAt);
+      return { user: result.user };
+    },
+  );
 
   fastify.post("/auth/logout", async (request, reply) => {
     const token = getSessionToken(request);

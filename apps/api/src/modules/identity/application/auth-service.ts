@@ -17,7 +17,7 @@ import type {
   OrganizationRepositoryPort,
 } from "../../organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../../permissions/domain/ports.js";
-import { hashPassword, verifyPassword } from "../domain/password.js";
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "../domain/password.js";
 import type {
   PublicUserRecord,
   SessionRepositoryPort,
@@ -90,7 +90,15 @@ export class AuthService {
 
   async login(request: LoginRequest): Promise<AuthResult> {
     const user = await this.userRepository.findByEmail(request.email);
-    if (!user || !(await verifyPassword(request.password, user.password_hash))) {
+    // Always run the same slow KDF, even when the email doesn't exist —
+    // otherwise a nonexistent-email login returns near-instantly while a
+    // real one takes a full scrypt computation, letting an attacker
+    // enumerate valid accounts by response time alone.
+    const isValidPassword = await verifyPassword(
+      request.password,
+      user?.password_hash ?? DUMMY_PASSWORD_HASH,
+    );
+    if (!user || !isValidPassword) {
       throw new UnauthorizedError("Invalid email or password");
     }
     return this.issueSession(user);

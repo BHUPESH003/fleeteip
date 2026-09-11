@@ -1,5 +1,6 @@
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import Fastify, { LogController } from "fastify";
 import type { FastifyError } from "fastify";
 import { env } from "./infrastructure/config/env.js";
@@ -27,6 +28,10 @@ export async function buildApp() {
 
   await app.register(cors, { origin: env.WEB_ORIGIN, credentials: true });
   await app.register(cookie, { secret: env.SESSION_COOKIE_SECRET });
+  // global: false — registered here so routes can opt in via `config.rateLimit`,
+  // not applied to the whole API. Only /auth/login and /auth/signup opt in
+  // (brute-force/enumeration protection); everything else is unaffected.
+  await app.register(rateLimit, { global: false });
 
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     if (error instanceof AppError) {
