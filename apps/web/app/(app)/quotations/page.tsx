@@ -22,7 +22,7 @@ import {
   Select,
 } from "@fleetip/ui";
 import { useSearchParams } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { useSession } from "../../../lib/session-context";
 
@@ -50,6 +50,7 @@ function QuotationRow({
   organizationType,
   machinesById,
   renterOrganizationsById,
+  initiallyExpanded,
   onChanged,
 }: {
   quotation: CommercialQuotation;
@@ -57,20 +58,27 @@ function QuotationRow({
   organizationType: "renter" | "rental_company";
   machinesById: Record<string, Machine>;
   renterOrganizationsById: Record<string, Organization>;
+  initiallyExpanded: boolean;
   onChanged: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [offers, setOffers] = useState<QuotationOffer[]>([]);
   const [error, setError] = useState<string | null>(null);
   const isOwner = quotation.rentalCompanyOrganizationId === organizationId;
 
-  async function loadOffers() {
+  const loadOffers = useCallback(async () => {
     try {
       setOffers((await apiClient.listOffers(organizationId, quotation.id)) as QuotationOffer[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load offers");
     }
-  }
+  }, [organizationId, quotation.id]);
+
+  useEffect(() => {
+    if (!initiallyExpanded) return;
+    setExpanded(true);
+    void loadOffers();
+  }, [initiallyExpanded, loadOffers]);
 
   async function toggle() {
     setExpanded((prev) => !prev);
@@ -117,13 +125,15 @@ function QuotationRow({
       if (action === "award") await apiClient.awardQuotation(organizationId, quotation.id);
       onChanged();
     } catch (err) {
+      setExpanded(true);
       setError(err instanceof Error ? err.message : `Failed to ${action} quotation`);
     }
   }
 
   const customer = quotation.clientSnapshot
     ? quotation.clientSnapshot.name
-    : (quotation.renterOrganizationId && renterOrganizationsById[quotation.renterOrganizationId]?.name) ||
+    : (quotation.renterOrganizationId &&
+        renterOrganizationsById[quotation.renterOrganizationId]?.name) ||
       `Renter ${quotation.renterOrganizationId?.slice(0, 8)}…`;
   const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
 
@@ -191,6 +201,11 @@ function QuotationRow({
         <tr className="border-b border-gray-100 bg-gray-50">
           <td colSpan={6} className="px-4 py-4">
             {error && <ErrorState message={error} />}
+            {quotation.requirementId && (
+              <p className="mb-2 text-sm text-gray-700">
+                Requirement RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}
+              </p>
+            )}
             <p className="mb-2 text-sm text-gray-700">
               {quotation.startDate} → {quotation.endDate ?? "open-ended"} · Validity{" "}
               {quotation.validityDate}
@@ -284,7 +299,9 @@ function RequirementContext({
         <div>
           <dt className="text-blue-600">Capacity</dt>
           <dd className="text-blue-900">
-            {requirement.capacity ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}` : "—"}
+            {requirement.capacity
+              ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}`
+              : "—"}
           </dd>
         </div>
         <div>
@@ -308,7 +325,9 @@ function RequirementContext({
           <dd className="text-blue-900">{requirement.validityDate}</dd>
         </div>
       </dl>
-      {requirement.notes && <p className="mt-3 text-sm text-blue-800">Notes: {requirement.notes}</p>}
+      {requirement.notes && (
+        <p className="mt-3 text-sm text-blue-800">Notes: {requirement.notes}</p>
+      )}
     </div>
   );
 }
@@ -412,7 +431,11 @@ function CreateQuotationForm({
           description="Register a machine and mark it active before quoting."
         />
       ) : (
-        <form key={requirement?.id ?? "no-requirement"} onSubmit={handleCreate} className="flex flex-col gap-4">
+        <form
+          key={requirement?.id ?? "no-requirement"}
+          onSubmit={handleCreate}
+          className="flex flex-col gap-4"
+        >
           {requirement && (
             <RequirementContext
               requirement={requirement}
@@ -516,6 +539,7 @@ export default function QuotationsPage() {
   const organizationType = currentMembership?.organization.organizationTypeCode;
   const searchParams = useSearchParams();
   const requirementIdParam = searchParams.get("requirementId");
+  const quotationIdParam = searchParams.get("quotationId");
 
   const [quotations, setQuotations] = useState<CommercialQuotation[]>([]);
   const [machinesById, setMachinesById] = useState<Record<string, Machine>>({});
@@ -603,6 +627,7 @@ export default function QuotationsPage() {
                         organizationType={organizationType}
                         machinesById={machinesById}
                         renterOrganizationsById={renterOrganizationsById}
+                        initiallyExpanded={quotation.id === quotationIdParam}
                         onChanged={() => void refresh()}
                       />
                     ))}

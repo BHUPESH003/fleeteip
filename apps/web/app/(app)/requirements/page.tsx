@@ -16,7 +16,8 @@ import {
   Select,
 } from "@fleetip/ui";
 import Link from "next/link";
-import { Fragment, type FormEvent, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Fragment, type FormEvent, useCallback, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { useSession } from "../../../lib/session-context";
 
@@ -34,14 +35,67 @@ const DURATION_UNIT_OPTIONS = [
   { value: "month", label: "Months" },
 ];
 
-function RenterView({ organizationId }: { organizationId: string }) {
+function formatDuration(requirement: Requirement): string {
+  if (!requirement.expectedDurationValue || !requirement.expectedDurationUnit) return "-";
+  return `${requirement.expectedDurationValue} ${requirement.expectedDurationUnit}(s)`;
+}
+
+function formatCapacity(requirement: Requirement): string {
+  if (!requirement.capacity) return "-";
+  return `${requirement.capacity}${requirement.capacityUnit ? ` ${requirement.capacityUnit}` : ""}`;
+}
+
+function RequirementDetails({
+  requirement,
+  subcategoryName,
+}: {
+  requirement: Requirement;
+  subcategoryName?: string;
+}) {
+  const details = [
+    ["Equipment", subcategoryName ?? requirement.productSubcategoryId.slice(0, 8)],
+    ["Quantity", String(requirement.quantity)],
+    ["Capacity", formatCapacity(requirement)],
+    ["Project", requirement.projectName ?? "-"],
+    ["Location", requirement.projectLocation ?? "-"],
+    ["Needed", requirement.requestedStartDate],
+    ["Duration", formatDuration(requirement)],
+    ["Valid until", requirement.validityDate],
+    ["Shift", requirement.shiftRequirement ?? "-"],
+  ];
+
+  return (
+    <dl className="mt-3 grid grid-cols-1 gap-2 border-t border-gray-100 pt-3 text-sm sm:grid-cols-3">
+      {details.map(([label, value]) => (
+        <div key={label}>
+          <dt className="text-xs font-medium uppercase text-gray-500">{label}</dt>
+          <dd className="mt-0.5 text-gray-900">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function isResponseEntry(
+  entry: readonly [string, QuotationResponse] | null,
+): entry is readonly [string, QuotationResponse] {
+  return entry !== null;
+}
+
+function RenterView({
+  organizationId,
+  highlightedRequirementId,
+}: {
+  organizationId: string;
+  highlightedRequirementId: string | null;
+}) {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [subcategories, setSubcategories] = useState<ProductSubcategory[]>([]);
   const [categoryId, setCategoryId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(highlightedRequirementId);
   const [responses, setResponses] = useState<QuotationResponse[]>([]);
 
   useEffect(() => {
@@ -117,6 +171,26 @@ function RenterView({ organizationId }: { organizationId: string }) {
     }
   }
 
+  const loadResponses = useCallback(
+    async (requirementId: string) => {
+      setResponses(
+        (await apiClient.listResponsesForRequirement(
+          organizationId,
+          requirementId,
+        )) as QuotationResponse[],
+      );
+    },
+    [organizationId],
+  );
+
+  useEffect(() => {
+    if (!highlightedRequirementId) return;
+    setSelectedId(highlightedRequirementId);
+    void loadResponses(highlightedRequirementId).catch((err) =>
+      setError(err instanceof Error ? err.message : "Failed to load responses"),
+    );
+  }, [highlightedRequirementId, loadResponses]);
+
   async function viewResponses(requirementId: string) {
     setError(null);
     if (selectedId === requirementId) {
@@ -125,12 +199,7 @@ function RenterView({ organizationId }: { organizationId: string }) {
     }
     setSelectedId(requirementId);
     try {
-      setResponses(
-        (await apiClient.listResponsesForRequirement(
-          organizationId,
-          requirementId,
-        )) as QuotationResponse[],
-      );
+      await loadResponses(requirementId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load responses");
     }
@@ -368,39 +437,90 @@ function RenterView({ organizationId }: { organizationId: string }) {
   );
 }
 
-function RentalCompanyView({ organizationId }: { organizationId: string }) {
+function RentalCompanyView({
+  organizationId,
+  highlightedRequirementId,
+}: {
+  organizationId: string;
+  highlightedRequirementId: string | null;
+}) {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [subcategoriesById, setSubcategoriesById] = useState<Record<string, string>>({});
+  const [responsesByRequirementId, setResponsesByRequirementId] = useState<
+    Record<string, QuotationResponse>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [respondingId, setRespondingId] = useState<string | null>(highlightedRequirementId);
+
+  const refresh = useCallback(async () => {
+    const list = (await apiClient.discoverRequirements(organizationId)) as Requirement[];
+    setRequirements(list);
+
+    const [categories, responses] = await Promise.all([
+      apiClient.listProductCategories() as Promise<ProductCategory[]>,
+      Promise.all(
+        list.map(async (requirement) => {
+          try {
+            return [
+              requirement.id,
+              (await apiClient.getMyResponse(organizationId, requirement.id)) as QuotationResponse,
+            ] as const;
+          } catch {
+            return null;
+          }
+        }),
+      ),
+    ]);
+    const subcategoryLists = await Promise.all(
+      categories.map((category) => apiClient.listProductSubcategories(category.id)),
+    );
+    setSubcategoriesById(
+      Object.fromEntries(
+        (subcategoryLists.flat() as ProductSubcategory[]).map((subcategory) => [
+          subcategory.id,
+          subcategory.name,
+        ]),
+      ),
+    );
+    setResponsesByRequirementId(Object.fromEntries(responses.filter(isResponseEntry)));
+  }, [organizationId]);
 
   useEffect(() => {
     void (async () => {
       try {
-        setRequirements((await apiClient.discoverRequirements(organizationId)) as Requirement[]);
+        await refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load requirements");
       } finally {
         setLoading(false);
       }
     })();
-  }, [organizationId]);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (highlightedRequirementId) setRespondingId(highlightedRequirementId);
+  }, [highlightedRequirementId]);
 
   async function handleRespond(event: FormEvent<HTMLFormElement>, requirementId: string) {
     event.preventDefault();
     setError(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const interested = form.get("interested") === "yes";
     try {
-      await apiClient.submitResponse(organizationId, requirementId, {
+      const response = (await apiClient.submitResponse(organizationId, requirementId, {
         status: interested ? "interested" : "not_interested",
         indicativeRate: interested ? Number(form.get("indicativeRate")) : undefined,
         indicativeRateUnit: interested
           ? (String(form.get("indicativeRateUnit")) as "shift" | "day" | "week" | "month")
           : undefined,
         notes: form.get("notes") ? String(form.get("notes")) : undefined,
-      });
+      })) as QuotationResponse;
+      setResponsesByRequirementId((current) => ({ ...current, [requirementId]: response }));
+      formElement.reset();
       setRespondingId(null);
+      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit response");
     }
@@ -420,68 +540,92 @@ function RentalCompanyView({ organizationId }: { organizationId: string }) {
           />
         ) : (
           <ul className="flex flex-col gap-3">
-            {requirements.map((req) => (
-              <li key={req.id} className="rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">{req.projectName ?? "Requirement"}</p>
-                    <p className="text-sm text-gray-500">
-                      Qty {req.quantity} · Needed {req.requestedStartDate} · Valid until{" "}
-                      {req.validityDate}
-                    </p>
-                    {req.notes && <p className="text-sm text-gray-500">{req.notes}</p>}
+            {requirements.map((req) => {
+              const response = responsesByRequirementId[req.id];
+              return (
+                <li key={req.id} className="rounded-lg border border-gray-200 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-gray-900">
+                          {req.projectName ?? "Requirement"}
+                        </p>
+                        {response && (
+                          <Badge tone={response.status === "interested" ? "success" : "neutral"}>
+                            {response.status}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500">
+                        Qty {req.quantity} · Needed {req.requestedStartDate} · Valid until{" "}
+                        {req.validityDate}
+                      </p>
+                      {req.notes && <p className="text-sm text-gray-500">{req.notes}</p>}
+                      <RequirementDetails
+                        requirement={req}
+                        subcategoryName={subcategoriesById[req.productSubcategoryId]}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setRespondingId(respondingId === req.id ? null : req.id)}
+                        className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        Respond
+                      </button>
+                      <Link
+                        href={`/quotations?requirementId=${req.id}`}
+                        className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        Quote
+                      </Link>
+                      <Link
+                        href={`/auctions?requirementId=${req.id}`}
+                        className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        Auction
+                      </Link>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setRespondingId(respondingId === req.id ? null : req.id)}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                  {respondingId === req.id && (
+                    <form
+                      onSubmit={(event) => void handleRespond(event, req.id)}
+                      className="mt-3 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3"
                     >
-                      Respond
-                    </button>
-                    <Link
-                      href={`/quotations?requirementId=${req.id}`}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      Quote
-                    </Link>
-                    <Link
-                      href={`/auctions?requirementId=${req.id}`}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      Auction
-                    </Link>
-                  </div>
-                </div>
-                {respondingId === req.id && (
-                  <form
-                    onSubmit={(event) => void handleRespond(event, req.id)}
-                    className="mt-3 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3"
-                  >
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="radio" name="interested" value="yes" defaultChecked required />
-                      Interested
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="radio" name="interested" value="no" required />
-                      Not interested
-                    </label>
-                    <Input label="Rate" name="indicativeRate" type="number" step="0.01" />
-                    <Select
-                      label="Unit"
-                      name="indicativeRateUnit"
-                      options={[
-                        { value: "shift", label: "Shift" },
-                        { value: "day", label: "Day" },
-                        { value: "week", label: "Week" },
-                        { value: "month", label: "Month" },
-                      ]}
-                    />
-                    <Input label="Notes" name="notes" />
-                    <Button type="submit">Submit</Button>
-                  </form>
-                )}
-              </li>
-            ))}
+                      {response && (
+                        <p className="basis-full text-sm text-gray-500">
+                          Current response: {response.status}
+                          {response.indicativeRate
+                            ? ` · ${response.indicativeRate} / ${response.indicativeRateUnit}`
+                            : ""}
+                        </p>
+                      )}
+                      <label className="flex items-center gap-2 text-sm">
+                        <input type="radio" name="interested" value="yes" defaultChecked required />
+                        Interested
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input type="radio" name="interested" value="no" required />
+                        Not interested
+                      </label>
+                      <Input label="Rate" name="indicativeRate" type="number" step="0.01" />
+                      <Select
+                        label="Unit"
+                        name="indicativeRateUnit"
+                        options={[
+                          { value: "shift", label: "Shift" },
+                          { value: "day", label: "Day" },
+                          { value: "week", label: "Week" },
+                          { value: "month", label: "Month" },
+                        ]}
+                      />
+                      <Input label="Notes" name="notes" />
+                      <Button type="submit">Submit</Button>
+                    </form>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>
@@ -491,8 +635,10 @@ function RentalCompanyView({ organizationId }: { organizationId: string }) {
 
 export default function RequirementsPage() {
   const { currentMembership } = useSession();
+  const searchParams = useSearchParams();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
+  const highlightedRequirementId = searchParams.get("requirementId");
 
   return (
     <>
@@ -505,10 +651,16 @@ export default function RequirementsPage() {
         }
       />
       {organizationId && organizationType === "renter" && (
-        <RenterView organizationId={organizationId} />
+        <RenterView
+          organizationId={organizationId}
+          highlightedRequirementId={highlightedRequirementId}
+        />
       )}
       {organizationId && organizationType === "rental_company" && (
-        <RentalCompanyView organizationId={organizationId} />
+        <RentalCompanyView
+          organizationId={organizationId}
+          highlightedRequirementId={highlightedRequirementId}
+        />
       )}
     </>
   );

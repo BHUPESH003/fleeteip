@@ -14,9 +14,12 @@ import {
   Select,
 } from "@fleetip/ui";
 import { useSearchParams } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { useSession } from "../../../lib/session-context";
+
+const AUCTION_POLL_INTERVAL_MS = 5000;
+const AUCTION_PRESTART_POLL_WINDOW_MS = 30_000;
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -25,21 +28,56 @@ function formatDateTime(iso: string): string {
   });
 }
 
+function shouldPollAuction(detail: AuctionDetail | null): boolean {
+  if (!detail) return false;
+  if (detail.auction.status === "live") return true;
+  if (detail.auction.status !== "scheduled") return false;
+  return (
+    new Date(detail.auction.startsAt).getTime() - Date.now() <= AUCTION_PRESTART_POLL_WINDOW_MS
+  );
+}
+
+function msUntilAuctionPollingWindow(detail: AuctionDetail | null): number | null {
+  if (!detail || detail.auction.status !== "scheduled") return null;
+  return Math.max(
+    new Date(detail.auction.startsAt).getTime() - Date.now() - AUCTION_PRESTART_POLL_WINDOW_MS,
+    0,
+  );
+}
+
+function useAuctionPolling(detail: AuctionDetail | null, load: () => Promise<void>) {
+  useEffect(() => {
+    if (shouldPollAuction(detail)) {
+      const interval = window.setInterval(() => void load(), AUCTION_POLL_INTERVAL_MS);
+      return () => window.clearInterval(interval);
+    }
+
+    const msUntilWindow = msUntilAuctionPollingWindow(detail);
+    if (msUntilWindow === null) return;
+    const timeout = window.setTimeout(() => void load(), msUntilWindow);
+    return () => window.clearTimeout(timeout);
+  }, [detail?.auction.id, detail?.auction.status, detail?.auction.startsAt, load]);
+}
+
 function RenterAuctionPanel({
   organizationId,
   requirementId,
+  highlightedAuctionId,
 }: {
   organizationId: string;
   requirementId: string;
+  highlightedAuctionId: string | null;
 }) {
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const auction = await apiClient.listAuctionsForRequirement(organizationId, requirementId);
-      const active = (auction as { id: string }[])[0];
+      const active =
+        (auction as { id: string }[]).find((item) => item.id === highlightedAuctionId) ??
+        (auction as { id: string }[])[0];
       if (active) {
         setDetail((await apiClient.getAuctionDetail(organizationId, active.id)) as AuctionDetail);
       } else {
@@ -50,11 +88,13 @@ function RenterAuctionPanel({
     } finally {
       setLoading(false);
     }
-  }
+  }, [organizationId, requirementId, highlightedAuctionId]);
 
   useEffect(() => {
     void load();
-  }, [organizationId, requirementId]);
+  }, [load]);
+
+  useAuctionPolling(detail, load);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -202,9 +242,11 @@ function RenterAuctionPanel({
 function RentalCompanyAuctionPanel({
   organizationId,
   requirementId,
+  highlightedAuctionId,
 }: {
   organizationId: string;
   requirementId: string;
+  highlightedAuctionId: string | null;
 }) {
   const [auction, setAuction] = useState<{ id: string } | null>(null);
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
@@ -212,9 +254,24 @@ function RentalCompanyAuctionPanel({
   const [loading, setLoading] = useState(true);
   const [bidAmount, setBidAmount] = useState("");
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
-      const found = await apiClient.getActiveAuctionForRequirement(organizationId, requirementId);
+      let found = null;
+      if (highlightedAuctionId) {
+        try {
+          found = await apiClient
+            .getAuctionDetail(organizationId, highlightedAuctionId)
+            .then((item) => {
+              const detail = item as AuctionDetail;
+              if (detail.auction.requirementId !== requirementId) return null;
+              return detail.auction;
+            });
+        } catch {
+          found = null;
+        }
+      }
+      found ??= await apiClient.getActiveAuctionForRequirement(organizationId, requirementId);
+      if (!found) throw new Error("No auction found for this requirement");
       setAuction(found as { id: string });
       setDetail(
         (await apiClient.getAuctionDetail(
@@ -229,11 +286,13 @@ function RentalCompanyAuctionPanel({
     } finally {
       setLoading(false);
     }
-  }
+  }, [organizationId, requirementId, highlightedAuctionId]);
 
   useEffect(() => {
     void load();
-  }, [organizationId, requirementId]);
+  }, [load]);
+
+  useAuctionPolling(detail, load);
 
   async function handleJoin() {
     setError(null);
@@ -323,6 +382,7 @@ export default function AuctionsPage() {
   const organizationType = currentMembership?.organization.organizationTypeCode;
   const searchParams = useSearchParams();
   const requirementIdParam = searchParams.get("requirementId");
+  const auctionIdParam = searchParams.get("auctionId");
 
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(
@@ -344,6 +404,21 @@ export default function AuctionsPage() {
       }
     })();
   }, [organizationId, organizationType]);
+
+  useEffect(() => {
+    if (!organizationId || !auctionIdParam) return;
+    void (async () => {
+      try {
+        const detail = (await apiClient.getAuctionDetail(
+          organizationId,
+          auctionIdParam,
+        )) as AuctionDetail;
+        setSelectedRequirementId(detail.auction.requirementId);
+      } catch {
+        // The current organization may not be an auction party yet.
+      }
+    })();
+  }, [organizationId, auctionIdParam]);
 
   if (!organizationId || !organizationType) return null;
 
@@ -373,11 +448,13 @@ export default function AuctionsPage() {
           <RenterAuctionPanel
             organizationId={organizationId}
             requirementId={selectedRequirementId}
+            highlightedAuctionId={auctionIdParam}
           />
         ) : (
           <RentalCompanyAuctionPanel
             organizationId={organizationId}
             requirementId={selectedRequirementId}
+            highlightedAuctionId={auctionIdParam}
           />
         ))}
     </>
