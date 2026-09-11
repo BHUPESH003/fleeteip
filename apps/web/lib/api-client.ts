@@ -14,6 +14,7 @@ import type {
   MaintenanceRecord,
   MaintenanceStatus,
 } from "@fleetip/contracts/maintenance";
+import type { NotificationListResponse } from "@fleetip/contracts/notification";
 import type {
   CommercialQuotation,
   CreateCommercialQuotationRequest,
@@ -38,7 +39,14 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 function errorMessageFromBody(body: unknown, status: number): string {
   if (typeof body === "object" && body !== null) {
@@ -71,7 +79,7 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
 
   const body = await response.json().catch(() => undefined);
   if (!response.ok) {
-    throw new ApiError(errorMessageFromBody(body, response.status));
+    throw new ApiError(errorMessageFromBody(body, response.status), response.status);
   }
   return body as T;
 }
@@ -223,6 +231,10 @@ export const apiClient = {
     apiRequest<Organization[]>(`/organizations/${organizationId}/renter-organizations`, {
       method: "GET",
     }),
+  listRentalCompanyOrganizations: (organizationId: string) =>
+    apiRequest<Organization[]>(`/organizations/${organizationId}/rental-company-organizations`, {
+      method: "GET",
+    }),
   listQuotations: (organizationId: string) =>
     apiRequest<CommercialQuotation[]>(`/organizations/${organizationId}/quotations`, {
       method: "GET",
@@ -253,6 +265,11 @@ export const apiClient = {
   withdrawQuotation: (organizationId: string, quotationId: string) =>
     apiRequest<CommercialQuotation>(
       `/organizations/${organizationId}/quotations/${quotationId}/withdraw`,
+      { method: "POST" },
+    ),
+  acceptQuotation: (organizationId: string, quotationId: string) =>
+    apiRequest<CommercialQuotation>(
+      `/organizations/${organizationId}/quotations/${quotationId}/accept`,
       { method: "POST" },
     ),
   rejectQuotation: (organizationId: string, quotationId: string) =>
@@ -325,6 +342,11 @@ export const apiClient = {
     apiRequest<AuctionParticipant>(
       `/organizations/${organizationId}/auctions/${auctionId}/participants/${participantId}`,
       { method: "PATCH", body: JSON.stringify({ status }) },
+    ),
+  selectParticipant: (organizationId: string, auctionId: string, participantId: string) =>
+    apiRequest<AuctionParticipant>(
+      `/organizations/${organizationId}/auctions/${auctionId}/participants/${participantId}/select`,
+      { method: "POST" },
     ),
   placeBid: (organizationId: string, auctionId: string, amount: number) =>
     apiRequest(`/organizations/${organizationId}/auctions/${auctionId}/bids`, {
@@ -440,4 +462,16 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  // --- Notifications ---
+  listNotifications: (organizationId: string) =>
+    apiRequest<NotificationListResponse>(`/organizations/${organizationId}/notifications`, {
+      method: "GET",
+    }),
+  markNotificationRead: (organizationId: string, notificationId: string) =>
+    apiRequest(`/organizations/${organizationId}/notifications/${notificationId}/read`, {
+      method: "POST",
+    }),
+  markAllNotificationsRead: (organizationId: string) =>
+    apiRequest(`/organizations/${organizationId}/notifications/read-all`, { method: "POST" }),
 };

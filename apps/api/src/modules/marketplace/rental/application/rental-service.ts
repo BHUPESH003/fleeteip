@@ -13,7 +13,10 @@ import { PermissionService } from "../../../permissions/application/permission-s
 import { canTransition } from "../domain/rental-status.js";
 import type { RentalRecord, RentalRepositoryPort } from "../domain/ports.js";
 
-function toRental(record: RentalRecord): Rental {
+function toRental(
+  record: RentalRecord,
+  extra?: { machineAssetCode?: string | null; rentalCompanyOrganizationName?: string | null },
+): Rental {
   return {
     id: record.id,
     rentalCompanyOrganizationId: record.rental_company_organization_id,
@@ -42,6 +45,8 @@ function toRental(record: RentalRecord): Rental {
     dehireTerms: record.dehire_terms,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
+    machineAssetCode: extra?.machineAssetCode ?? null,
+    rentalCompanyOrganizationName: extra?.rentalCompanyOrganizationName ?? null,
   };
 }
 
@@ -152,14 +157,33 @@ export class RentalService {
     return toRental(record);
   }
 
-  async listRentals(userId: string, rentalCompanyOrganizationId: string): Promise<Rental[]> {
-    await this.permissionService.requirePermission(
-      userId,
-      rentalCompanyOrganizationId,
-      "rental.manage",
-    );
-    const records = await this.rentalRepository.listByOrganization(rentalCompanyOrganizationId);
-    return records.map(toRental);
+  async listRentals(userId: string, organizationId: string): Promise<Rental[]> {
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      // A Renter has no equipment.manage/rental.manage permission on the
+      // Rental Company's org, so it can never resolve the machine/company
+      // itself the way the Rental Company's own list page does — resolve it
+      // here instead (same "look up server-side, don't grant the underlying
+      // permission" shape as auction bids' rentalCompanyOrganizationName).
+      await this.permissionService.requirePermission(userId, organizationId, "rental.respond");
+      const records = await this.rentalRepository.listByRenterOrganization(organizationId);
+      return Promise.all(
+        records.map(async (record) => {
+          const [machine, rentalCompany] = await Promise.all([
+            this.machineRepository.findById(record.machine_id),
+            this.organizationRepository.findById(record.rental_company_organization_id),
+          ]);
+          return toRental(record, {
+            machineAssetCode: machine?.asset_code ?? null,
+            rentalCompanyOrganizationName: rentalCompany?.name ?? null,
+          });
+        }),
+      );
+    }
+
+    await this.permissionService.requirePermission(userId, organizationId, "rental.manage");
+    const records = await this.rentalRepository.listByOrganization(organizationId);
+    return records.map((record) => toRental(record));
   }
 
   async updateRentalTerms(

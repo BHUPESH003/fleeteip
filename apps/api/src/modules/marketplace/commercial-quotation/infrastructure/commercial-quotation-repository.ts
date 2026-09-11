@@ -36,6 +36,7 @@ const QUOTATION_COLUMNS = [
   "validity_date",
   "commercial_notes",
   "status",
+  "renter_accepted_at",
   "created_at",
   "updated_at",
 ] as const;
@@ -158,6 +159,9 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
           notice_period_days: updates.noticePeriodDays,
         }),
         ...(updates.commercialNotes !== undefined && { commercial_notes: updates.commercialNotes }),
+        // A direct term edit invalidates any prior Renter acceptance — see
+        // setRenterAccepted below.
+        renter_accepted_at: null,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -174,6 +178,8 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
         rate_unit: input.rateUnit,
         start_date: input.startDate,
         end_date: input.endDate,
+        // New negotiated terms — same reasoning as updateTerms above.
+        renter_accepted_at: null,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -186,6 +192,16 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
     const row = await this.db
       .updateTable("commercial_quotations")
       .set({ status, updated_at: new Date() })
+      .where("id", "=", id)
+      .returning(QUOTATION_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toQuotationRecord(row);
+  }
+
+  async setRenterAccepted(id: string, accepted: boolean) {
+    const row = await this.db
+      .updateTable("commercial_quotations")
+      .set({ renter_accepted_at: accepted ? new Date() : null, updated_at: new Date() })
       .where("id", "=", id)
       .returning(QUOTATION_COLUMNS)
       .executeTakeFirstOrThrow();

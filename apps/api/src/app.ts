@@ -16,6 +16,7 @@ import { commercialQuotationRoutes } from "./modules/marketplace/commercial-quot
 import { quotationResponseRoutes } from "./modules/marketplace/quotation-response/presentation/routes.js";
 import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { requirementRoutes } from "./modules/marketplace/rfq/presentation/routes.js";
+import { notificationRoutes } from "./modules/notification/presentation/routes.js";
 import { transportRoutes } from "./modules/transport/presentation/routes.js";
 import { AppError } from "./shared/errors.js";
 
@@ -63,6 +64,7 @@ export async function buildApp() {
   await app.register(transportRoutes);
   await app.register(logsheetRoutes);
   await app.register(billingRoutes);
+  await app.register(notificationRoutes);
 
   return app;
 }

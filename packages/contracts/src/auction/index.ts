@@ -38,13 +38,21 @@ export const createAuctionRequestSchema = z
   });
 export type CreateAuctionRequest = z.infer<typeof createAuctionRequestSchema>;
 
-export const participantStatusSchema = z.enum(["pending", "approved", "rejected"]);
+// 'selected' is reached only after the auction has closed — the auction
+// owner's explicit choice of which approved participant to proceed with,
+// distinct from (and not implied by) the bid-ranking "leader". See
+// docs/marketplace-core-loop-design.md §8.
+export const participantStatusSchema = z.enum(["pending", "approved", "rejected", "selected"]);
 export type ParticipantStatus = z.infer<typeof participantStatusSchema>;
 
 export const auctionParticipantSchema = z.object({
   id: z.string().uuid(),
   auctionId: z.string().uuid(),
   rentalCompanyOrganizationId: z.string().uuid(),
+  // Always resolved — a caller only ever sees its own participant row (the
+  // isolated view) or the full roster (the owner view), never someone
+  // else's row without also being entitled to know whose it is.
+  rentalCompanyOrganizationName: z.string(),
   status: participantStatusSchema,
   createdAt: z.string().datetime(),
 });
@@ -61,6 +69,13 @@ export const auctionBidSchema = z.object({
   participantId: z.string().uuid(),
   amount: z.number().positive(),
   createdAt: z.string().datetime(),
+  // Computed via the same pickWinningBid used to close the auction — never
+  // duplicated client-side.
+  isLeading: z.boolean(),
+  // Withheld (null) unless this bid belongs to the requesting org or the
+  // caller is the auction owner — a competitor's identity must never leak
+  // merely because their bid is visible (e.g. as the current leader).
+  rentalCompanyOrganizationName: z.string().nullable(),
 });
 export type AuctionBid = z.infer<typeof auctionBidSchema>;
 

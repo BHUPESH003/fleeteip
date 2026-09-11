@@ -61,6 +61,11 @@ export const rentalSchema = z.object({
   dehireTerms: z.string().min(1).max(1000).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  // Resolved server-side, only for a Renter viewing their own rentals (they
+  // hold no equipment.manage/organization.manage permission on the Rental
+  // Company's org to look these up themselves) — null on every other call.
+  machineAssetCode: z.string().nullable(),
+  rentalCompanyOrganizationName: z.string().nullable(),
 });
 export type Rental = z.infer<typeof rentalSchema>;
 

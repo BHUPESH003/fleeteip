@@ -123,6 +123,15 @@ export class RentalRepository implements RentalRepositoryPort {
     return rows.map(toRentalRecord);
   }
 
+  async listByRenterOrganization(renterOrganizationId: string) {
+    const rows = await this.db
+      .selectFrom("rentals")
+      .selectAll()
+      .where("renter_organization_id", "=", renterOrganizationId)
+      .execute();
+    return rows.map(toRentalRecord);
+  }
+
   async updateTerms(id: string, updates: UpdateRentalTermsInput) {
     const row = await this.db
       .updateTable("rentals")

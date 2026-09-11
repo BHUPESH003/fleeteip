@@ -15,7 +15,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/" },
   { label: "Equipment", href: "/machines", requiredPermissions: ["equipment.manage"] },
-  { label: "Rentals", href: "/rentals", requiredPermissions: ["rental.manage"] },
+  { label: "Rentals", href: "/rentals", requiredPermissions: ["rental.manage", "rental.respond"] },
   {
     label: "Requirements",
     href: "/requirements",

@@ -84,6 +84,7 @@ export interface RentalRepositoryPort {
   create(input: CreateRentalInput): Promise<RentalRecord>;
   findById(id: string): Promise<RentalRecord | undefined>;
   listByOrganization(rentalCompanyOrganizationId: string): Promise<RentalRecord[]>;
+  listByRenterOrganization(renterOrganizationId: string): Promise<RentalRecord[]>;
   updateTerms(id: string, updates: UpdateRentalTermsInput): Promise<RentalRecord>;
   updateStatus(id: string, status: RentalStatus): Promise<RentalRecord>;
   // Application-level pre-check (docs/rental-domain-design.md §10 layer 1) —

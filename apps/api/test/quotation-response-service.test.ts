@@ -17,6 +17,8 @@ import type {
   SubmitQuotationResponseInput,
 } from "../src/modules/marketplace/quotation-response/domain/ports.js";
 import { QuotationResponseService } from "../src/modules/marketplace/quotation-response/application/quotation-response-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
@@ -87,6 +89,30 @@ function fakeOrganizationTypeRepository(
       throw new Error("not used in this test");
     },
   };
+}
+
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient — this file isn't testing notification
+// behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
 }
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
@@ -170,6 +196,7 @@ function buildService(requirements?: RequirementRecord[]) {
     fakeQuotationResponseRepository(),
     fakeRequirementRepository(requirements),
     fakePermissionService(),
+    fakeNotificationService(),
   );
 }
 
@@ -201,6 +228,7 @@ describe("QuotationResponseService", () => {
       fakeQuotationResponseRepository(),
       fakeRequirementRepository(),
       fakePermissionService("renter"),
+      fakeNotificationService(),
     );
     await expect(
       service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
@@ -228,6 +256,7 @@ describe("QuotationResponseService", () => {
       responseRepository,
       fakeRequirementRepository(),
       fakePermissionService(),
+      fakeNotificationService(),
     );
     const first = await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
       status: "interested",
@@ -258,6 +287,7 @@ describe("QuotationResponseService", () => {
       responseRepository,
       requirementRepository,
       fakePermissionService(),
+      fakeNotificationService(),
     );
     await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
       status: "interested",
@@ -269,6 +299,7 @@ describe("QuotationResponseService", () => {
       responseRepository,
       requirementRepository,
       fakePermissionService("renter"),
+      fakeNotificationService(),
     );
     const responses = await renterService.listResponsesForRequirement(
       "user-2",
@@ -283,6 +314,7 @@ describe("QuotationResponseService", () => {
       fakeQuotationResponseRepository(),
       fakeRequirementRepository(),
       fakePermissionService("renter"),
+      fakeNotificationService(),
     );
     await expect(
       service.listResponsesForRequirement("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID),

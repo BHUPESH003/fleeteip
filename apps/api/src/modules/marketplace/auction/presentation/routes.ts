@@ -105,6 +105,22 @@ export async function auctionRoutes(fastify: FastifyInstance): Promise<void> {
     },
   );
 
+  // Deliberately a separate route from the PATCH review endpoint above —
+  // pre-close approval-to-bid and post-close selection-of-the-winner are
+  // distinct lifecycles. See AuctionService.selectParticipant.
+  fastify.post<{ Params: { organizationId: string; auctionId: string; participantId: string } }>(
+    "/organizations/:organizationId/auctions/:auctionId/participants/:participantId/select",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.auctionService.selectParticipant(
+        userId,
+        request.params.organizationId,
+        request.params.auctionId,
+        request.params.participantId,
+      );
+    },
+  );
+
   fastify.post<{ Params: { organizationId: string; auctionId: string } }>(
     "/organizations/:organizationId/auctions/:auctionId/bids",
     async (request, reply) => {
