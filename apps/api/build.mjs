@@ -16,6 +16,7 @@ await build({
     "fastify",
     "@fastify/cookie",
     "@fastify/cors",
+    "@fastify/rate-limit",
     "pg",
     "kysely",
     "pino",
