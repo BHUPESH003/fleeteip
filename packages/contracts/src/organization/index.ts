@@ -38,6 +38,11 @@ export const permissionCodeSchema = z.enum([
   "quotation.respond",
   "auction.manage",
   "auction.participate",
+  "maintenance.manage",
+  "transport.manage",
+  "logsheet.manage",
+  "billing.manage",
+  "billing.respond",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
@@ -55,6 +60,14 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
   // Company joins and bids.
   "auction.manage": ["renter"],
   "auction.participate": ["rental_company"],
+  // Maintenance/Transport/Logsheets are the Rental Company's own
+  // operational records; Billing splits create/manage (Rental Company)
+  // from read-only view (Renter), same shape as quotation.manage/.respond.
+  "maintenance.manage": ["rental_company"],
+  "transport.manage": ["rental_company"],
+  "logsheet.manage": ["rental_company"],
+  "billing.manage": ["rental_company"],
+  "billing.respond": ["renter"],
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;

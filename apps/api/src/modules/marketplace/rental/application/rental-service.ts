@@ -7,6 +7,7 @@ import type {
 } from "@fleetip/contracts/rental";
 import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
+import type { MaintenanceRepositoryPort } from "../../../maintenance/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/rental-status.js";
@@ -50,6 +51,7 @@ export class RentalService {
     private readonly machineRepository: MachineRepositoryPort,
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
+    private readonly maintenanceRepository: MaintenanceRepositoryPort,
   ) {}
 
   async createRental(
@@ -94,6 +96,14 @@ export class RentalService {
     );
     if (!available) {
       throw new ConflictError("Machine is not available for the requested period");
+    }
+    const hasConflictingMaintenance = await this.maintenanceRepository.hasOverlappingMaintenance(
+      input.machineId,
+      input.startDate,
+      input.endDate ?? null,
+    );
+    if (hasConflictingMaintenance) {
+      throw new ConflictError("Machine is scheduled for maintenance during this period");
     }
 
     const record = await this.rentalRepository.create({
@@ -203,6 +213,14 @@ export class RentalService {
       const machine = await this.machineRepository.findById(existing.machine_id);
       if (!machine || machine.status === "retired") {
         throw new ConflictError("Machine is retired and cannot be activated");
+      }
+      const hasConflictingMaintenance = await this.maintenanceRepository.hasOverlappingMaintenance(
+        existing.machine_id,
+        existing.start_date,
+        existing.end_date,
+      );
+      if (hasConflictingMaintenance) {
+        throw new ConflictError("Machine is scheduled for maintenance and cannot be activated");
       }
     }
 

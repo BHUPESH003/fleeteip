@@ -11,7 +11,11 @@
     "./rental": "./src/rental/index.ts",
     "./rfq": "./src/rfq/index.ts",
     "./quotation": "./src/quotation/index.ts",
-    "./auction": "./src/auction/index.ts"
+    "./auction": "./src/auction/index.ts",
+    "./maintenance": "./src/maintenance/index.ts",
+    "./transport": "./src/transport/index.ts",
+    "./logsheet": "./src/logsheet/index.ts",
+    "./billing": "./src/billing/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

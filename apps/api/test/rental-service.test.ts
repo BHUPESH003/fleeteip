@@ -11,6 +11,7 @@ import type {
   MachineRecord,
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
+import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
 import type {
   CreateRentalInput,
   RentalRecord,
@@ -213,12 +214,31 @@ function fakeRentalRepository(): RentalRepositoryPort {
   };
 }
 
-function buildService(machines: MachineRecord[] = [machine()]) {
+function fakeMaintenanceRepository(hasConflict = false): MaintenanceRepositoryPort {
+  return {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listByMachine: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    hasOverlappingMaintenance: async () => hasConflict,
+  };
+}
+
+function buildService(machines: MachineRecord[] = [machine()], hasConflictingMaintenance = false) {
   return new RentalService(
     fakeRentalRepository(),
     fakeMachineRepository(machines),
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
     fakePermissionService(),
+    fakeMaintenanceRepository(hasConflictingMaintenance),
   );
 }
 
@@ -251,6 +271,13 @@ describe("RentalService", () => {
     await expect(
       service.createRental("user-1", RC_ORG_ID, { ...baseInput, machineId: RETIRED_MACHINE_ID }),
     ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects creating a rental that overlaps scheduled machine maintenance", async () => {
+    const service = buildService([machine()], true);
+    await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
+      ConflictError,
+    );
   });
 
   it("rejects a renterOrganizationId that isn't a Renter-type organization", async () => {
@@ -350,6 +377,23 @@ describe("RentalService", () => {
     ).rejects.toThrow(ConflictError);
   });
 
+  it("rejects activating a rental once conflicting maintenance is later scheduled", async () => {
+    let hasConflict = false;
+    const service = new RentalService(
+      fakeRentalRepository(),
+      fakeMachineRepository([machine()]),
+      fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
+      fakePermissionService(),
+      { ...fakeMaintenanceRepository(), hasOverlappingMaintenance: async () => hasConflict },
+    );
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    hasConflict = true;
+
+    await expect(
+      service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active"),
+    ).rejects.toThrow(ConflictError);
+  });
+
   it("runs the full confirmed -> active -> off_rent -> completed lifecycle", async () => {
     const service = buildService();
     const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
@@ -385,6 +429,7 @@ describe("RentalService", () => {
       fakeMachineRepository([machine()]),
       fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
       fakePermissionService("renter"),
+      fakeMaintenanceRepository(),
     );
     await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,

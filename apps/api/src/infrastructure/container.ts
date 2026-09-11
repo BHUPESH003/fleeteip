@@ -18,10 +18,19 @@ import { RentalService } from "../modules/marketplace/rental/application/rental-
 import { RentalRepository } from "../modules/marketplace/rental/infrastructure/rental-repository.js";
 import { RequirementService } from "../modules/marketplace/rfq/application/requirement-service.js";
 import { RequirementRepository } from "../modules/marketplace/rfq/infrastructure/requirement-repository.js";
+import { MaintenanceService } from "../modules/maintenance/application/maintenance-service.js";
+import { MaintenanceRepository } from "../modules/maintenance/infrastructure/maintenance-repository.js";
 import { MembershipRepository } from "../modules/organizations/infrastructure/membership-repository.js";
 import { OrganizationRepository } from "../modules/organizations/infrastructure/organization-repository.js";
 import { PermissionService } from "../modules/permissions/application/permission-service.js";
 import { RoleRepository } from "../modules/permissions/infrastructure/role-repository.js";
+import { TransportService } from "../modules/transport/application/transport-service.js";
+import { TransportRepository } from "../modules/transport/infrastructure/transport-repository.js";
+import { LogsheetService } from "../modules/logsheet/application/logsheet-service.js";
+import { UtilizationService } from "../modules/logsheet/application/utilization-service.js";
+import { LogsheetRepository } from "../modules/logsheet/infrastructure/logsheet-repository.js";
+import { BillingService } from "../modules/billing/application/billing-service.js";
+import { InvoiceRepository } from "../modules/billing/infrastructure/invoice-repository.js";
 import { db } from "./database/client.js";
 
 /**
@@ -45,6 +54,10 @@ const auctionRepository = new AuctionRepository(db);
 const quotationResponseRepository = new QuotationResponseRepository(db);
 const commercialQuotationRepository = new CommercialQuotationRepository(db);
 const quotationOfferRepository = new QuotationOfferRepository(db);
+const maintenanceRepository = new MaintenanceRepository(db);
+const transportRepository = new TransportRepository(db);
+const logsheetRepository = new LogsheetRepository(db);
+const invoiceRepository = new InvoiceRepository(db);
 
 const permissionService = new PermissionService(
   membershipRepository,
@@ -57,6 +70,7 @@ const rentalService = new RentalService(
   machineRepository,
   organizationRepository,
   permissionService,
+  maintenanceRepository,
 );
 
 export const container = {
@@ -104,4 +118,24 @@ export const container = {
     rentalService,
     permissionService,
   ),
+
+  maintenanceService: new MaintenanceService(
+    maintenanceRepository,
+    machineRepository,
+    rentalRepository,
+    permissionService,
+  ),
+
+  transportService: new TransportService(transportRepository, rentalRepository, permissionService),
+
+  logsheetService: new LogsheetService(logsheetRepository, rentalRepository, permissionService),
+
+  utilizationService: new UtilizationService(
+    logsheetRepository,
+    rentalRepository,
+    machineRepository,
+    permissionService,
+  ),
+
+  billingService: new BillingService(invoiceRepository, rentalRepository, permissionService),
 };

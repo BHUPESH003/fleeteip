@@ -11,6 +11,7 @@ import type {
   MachineRecord,
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
+import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
 import type {
   RequirementRecord,
   RequirementRepositoryPort,
@@ -598,6 +599,26 @@ function fakeQuotationOfferRepository(): QuotationOfferRepositoryPort {
   };
 }
 
+// No test in this file exercises the Maintenance/Rental cross-check —
+// award() only needs createRental to succeed.
+function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
+  return {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listByMachine: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    hasOverlappingMaintenance: async () => false,
+  };
+}
+
 function buildRentalService(machines: MachineRecord[] = [machine()]) {
   return {
     rentalService: new RentalService(
@@ -605,6 +626,7 @@ function buildRentalService(machines: MachineRecord[] = [machine()]) {
       fakeMachineRepository(machines),
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
+      fakeMaintenanceRepository(),
     ),
   };
 }
@@ -800,6 +822,7 @@ describe("CommercialQuotationService", () => {
       fakeMachineRepository(machines),
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
+      fakeMaintenanceRepository(),
     );
     const requirementRepository = fakeRequirementRepository();
     const service = new CommercialQuotationService(

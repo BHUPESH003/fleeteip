@@ -4,14 +4,18 @@ import Fastify, { LogController } from "fastify";
 import type { FastifyError } from "fastify";
 import { env } from "./infrastructure/config/env.js";
 import { logger } from "./infrastructure/logging/logger.js";
+import { billingRoutes } from "./modules/billing/presentation/routes.js";
 import { catalogueRoutes } from "./modules/catalogue/presentation/routes.js";
 import { equipmentRoutes } from "./modules/equipment/presentation/routes.js";
 import { identityRoutes } from "./modules/identity/presentation/routes.js";
+import { logsheetRoutes } from "./modules/logsheet/presentation/routes.js";
+import { maintenanceRoutes } from "./modules/maintenance/presentation/routes.js";
 import { auctionRoutes } from "./modules/marketplace/auction/presentation/routes.js";
 import { commercialQuotationRoutes } from "./modules/marketplace/commercial-quotation/presentation/routes.js";
 import { quotationResponseRoutes } from "./modules/marketplace/quotation-response/presentation/routes.js";
 import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { requirementRoutes } from "./modules/marketplace/rfq/presentation/routes.js";
+import { transportRoutes } from "./modules/transport/presentation/routes.js";
 import { AppError } from "./shared/errors.js";
 
 export async function buildApp() {
@@ -50,6 +54,10 @@ export async function buildApp() {
   await app.register(auctionRoutes);
   await app.register(quotationResponseRoutes);
   await app.register(commercialQuotationRoutes);
+  await app.register(maintenanceRoutes);
+  await app.register(transportRoutes);
+  await app.register(logsheetRoutes);
+  await app.register(billingRoutes);
 
   return app;
 }

@@ -95,6 +95,13 @@ export interface Database {
   quotation_reference_sequences: QuotationReferenceSequencesTable;
   commercial_quotations: CommercialQuotationsTable;
   quotation_offers: QuotationOffersTable;
+  maintenance_records: MaintenanceRecordsTable;
+  transport_records: TransportRecordsTable;
+  logsheets: LogsheetsTable;
+  invoices: InvoicesTable;
+  invoice_line_items: InvoiceLineItemsTable;
+  payments: PaymentsTable;
+  invoice_reference_sequences: InvoiceReferenceSequencesTable;
 }
 
 export interface ProductCategoriesTable {
@@ -291,4 +298,94 @@ export interface QuotationOffersTable {
   notes: string | null;
   status: string;
   created_at: CreatedAt;
+}
+
+export interface MaintenanceRecordsTable {
+  id: Generated<string>;
+  machine_id: string;
+  maintenance_type: string;
+  start_date: string;
+  end_date: string | null;
+  status: string;
+  notes: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface TransportRecordsTable {
+  id: Generated<string>;
+  rental_id: string;
+  leg: string;
+  pickup_location: string | null;
+  destination: string | null;
+  planned_date: string | null;
+  actual_date: string | null;
+  status: string;
+  transport_details: string | null;
+  charges: number | null;
+  notes: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface LogsheetsTable {
+  id: Generated<string>;
+  rental_id: string;
+  machine_id: string;
+  log_date: string;
+  shift: string | null;
+  operating_hours: number | null;
+  idle_hours: number | null;
+  overtime_hours: number | null;
+  operator_name: string | null;
+  fuel_consumed: number | null;
+  fuel_unit: string | null;
+  remarks: string | null;
+  customer_confirmed: boolean;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface InvoicesTable {
+  id: Generated<string>;
+  rental_company_organization_id: string;
+  rental_id: string;
+  invoice_number: string;
+  billing_period_start: string;
+  billing_period_end: string;
+  status: string;
+  subtotal: number;
+  tax_amount: number;
+  adjustment_amount: number;
+  total_amount: number;
+  due_date: string;
+  notes: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface InvoiceLineItemsTable {
+  id: Generated<string>;
+  invoice_id: string;
+  description: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+  created_at: CreatedAt;
+}
+
+export interface PaymentsTable {
+  id: Generated<string>;
+  invoice_id: string;
+  amount: number;
+  paid_date: string;
+  method: string | null;
+  reference: string | null;
+  notes: string | null;
+  created_at: CreatedAt;
+}
+
+export interface InvoiceReferenceSequencesTable {
+  organization_id: string;
+  next_value: number;
 }
