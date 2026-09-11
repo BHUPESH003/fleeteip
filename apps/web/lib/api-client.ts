@@ -48,6 +48,20 @@ export class ApiError extends Error {
   }
 }
 
+function errorMessageFromBody(body: unknown, status: number): string {
+  if (typeof body === "object" && body !== null) {
+    const directMessage = (body as { message?: unknown }).message;
+    if (typeof directMessage === "string") return directMessage;
+
+    const nestedError = (body as { error?: unknown }).error;
+    if (typeof nestedError === "object" && nestedError !== null) {
+      const nestedMessage = (nestedError as { message?: unknown }).message;
+      if (typeof nestedMessage === "string") return nestedMessage;
+    }
+  }
+  return `Request failed with status ${status}`;
+}
+
 async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T | undefined> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -65,10 +79,7 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
 
   const body = await response.json().catch(() => undefined);
   if (!response.ok) {
-    throw new ApiError(
-      body?.error?.message ?? `Request failed with status ${response.status}`,
-      response.status,
-    );
+    throw new ApiError(errorMessageFromBody(body, response.status), response.status);
   }
   return body as T;
 }
@@ -166,6 +177,10 @@ export const apiClient = {
   // --- RFQ (Requirement) ---
   listRequirements: (organizationId: string) =>
     apiRequest<Requirement[]>(`/organizations/${organizationId}/requirements`, { method: "GET" }),
+  getRequirement: (organizationId: string, requirementId: string) =>
+    apiRequest<Requirement>(`/organizations/${organizationId}/requirements/${requirementId}`, {
+      method: "GET",
+    }),
   createRequirement: (organizationId: string, input: CreateRequirementRequest) =>
     apiRequest<Requirement>(`/organizations/${organizationId}/requirements`, {
       method: "POST",
