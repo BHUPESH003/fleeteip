@@ -8,6 +8,8 @@ import { catalogueRoutes } from "./modules/catalogue/presentation/routes.js";
 import { equipmentRoutes } from "./modules/equipment/presentation/routes.js";
 import { identityRoutes } from "./modules/identity/presentation/routes.js";
 import { auctionRoutes } from "./modules/marketplace/auction/presentation/routes.js";
+import { commercialQuotationRoutes } from "./modules/marketplace/commercial-quotation/presentation/routes.js";
+import { quotationResponseRoutes } from "./modules/marketplace/quotation-response/presentation/routes.js";
 import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { requirementRoutes } from "./modules/marketplace/rfq/presentation/routes.js";
 import { AppError } from "./shared/errors.js";
@@ -46,6 +48,8 @@ export async function buildApp() {
   await app.register(rentalRoutes);
   await app.register(requirementRoutes);
   await app.register(auctionRoutes);
+  await app.register(quotationResponseRoutes);
+  await app.register(commercialQuotationRoutes);
 
   return app;
 }

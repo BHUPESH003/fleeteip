@@ -9,6 +9,11 @@ import { SessionRepository } from "../modules/identity/infrastructure/session-re
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
 import { AuctionService } from "../modules/marketplace/auction/application/auction-service.js";
 import { AuctionRepository } from "../modules/marketplace/auction/infrastructure/auction-repository.js";
+import { CommercialQuotationService } from "../modules/marketplace/commercial-quotation/application/commercial-quotation-service.js";
+import { CommercialQuotationRepository } from "../modules/marketplace/commercial-quotation/infrastructure/commercial-quotation-repository.js";
+import { QuotationOfferRepository } from "../modules/marketplace/commercial-quotation/infrastructure/quotation-offer-repository.js";
+import { QuotationResponseService } from "../modules/marketplace/quotation-response/application/quotation-response-service.js";
+import { QuotationResponseRepository } from "../modules/marketplace/quotation-response/infrastructure/quotation-response-repository.js";
 import { RentalService } from "../modules/marketplace/rental/application/rental-service.js";
 import { RentalRepository } from "../modules/marketplace/rental/infrastructure/rental-repository.js";
 import { RequirementService } from "../modules/marketplace/rfq/application/requirement-service.js";
@@ -37,11 +42,21 @@ const machineRepository = new MachineRepository(db);
 const rentalRepository = new RentalRepository(db);
 const requirementRepository = new RequirementRepository(db);
 const auctionRepository = new AuctionRepository(db);
+const quotationResponseRepository = new QuotationResponseRepository(db);
+const commercialQuotationRepository = new CommercialQuotationRepository(db);
+const quotationOfferRepository = new QuotationOfferRepository(db);
 
 const permissionService = new PermissionService(
   membershipRepository,
   roleRepository,
   organizationRepository,
+);
+
+const rentalService = new RentalService(
+  rentalRepository,
+  machineRepository,
+  organizationRepository,
+  permissionService,
 );
 
 export const container = {
@@ -62,12 +77,7 @@ export const container = {
 
   equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),
 
-  rentalService: new RentalService(
-    rentalRepository,
-    machineRepository,
-    organizationRepository,
-    permissionService,
-  ),
+  rentalService,
 
   requirementService: new RequirementService(
     requirementRepository,
@@ -76,4 +86,22 @@ export const container = {
   ),
 
   auctionService: new AuctionService(auctionRepository, requirementRepository, permissionService),
+
+  quotationResponseService: new QuotationResponseService(
+    quotationResponseRepository,
+    requirementRepository,
+    permissionService,
+  ),
+
+  commercialQuotationService: new CommercialQuotationService(
+    commercialQuotationRepository,
+    quotationOfferRepository,
+    machineRepository,
+    organizationRepository,
+    requirementRepository,
+    quotationResponseRepository,
+    auctionRepository,
+    rentalService,
+    permissionService,
+  ),
 };
