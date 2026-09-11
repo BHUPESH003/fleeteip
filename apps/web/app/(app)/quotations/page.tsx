@@ -1,12 +1,15 @@
 "use client";
 
+import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
+import type { Organization } from "@fleetip/contracts/organization";
 import type {
   CommercialQuotation,
   CommercialQuotationStatus,
   QuotationOffer,
 } from "@fleetip/contracts/quotation";
 import type { RateUnit } from "@fleetip/contracts/rental";
+import type { Requirement } from "@fleetip/contracts/rfq";
 import {
   Badge,
   Button,
@@ -46,12 +49,14 @@ function QuotationRow({
   organizationId,
   organizationType,
   machinesById,
+  renterOrganizationsById,
   onChanged,
 }: {
   quotation: CommercialQuotation;
   organizationId: string;
   organizationType: "renter" | "rental_company";
   machinesById: Record<string, Machine>;
+  renterOrganizationsById: Record<string, Organization>;
   onChanged: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -75,7 +80,8 @@ function QuotationRow({
   async function handleOffer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       await apiClient.makeOffer(organizationId, quotation.id, {
         rate: Number(form.get("rate")),
@@ -83,7 +89,7 @@ function QuotationRow({
         startDate: quotation.startDate,
         notes: form.get("notes") ? String(form.get("notes")) : undefined,
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await loadOffers();
       onChanged();
     } catch (err) {
@@ -117,7 +123,8 @@ function QuotationRow({
 
   const customer = quotation.clientSnapshot
     ? quotation.clientSnapshot.name
-    : `Renter ${quotation.renterOrganizationId?.slice(0, 8)}…`;
+    : (quotation.renterOrganizationId && renterOrganizationsById[quotation.renterOrganizationId]?.name) ||
+      `Renter ${quotation.renterOrganizationId?.slice(0, 8)}…`;
   const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
 
   return (
@@ -241,6 +248,71 @@ function QuotationRow({
   );
 }
 
+function RequirementContext({
+  requirement,
+  subcategoryName,
+  renterName,
+}: {
+  requirement: Requirement;
+  subcategoryName: string | null;
+  renterName: string;
+}) {
+  const reference = `RFQ-${requirement.id.slice(0, 8).toUpperCase()}`;
+  const duration =
+    requirement.expectedDurationValue && requirement.expectedDurationUnit
+      ? `${requirement.expectedDurationValue} ${requirement.expectedDurationUnit}(s)`
+      : "—";
+
+  return (
+    <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+      <p className="mb-3 text-sm font-medium text-blue-900">
+        Quoting against requirement {reference} — this quotation stays tied to it.
+      </p>
+      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="text-blue-600">Renter</dt>
+          <dd className="text-blue-900">{renterName}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Equipment</dt>
+          <dd className="text-blue-900">{subcategoryName ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Quantity</dt>
+          <dd className="text-blue-900">{requirement.quantity}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Capacity</dt>
+          <dd className="text-blue-900">
+            {requirement.capacity ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}` : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Project</dt>
+          <dd className="text-blue-900">{requirement.projectName ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Location</dt>
+          <dd className="text-blue-900">{requirement.projectLocation ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Requested start</dt>
+          <dd className="text-blue-900">{requirement.requestedStartDate}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Duration needed</dt>
+          <dd className="text-blue-900">{duration}</dd>
+        </div>
+        <div>
+          <dt className="text-blue-600">Requirement valid until</dt>
+          <dd className="text-blue-900">{requirement.validityDate}</dd>
+        </div>
+      </dl>
+      {requirement.notes && <p className="mt-3 text-sm text-blue-800">Notes: {requirement.notes}</p>}
+    </div>
+  );
+}
+
 function CreateQuotationForm({
   organizationId,
   requirementIdParam,
@@ -250,13 +322,49 @@ function CreateQuotationForm({
   requirementIdParam: string | null;
   onCreated: () => void;
 }) {
+  const isFromRequirement = Boolean(requirementIdParam);
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [customerMode, setCustomerMode] = useState<"external" | "renter">("external");
+  const [renterOrganizations, setRenterOrganizations] = useState<Organization[]>([]);
+  const [requirement, setRequirement] = useState<Requirement | null>(null);
+  const [subcategoryName, setSubcategoryName] = useState<string | null>(null);
+  const [customerMode, setCustomerMode] = useState<"external" | "renter">(
+    isFromRequirement ? "renter" : "external",
+  );
+  const [loadingContext, setLoadingContext] = useState(isFromRequirement);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void apiClient.listMachines(organizationId).then((list) => setMachines(list as Machine[]));
+    void apiClient
+      .listRenterOrganizations(organizationId)
+      .then((list) => setRenterOrganizations(list as Organization[]));
   }, [organizationId]);
+
+  useEffect(() => {
+    if (!requirementIdParam) return;
+    void (async () => {
+      try {
+        const req = (await apiClient.getRequirementForDiscovery(
+          organizationId,
+          requirementIdParam,
+        )) as Requirement;
+        setRequirement(req);
+
+        const categories = (await apiClient.listProductCategories()) as ProductCategory[];
+        const subcategoryLists = await Promise.all(
+          categories.map((c) => apiClient.listProductSubcategories(c.id)),
+        );
+        const match = (subcategoryLists.flat() as ProductSubcategory[]).find(
+          (s) => s.id === req.productSubcategoryId,
+        );
+        setSubcategoryName(match?.name ?? null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load the requirement");
+      } finally {
+        setLoadingContext(false);
+      }
+    })();
+  }, [organizationId, requirementIdParam]);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -289,18 +397,29 @@ function CreateQuotationForm({
   }
 
   const activeMachines = machines.filter((m) => m.status === "active");
+  const renterName = (id: string) =>
+    renterOrganizations.find((o) => o.id === id)?.name ?? `Renter ${id.slice(0, 8)}…`;
 
   return (
     <Card className="mb-8 mt-4">
       <h2 className="mb-4 text-lg font-medium text-gray-900">Create a quotation</h2>
       {error && <ErrorState message={error} />}
-      {activeMachines.length === 0 ? (
+      {loadingContext ? (
+        <LoadingState label="Loading requirement…" />
+      ) : activeMachines.length === 0 ? (
         <EmptyState
           title="No available machines"
           description="Register a machine and mark it active before quoting."
         />
       ) : (
-        <form onSubmit={handleCreate} className="flex flex-col gap-4">
+        <form key={requirement?.id ?? "no-requirement"} onSubmit={handleCreate} className="flex flex-col gap-4">
+          {requirement && (
+            <RequirementContext
+              requirement={requirement}
+              subcategoryName={subcategoryName}
+              renterName={renterName(requirement.renterOrganizationId)}
+            />
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Select
               label="Machine"
@@ -311,39 +430,75 @@ function CreateQuotationForm({
                 ...activeMachines.map((m) => ({ value: m.id, label: m.assetCode })),
               ]}
             />
-            <div>
-              <span className="mb-1 block text-sm font-medium text-gray-700">Customer</span>
-              <div className="flex gap-4 pt-2 text-sm text-gray-700">
-                <label className="flex items-center gap-1">
-                  <input
-                    type="radio"
-                    checked={customerMode === "external"}
-                    onChange={() => setCustomerMode("external")}
-                  />
-                  External client
-                </label>
-                <label className="flex items-center gap-1">
-                  <input
-                    type="radio"
-                    checked={customerMode === "renter"}
-                    onChange={() => setCustomerMode("renter")}
-                  />
-                  FleetIP Renter
-                </label>
+            {!isFromRequirement && (
+              <div>
+                <span className="mb-1 block text-sm font-medium text-gray-700">Customer</span>
+                <div className="flex gap-4 pt-2 text-sm text-gray-700">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      checked={customerMode === "external"}
+                      onChange={() => setCustomerMode("external")}
+                    />
+                    External client
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      checked={customerMode === "renter"}
+                      onChange={() => setCustomerMode("renter")}
+                    />
+                    FleetIP Renter
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
           </div>
-          {customerMode === "external" ? (
+          {isFromRequirement && requirement ? (
+            <div>
+              <span className="mb-1 block text-sm font-medium text-gray-700">
+                Renter organization
+              </span>
+              <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                {renterName(requirement.renterOrganizationId)} (locked to this requirement)
+              </p>
+              <input
+                type="hidden"
+                name="renterOrganizationId"
+                value={requirement.renterOrganizationId}
+              />
+            </div>
+          ) : customerMode === "external" ? (
             <Input label="Client name" name="clientName" required />
           ) : (
-            <Input label="Renter organization ID" name="renterOrganizationId" required />
+            <Select
+              label="Renter organization"
+              name="renterOrganizationId"
+              required
+              options={[
+                { value: "", label: "Select a renter" },
+                ...renterOrganizations.map((o) => ({ value: o.id, label: o.name })),
+              ]}
+            />
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Start date" name="startDate" type="date" required />
+            <Input
+              label="Start date"
+              name="startDate"
+              type="date"
+              required
+              defaultValue={requirement?.requestedStartDate}
+            />
             <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
             <Input label="Rate" name="rate" type="number" step="0.01" required />
             <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
-            <Input label="Valid until" name="validityDate" type="date" required />
+            <Input
+              label="Valid until"
+              name="validityDate"
+              type="date"
+              required
+              defaultValue={requirement?.validityDate}
+            />
           </div>
           <Input label="Commercial notes" name="commercialNotes" />
           <div>
@@ -364,6 +519,9 @@ export default function QuotationsPage() {
 
   const [quotations, setQuotations] = useState<CommercialQuotation[]>([]);
   const [machinesById, setMachinesById] = useState<Record<string, Machine>>({});
+  const [renterOrganizationsById, setRenterOrganizationsById] = useState<
+    Record<string, Organization>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -382,8 +540,12 @@ export default function QuotationsPage() {
       try {
         setQuotations((await apiClient.listQuotations(organizationId)) as CommercialQuotation[]);
         if (organizationType === "rental_company") {
-          const machines = (await apiClient.listMachines(organizationId)) as Machine[];
+          const [machines, renterOrganizations] = await Promise.all([
+            apiClient.listMachines(organizationId) as Promise<Machine[]>,
+            apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
+          ]);
           setMachinesById(Object.fromEntries(machines.map((m) => [m.id, m])));
+          setRenterOrganizationsById(Object.fromEntries(renterOrganizations.map((o) => [o.id, o])));
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load quotations");
@@ -440,6 +602,7 @@ export default function QuotationsPage() {
                         organizationId={organizationId}
                         organizationType={organizationType}
                         machinesById={machinesById}
+                        renterOrganizationsById={renterOrganizationsById}
                         onChanged={() => void refresh()}
                       />
                     ))}

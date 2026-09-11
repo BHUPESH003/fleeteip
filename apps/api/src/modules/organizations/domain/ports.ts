@@ -28,6 +28,10 @@ export interface OrganizationRepositoryPort {
   findById(id: string): Promise<OrganizationRecord | undefined>;
   findWithTypeById(id: string): Promise<OrganizationWithTypeRecord | undefined>;
   codeExists(code: string): Promise<boolean>;
+  // Name lookup for a counterparty picker (e.g. Rental Company selecting a
+  // known Renter to quote) — not a general org directory, just enough to
+  // replace a raw organization-id text input with a real Select.
+  listByType(organizationTypeCode: string): Promise<OrganizationWithTypeRecord[]>;
 }
 
 export interface MembershipRecord {

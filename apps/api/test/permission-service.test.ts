@@ -63,6 +63,9 @@ function fakeOrganizationRepository(
     codeExists: async () => {
       throw new Error("not used in this test");
     },
+    listByType: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

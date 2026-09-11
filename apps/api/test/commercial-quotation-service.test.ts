@@ -122,6 +122,17 @@ function fakeOrganizationTypeRepository(
     codeExists: async () => {
       throw new Error("not used in this test");
     },
+    listByType: async (organizationTypeCode) =>
+      Object.entries(organizationTypes)
+        .filter(([, code]) => code === organizationTypeCode)
+        .map(([id, code]) => ({
+          id,
+          organization_type_id: `type-${code}`,
+          organization_type_code: code,
+          name: `Test Org (${id})`,
+          code: "TESTORG",
+          created_at: new Date(),
+        })),
   };
 }
 
@@ -909,5 +920,29 @@ describe("CommercialQuotationService", () => {
         machineId: RETIRED_MACHINE_ID,
       }),
     ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects a renterOrganizationId that doesn't match the given requirement's own renter", async () => {
+    const service = buildService();
+    await expect(
+      service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: OTHER_RC_ORG_ID,
+        requirementId: OPEN_REQUIREMENT_ID,
+      }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("lists Renter organizations for the counterparty picker, gated by quotation.manage", async () => {
+    const service = buildService();
+    const renters = await service.listRenterOrganizations("user-1", RC_ORG_ID);
+    expect(renters).toHaveLength(1);
+    expect(renters[0]?.id).toBe(RENTER_ORG_ID);
+    expect(renters[0]?.organizationTypeCode).toBe("renter");
+
+    await expect(service.listRenterOrganizations("user-1", RENTER_ORG_ID)).rejects.toThrow(
+      ForbiddenError,
+    );
   });
 });

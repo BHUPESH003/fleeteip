@@ -9,6 +9,19 @@ import { getAuthenticatedUserId } from "../../../../shared/auth.js";
 import { parseWithSchema } from "../../../../shared/validate.js";
 
 export async function commercialQuotationRoutes(fastify: FastifyInstance): Promise<void> {
+  // Feeds the "known Renter" picker on the create-quotation form — see
+  // CommercialQuotationService.listRenterOrganizations.
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/renter-organizations",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.commercialQuotationService.listRenterOrganizations(
+        userId,
+        request.params.organizationId,
+      );
+    },
+  );
+
   fastify.post<{ Params: { organizationId: string } }>(
     "/organizations/:organizationId/quotations",
     async (request, reply) => {

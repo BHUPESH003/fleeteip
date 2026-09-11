@@ -61,4 +61,25 @@ export class OrganizationRepository implements OrganizationRepositoryPort {
       .executeTakeFirst()
       .then((row) => row !== undefined);
   }
+
+  listByType(organizationTypeCode: string) {
+    return this.db
+      .selectFrom("organizations")
+      .innerJoin(
+        "organization_types",
+        "organization_types.id",
+        "organizations.organization_type_id",
+      )
+      .select([
+        "organizations.id as id",
+        "organizations.organization_type_id as organization_type_id",
+        "organizations.name as name",
+        "organizations.code as code",
+        "organizations.created_at as created_at",
+        "organization_types.code as organization_type_code",
+      ])
+      .where("organization_types.code", "=", organizationTypeCode)
+      .orderBy("organizations.name")
+      .execute();
+  }
 }

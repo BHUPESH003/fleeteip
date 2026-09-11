@@ -200,14 +200,15 @@ function InvoiceRow({
 
   async function handlePayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       await apiClient.recordPayment(organizationId, invoice.id, {
         amount: Number(form.get("amount")),
         paidDate: String(form.get("paidDate")),
         method: form.get("method") ? String(form.get("method")) : undefined,
       });
-      event.currentTarget.reset();
+      formElement.reset();
       await load();
       onChanged();
     } catch (err) {

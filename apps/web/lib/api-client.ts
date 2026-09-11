@@ -8,6 +8,7 @@ import type { CreateInvoiceRequest, Invoice, InvoiceDetail } from "@fleetip/cont
 import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
+import type { Organization } from "@fleetip/contracts/organization";
 import type {
   CreateMaintenanceRequest,
   MaintenanceRecord,
@@ -172,6 +173,11 @@ export const apiClient = {
     apiRequest<Requirement[]>(`/organizations/${organizationId}/requirement-discovery`, {
       method: "GET",
     }),
+  getRequirementForDiscovery: (organizationId: string, requirementId: string) =>
+    apiRequest<Requirement>(
+      `/organizations/${organizationId}/requirement-discovery/${requirementId}`,
+      { method: "GET" },
+    ),
 
   // --- QuotationResponse ---
   listResponsesForRequirement: (organizationId: string, requirementId: string) =>
@@ -195,6 +201,10 @@ export const apiClient = {
     ),
 
   // --- CommercialQuotation + Negotiation ---
+  listRenterOrganizations: (organizationId: string) =>
+    apiRequest<Organization[]>(`/organizations/${organizationId}/renter-organizations`, {
+      method: "GET",
+    }),
   listQuotations: (organizationId: string) =>
     apiRequest<CommercialQuotation[]>(`/organizations/${organizationId}/quotations`, {
       method: "GET",

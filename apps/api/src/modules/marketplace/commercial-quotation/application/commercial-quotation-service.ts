@@ -1,3 +1,4 @@
+import type { Organization } from "@fleetip/contracts/organization";
 import type {
   CommercialQuotation,
   CreateCommercialQuotationRequest,
@@ -12,7 +13,10 @@ import {
   ValidationError,
 } from "../../../../shared/errors.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
-import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
+import type {
+  OrganizationRepositoryPort,
+  OrganizationWithTypeRecord,
+} from "../../../organizations/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import type { AuctionRepositoryPort } from "../../auction/domain/ports.js";
 import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
@@ -56,6 +60,16 @@ function toQuotation(record: CommercialQuotationRecord): CommercialQuotation {
     status: record.status,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
+  };
+}
+
+function toOrganization(record: OrganizationWithTypeRecord): Organization {
+  return {
+    id: record.id,
+    organizationTypeCode: record.organization_type_code as "rental_company" | "renter",
+    name: record.name,
+    code: record.code,
+    createdAt: new Date(record.created_at).toISOString(),
   };
 }
 
@@ -122,6 +136,18 @@ export class CommercialQuotationService {
       if (!requirement) throw new NotFoundError("Requirement not found");
       if (requirement.status !== "open") {
         throw new ConflictError("Cannot quote against a requirement that is not open");
+      }
+      // A quotation created against a Requirement must stay tied to that
+      // Requirement's own renter — otherwise a client could send a
+      // requirementId from one Renter alongside a renterOrganizationId for
+      // another and the two would silently diverge.
+      if (
+        input.renterOrganizationId &&
+        input.renterOrganizationId !== requirement.renter_organization_id
+      ) {
+        throw new ValidationError(
+          "renterOrganizationId must match the Requirement's renter organization",
+        );
       }
     }
 
@@ -200,6 +226,21 @@ export class CommercialQuotationService {
         "Only the auction's winning Rental Company may formalize this quotation",
       );
     }
+  }
+
+  // Feeds the "known Renter" picker on the create-quotation form — a name
+  // lookup for the counterparty selector, not a general org directory.
+  async listRenterOrganizations(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<Organization[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "quotation.manage",
+    );
+    const records = await this.organizationRepository.listByType("renter");
+    return records.map(toOrganization);
   }
 
   async getQuotation(
