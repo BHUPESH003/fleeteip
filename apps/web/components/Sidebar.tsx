@@ -7,13 +7,10 @@ import { useSession } from "../lib/session-context";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 
 export function Sidebar() {
-  const { hasPermission, currentMembership } = useSession();
+  const { hasPermission } = useSession();
   const pathname = usePathname();
 
-  const items = filterNavItems(NAV_ITEMS, {
-    hasPermission,
-    organizationType: currentMembership?.organization.organizationTypeCode,
-  });
+  const items = filterNavItems(NAV_ITEMS, { hasPermission });
 
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-white sm:flex">

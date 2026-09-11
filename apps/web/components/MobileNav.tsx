@@ -6,13 +6,10 @@ import { filterNavItems, NAV_ITEMS } from "../lib/navigation";
 import { useSession } from "../lib/session-context";
 
 export function MobileNav({ onClose }: { onClose: () => void }) {
-  const { hasPermission, currentMembership } = useSession();
+  const { hasPermission } = useSession();
   const pathname = usePathname();
 
-  const items = filterNavItems(NAV_ITEMS, {
-    hasPermission,
-    organizationType: currentMembership?.organization.organizationTypeCode,
-  });
+  const items = filterNavItems(NAV_ITEMS, { hasPermission });
 
   return (
     <div className="fixed inset-0 z-20 flex sm:hidden">

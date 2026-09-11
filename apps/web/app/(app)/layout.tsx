@@ -29,9 +29,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
       {mobileNavOpen && <MobileNav onClose={() => setMobileNavOpen(false)} />}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <Header onMenuClick={() => setMobileNavOpen(true)} />
-        <main className="flex-1 overflow-x-hidden px-6 py-8">
+        <main className="min-w-0 flex-1 overflow-x-hidden px-6 py-8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </main>
       </div>

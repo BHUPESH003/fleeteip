@@ -336,6 +336,12 @@ export default function RentalsPage() {
                       </td>
                       <td className="py-2 pr-4">
                         <div className="flex gap-2">
+                          <a
+                            href={`/rentals/${rental.id}`}
+                            className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                          >
+                            Details
+                          </a>
                           {legalNextStatuses(rental.status).map((next) => (
                             <button
                               key={next}
