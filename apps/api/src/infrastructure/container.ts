@@ -7,6 +7,8 @@ import { MachineRepository } from "../modules/equipment/infrastructure/machine-r
 import { AuthService } from "../modules/identity/application/auth-service.js";
 import { SessionRepository } from "../modules/identity/infrastructure/session-repository.js";
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
+import { AuctionService } from "../modules/marketplace/auction/application/auction-service.js";
+import { AuctionRepository } from "../modules/marketplace/auction/infrastructure/auction-repository.js";
 import { RentalService } from "../modules/marketplace/rental/application/rental-service.js";
 import { RentalRepository } from "../modules/marketplace/rental/infrastructure/rental-repository.js";
 import { RequirementService } from "../modules/marketplace/rfq/application/requirement-service.js";
@@ -34,6 +36,7 @@ const productRepository = new ProductRepository(db);
 const machineRepository = new MachineRepository(db);
 const rentalRepository = new RentalRepository(db);
 const requirementRepository = new RequirementRepository(db);
+const auctionRepository = new AuctionRepository(db);
 
 const permissionService = new PermissionService(
   membershipRepository,
@@ -71,4 +74,6 @@ export const container = {
     productSubcategoryRepository,
     permissionService,
   ),
+
+  auctionService: new AuctionService(auctionRepository, requirementRepository, permissionService),
 };

@@ -4,7 +4,12 @@ import type {
   SignupRequest,
   User,
 } from "@fleetip/contracts/identity";
-import type { MembershipWithOrganization, PermissionCode } from "@fleetip/contracts/organization";
+import {
+  PERMISSION_ORGANIZATION_TYPES,
+  type MembershipWithOrganization,
+  type OrganizationTypeCode,
+  type PermissionCode,
+} from "@fleetip/contracts/organization";
 import { ConflictError, UnauthorizedError, ValidationError } from "../../../shared/errors.js";
 import { generateOrganizationCode } from "../../organizations/application/generate-organization-code.js";
 import type {
@@ -121,7 +126,16 @@ export class AuthService {
       roleName: row.role_name as "owner" | "member",
       status: row.status as "active" | "invited" | "suspended",
       createdAt: new Date(row.created_at).toISOString(),
-      permissions: permissionsByRoleId.get(row.role_id) ?? [],
+      // The role grants a fixed set of codes, but a permission is only ever
+      // real for the organization types it applies to (PERMISSION_ORGANIZATION_TYPES)
+      // — the same check PermissionService.hasPermission enforces server-side.
+      // Without this filter, a Renter's own membership would list
+      // rental_company-only codes it can never actually exercise.
+      permissions: (permissionsByRoleId.get(row.role_id) ?? []).filter((code) =>
+        PERMISSION_ORGANIZATION_TYPES[code].includes(
+          row.organization_type_code as OrganizationTypeCode,
+        ),
+      ),
       organization: {
         id: row.organization_id,
         organizationTypeCode: row.organization_type_code as "rental_company" | "renter",
