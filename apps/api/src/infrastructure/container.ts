@@ -20,6 +20,7 @@ import { RequirementService } from "../modules/marketplace/rfq/application/requi
 import { RequirementRepository } from "../modules/marketplace/rfq/infrastructure/requirement-repository.js";
 import { MaintenanceService } from "../modules/maintenance/application/maintenance-service.js";
 import { MaintenanceRepository } from "../modules/maintenance/infrastructure/maintenance-repository.js";
+import { OrganizationService } from "../modules/organizations/application/organization-service.js";
 import { MembershipRepository } from "../modules/organizations/infrastructure/membership-repository.js";
 import { OrganizationRepository } from "../modules/organizations/infrastructure/organization-repository.js";
 import { PermissionService } from "../modules/permissions/application/permission-service.js";
@@ -33,6 +34,7 @@ import { BillingService } from "../modules/billing/application/billing-service.j
 import { InvoiceRepository } from "../modules/billing/infrastructure/invoice-repository.js";
 import { NotificationService } from "../modules/notification/application/notification-service.js";
 import { NotificationRepository } from "../modules/notification/infrastructure/notification-repository.js";
+import { SearchService } from "../modules/search/application/search-service.js";
 import { db } from "./database/client.js";
 
 /**
@@ -88,10 +90,19 @@ export const container = {
   ),
   permissionService,
 
+  organizationService: new OrganizationService(
+    organizationRepository,
+    membershipRepository,
+    roleRepository,
+    userRepository,
+    permissionService,
+  ),
+
   catalogueService: new CatalogueService(
     productCategoryRepository,
     productSubcategoryRepository,
     productRepository,
+    permissionService,
   ),
 
   equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),
@@ -123,6 +134,7 @@ export const container = {
     commercialQuotationRepository,
     quotationOfferRepository,
     machineRepository,
+    productRepository,
     organizationRepository,
     requirementRepository,
     quotationResponseRepository,
@@ -139,18 +151,38 @@ export const container = {
     permissionService,
   ),
 
-  transportService: new TransportService(transportRepository, rentalRepository, permissionService),
+  transportService: new TransportService(
+    transportRepository,
+    rentalRepository,
+    organizationRepository,
+    permissionService,
+  ),
 
-  logsheetService: new LogsheetService(logsheetRepository, rentalRepository, permissionService),
+  logsheetService: new LogsheetService(
+    logsheetRepository,
+    rentalRepository,
+    organizationRepository,
+    permissionService,
+  ),
 
   utilizationService: new UtilizationService(
     logsheetRepository,
     rentalRepository,
     machineRepository,
+    organizationRepository,
     permissionService,
   ),
 
   billingService: new BillingService(invoiceRepository, rentalRepository, permissionService),
 
   notificationService,
+
+  searchService: new SearchService(
+    machineRepository,
+    requirementRepository,
+    commercialQuotationRepository,
+    rentalRepository,
+    organizationRepository,
+    permissionService,
+  ),
 };

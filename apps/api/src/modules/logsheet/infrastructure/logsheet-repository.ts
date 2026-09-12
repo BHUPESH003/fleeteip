@@ -85,6 +85,33 @@ export class LogsheetRepository implements LogsheetRepositoryPort {
     return rows as LogsheetRecord[];
   }
 
+  async listByRentalCompanyOrganization(rentalCompanyOrganizationId: string) {
+    const rows = await this.db
+      .selectFrom("logsheets")
+      .innerJoin("rentals", "rentals.id", "logsheets.rental_id")
+      .where("rentals.rental_company_organization_id", "=", rentalCompanyOrganizationId)
+      .select([
+        "logsheets.id as id",
+        "logsheets.rental_id as rental_id",
+        "logsheets.machine_id as machine_id",
+        "logsheets.log_date as log_date",
+        "logsheets.shift as shift",
+        "logsheets.operating_hours as operating_hours",
+        "logsheets.idle_hours as idle_hours",
+        "logsheets.overtime_hours as overtime_hours",
+        "logsheets.operator_name as operator_name",
+        "logsheets.fuel_consumed as fuel_consumed",
+        "logsheets.fuel_unit as fuel_unit",
+        "logsheets.remarks as remarks",
+        "logsheets.customer_confirmed as customer_confirmed",
+        "logsheets.created_at as created_at",
+        "logsheets.updated_at as updated_at",
+      ])
+      .orderBy("logsheets.log_date", "desc")
+      .execute();
+    return rows as LogsheetRecord[];
+  }
+
   async getRentalTotals(rentalId: string): Promise<UtilizationTotals> {
     return this.getTotals(sql`rental_id = ${rentalId}`);
   }

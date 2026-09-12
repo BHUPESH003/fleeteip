@@ -23,6 +23,8 @@ import { ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
 const OTHER_RC_ORG_ID = "org-other-rental-company";
+const RENTER_ORG_ID = "org-renter";
+const OTHER_RENTER_ORG_ID = "org-other-renter";
 const RENTAL_ID = "rental-1";
 const MACHINE_ID = "machine-1";
 
@@ -37,17 +39,24 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
       throw new Error("not used in this test");
     },
     listWithOrganizationByUserId: async () => [],
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
   const roleRepository: RoleRepositoryPort = {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
-      roleId === OWNER_ROLE_ID ? ["logsheet.manage"] : [],
+      roleId === OWNER_ROLE_ID ? ["logsheet.manage", "logsheet.respond"] : [],
   };
   return new PermissionService(
     membershipRepository,
     roleRepository,
-    fakeOrganizationTypeRepository({ [RC_ORG_ID]: organizationTypeCode }),
+    fakeOrganizationTypeRepository({
+      [RC_ORG_ID]: organizationTypeCode,
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+    }),
   );
 }
 
@@ -136,10 +145,16 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
     isAvailable: async () => {
       throw new Error("not used in this test");
     },
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
-function fakeLogsheetRepository(): LogsheetRepositoryPort {
+function fakeLogsheetRepository(rentals: RentalRecord[] = []): LogsheetRepositoryPort {
   const records = new Map<string, LogsheetRecord>();
   let nextId = 1;
   return {
@@ -170,6 +185,14 @@ function fakeLogsheetRepository(): LogsheetRepositoryPort {
     },
     findByRentalAndDate: async (rentalId, logDate) => records.get(`${rentalId}:${logDate}`),
     listByRental: async (rentalId) => [...records.values()].filter((r) => r.rental_id === rentalId),
+    listByRentalCompanyOrganization: async (rentalCompanyOrganizationId) => {
+      const orgRentalIds = new Set(
+        rentals
+          .filter((r) => r.rental_company_organization_id === rentalCompanyOrganizationId)
+          .map((r) => r.id),
+      );
+      return [...records.values()].filter((r) => orgRentalIds.has(r.rental_id));
+    },
     getRentalTotals: async (rentalId): Promise<UtilizationTotals> => {
       const rows = [...records.values()].filter((r) => r.rental_id === rentalId);
       return {
@@ -193,8 +216,13 @@ function fakeLogsheetRepository(): LogsheetRepositoryPort {
 
 function buildService(rentals: RentalRecord[] = [rental()]) {
   return new LogsheetService(
-    fakeLogsheetRepository(),
+    fakeLogsheetRepository(rentals),
     fakeRentalRepository(rentals),
+    fakeOrganizationTypeRepository({
+      [RC_ORG_ID]: "rental_company",
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+    }),
     fakePermissionService(),
   );
 }
@@ -204,6 +232,7 @@ describe("LogsheetService", () => {
     const service = new LogsheetService(
       fakeLogsheetRepository(),
       fakeRentalRepository([rental()]),
+      fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
       fakePermissionService("renter"),
     );
     await expect(
@@ -234,6 +263,7 @@ describe("LogsheetService", () => {
     const service = new LogsheetService(
       logsheetRepository,
       fakeRentalRepository([rental()]),
+      fakeOrganizationTypeRepository({ [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
     );
     const first = await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, {
@@ -255,6 +285,31 @@ describe("LogsheetService", () => {
     await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" });
     await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-03" });
     const list = await service.listByRental("user-1", RC_ORG_ID, RENTAL_ID);
+    expect(list).toHaveLength(2);
+  });
+
+  it("lets the Renter counterparty read-only view their own rental's logsheets", async () => {
+    const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+    await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" });
+
+    const asRenter = await service.listByRental("user-2", RENTER_ORG_ID, RENTAL_ID);
+    expect(asRenter).toHaveLength(1);
+  });
+
+  it("hides logsheets for a rental the Renter is not the counterparty on", async () => {
+    const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+    await expect(service.listByRental("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it("lists logsheets across the whole organization's fleet on the standalone screen", async () => {
+    const secondRental = rental({ id: "rental-2" });
+    const service = buildService([rental(), secondRental]);
+    await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" });
+    await service.submitLogsheet("user-1", RC_ORG_ID, "rental-2", { logDate: "2026-03-02" });
+
+    const list = await service.listByOrganization("user-1", RC_ORG_ID);
     expect(list).toHaveLength(2);
   });
 });

@@ -5,6 +5,7 @@ import type {
   AuctionEvent,
   AuctionParticipant,
   AuctionResult,
+  AuctionSummary,
   CreateAuctionRequest,
 } from "@fleetip/contracts/auction";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../../../shared/errors.js";
@@ -38,7 +39,10 @@ function toAuction(record: AuctionRecord): Auction {
   };
 }
 
-function toParticipant(record: AuctionParticipantRecord, organizationName: string): AuctionParticipant {
+function toParticipant(
+  record: AuctionParticipantRecord,
+  organizationName: string,
+): AuctionParticipant {
   return {
     id: record.id,
     auctionId: record.auction_id,
@@ -49,7 +53,11 @@ function toParticipant(record: AuctionParticipantRecord, organizationName: strin
   };
 }
 
-function toBid(record: AuctionBidRecord, isLeading: boolean, organizationName: string | null): AuctionBid {
+function toBid(
+  record: AuctionBidRecord,
+  isLeading: boolean,
+  organizationName: string | null,
+): AuctionBid {
   return {
     id: record.id,
     auctionId: record.auction_id,
@@ -178,6 +186,38 @@ export class AuctionService {
       endsAt: input.endsAt,
     });
     return toAuction(record);
+  }
+
+  // Org-scoped dashboard/list view — a Renter sees every auction it owns, a
+  // Rental Company sees every auction it participates in, without looping
+  // getAuctionDetail (N+1) over each one. Mirrors RentalService.listRentals'
+  // org-type branch.
+  async listAuctionsForOrganization(
+    userId: string,
+    organizationId: string,
+  ): Promise<AuctionSummary[]> {
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "rental_company") {
+      await this.permissionService.requirePermission(userId, organizationId, "auction.participate");
+      const rows = await this.auctionRepository.listByParticipantOrganization(organizationId);
+      return rows.map((row) => ({
+        ...toAuction(row),
+        requirementProjectName: row.requirement_project_name,
+        participantCount: null,
+        ownParticipantStatus: row.own_participant_status,
+        needsAttention: row.own_participant_status === "selected",
+      }));
+    }
+
+    await this.permissionService.requirePermission(userId, organizationId, "auction.manage");
+    const rows = await this.auctionRepository.listByOwnerOrganization(organizationId);
+    return rows.map((row) => ({
+      ...toAuction(row),
+      requirementProjectName: row.requirement_project_name,
+      participantCount: row.participant_count,
+      ownParticipantStatus: null,
+      needsAttention: row.status === "closed" && !row.has_selected_participant,
+    }));
   }
 
   async listAuctionsForRequirement(

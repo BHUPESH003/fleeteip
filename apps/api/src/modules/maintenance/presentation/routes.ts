@@ -35,6 +35,19 @@ export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void>
     },
   );
 
+  // Standalone Maintenance screen — every maintenance record across the
+  // org's own fleet, not one machine at a time. Registered after the
+  // per-machine route above so Fastify's more specific path still matches
+  // first for that shape (distinct path segments regardless, but keeping
+  // reading order consistent with the rest of this file).
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/maintenance-records",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.maintenanceService.listByOrganization(userId, request.params.organizationId);
+    },
+  );
+
   fastify.patch<{ Params: { organizationId: string; maintenanceId: string } }>(
     "/organizations/:organizationId/maintenance-records/:maintenanceId/status",
     async (request) => {

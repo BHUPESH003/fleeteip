@@ -91,4 +91,8 @@ export interface RentalRepositoryPort {
   // the real guarantee is the DB exclusion constraint, this exists only for
   // a fast, friendly error before ever reaching the database.
   isAvailable(machineId: string, startDate: string, endDate: string | null): Promise<boolean>;
+  // Global search — project name/client name match, one side of the party
+  // split (mirrors listByOrganization/listByRenterOrganization).
+  searchByOrganization(rentalCompanyOrganizationId: string, query: string): Promise<RentalRecord[]>;
+  searchByRenterOrganization(renterOrganizationId: string, query: string): Promise<RentalRecord[]>;
 }
