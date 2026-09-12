@@ -3,15 +3,12 @@
 import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Invoice } from "@fleetip/contracts/billing";
-import type { Logsheet, RentalUtilization } from "@fleetip/contracts/logsheet";
 import type { Rental } from "@fleetip/contracts/rental";
-import type { TransportLeg, TransportRecord, TransportStatus } from "@fleetip/contracts/transport";
 import {
   Button,
   Card,
   EmptyState,
   ErrorState,
-  Input,
   LoadingState,
   PageHeader,
   StatusBadge,
@@ -24,15 +21,14 @@ import {
   Tr,
 } from "@fleetip/ui";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { apiClient } from "../../../../lib/api-client";
 import { formatCurrencyINR, formatDate } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
 import { INVOICE_STATUS_MAP } from "../../billing/shared";
-import { legalNextRentalStatuses, legalNextTransportStatuses, RENTAL_STATUS_MAP, TRANSPORT_STATUS_MAP } from "../shared";
-
-const LEGS: TransportLeg[] = ["mobilization", "demobilization"];
+import { LogsheetPanel, TransportPanel } from "../panels";
+import { legalNextRentalStatuses, RENTAL_STATUS_MAP } from "../shared";
 
 interface Loaded {
   rental: Rental;
@@ -41,191 +37,9 @@ interface Loaded {
   invoices: Invoice[];
 }
 
-function TransportPanel({ organizationId, rentalId }: { organizationId: string; rentalId: string }) {
-  const [records, setRecords] = useState<TransportRecord[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  async function refresh() {
-    try {
-      setRecords((await apiClient.listTransportForRental(organizationId, rentalId)) as TransportRecord[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load transport records");
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-  }, [organizationId, rentalId]);
-
-  async function handleCreate(leg: TransportLeg) {
-    try {
-      await apiClient.createTransport(organizationId, rentalId, { leg });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create transport record");
-    }
-  }
-
-  async function handleStatus(leg: TransportLeg, status: TransportStatus) {
-    try {
-      await apiClient.updateTransport(organizationId, rentalId, leg, {
-        status,
-        ...(status === "delivered" ? { actualDate: new Date().toISOString().slice(0, 10) } : {}),
-      });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update transport record");
-    }
-  }
-
-  return (
-    <Card>
-      {error && <ErrorState message={error} />}
-      <div className="flex flex-col gap-3">
-        {LEGS.map((leg) => {
-          const record = records.find((r) => r.leg === leg);
-          return (
-            <div
-              key={leg}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border p-3"
-            >
-              <div>
-                <p className="text-sm font-medium capitalize text-ink">{leg}</p>
-                {record ? (
-                  <p className="text-xs text-meta">
-                    {record.pickupLocation ?? "—"} → {record.destination ?? "—"} · planned{" "}
-                    {record.plannedDate ?? "—"}
-                  </p>
-                ) : (
-                  <p className="text-xs text-meta">Not yet planned</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {record ? (
-                  <>
-                    <StatusBadge status={record.status} map={TRANSPORT_STATUS_MAP} />
-                    {legalNextTransportStatuses(record.status).map((next) => (
-                      <Button key={next} size="sm" variant="secondary" onClick={() => void handleStatus(leg, next)}>
-                        Mark {next}
-                      </Button>
-                    ))}
-                  </>
-                ) : (
-                  <Button size="sm" variant="secondary" onClick={() => void handleCreate(leg)}>
-                    Plan
-                  </Button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
-function LogsheetPanel({ organizationId, rentalId }: { organizationId: string; rentalId: string }) {
-  const [logsheets, setLogsheets] = useState<Logsheet[]>([]);
-  const [utilization, setUtilization] = useState<RentalUtilization | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function refresh() {
-    try {
-      const [list, util] = await Promise.all([
-        apiClient.listLogsheetsForRental(organizationId, rentalId),
-        apiClient.getRentalUtilization(organizationId, rentalId),
-      ]);
-      setLogsheets(list as Logsheet[]);
-      setUtilization(util as RentalUtilization);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load logsheets");
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-  }, [organizationId, rentalId]);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const operatingHours = form.get("operatingHours");
-    const idleHours = form.get("idleHours");
-    const overtimeHours = form.get("overtimeHours");
-    try {
-      await apiClient.submitLogsheet(organizationId, rentalId, {
-        logDate: String(form.get("logDate")),
-        operatingHours: operatingHours ? Number(operatingHours) : undefined,
-        idleHours: idleHours ? Number(idleHours) : undefined,
-        overtimeHours: overtimeHours ? Number(overtimeHours) : undefined,
-      });
-      formElement.reset();
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit logsheet");
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3.5">
-      {error && <ErrorState message={error} />}
-      {utilization && (
-        <Card>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              ["Rental days", utilization.totalRentalDays],
-              ["Operating hrs", utilization.totalOperatingHours],
-              ["Idle hrs", utilization.totalIdleHours],
-              ["Logged days", utilization.loggedDayCount],
-            ].map(([label, value]) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-                <span className="font-mono text-lg font-medium text-ink">{value}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-      <Card>
-        <form onSubmit={handleSubmit} className="mb-4 flex flex-wrap items-end gap-3">
-          <Input label="Date" name="logDate" type="date" required />
-          <Input label="Operating hrs" name="operatingHours" type="number" step="0.5" />
-          <Input label="Idle hrs" name="idleHours" type="number" step="0.5" />
-          <Input label="Overtime hrs" name="overtimeHours" type="number" step="0.5" />
-          <Button type="submit">Submit logsheet</Button>
-        </form>
-        {logsheets.length === 0 ? (
-          <EmptyState title="No logsheets yet" description="Submit one above." />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Date</Th>
-                <Th>Operating</Th>
-                <Th>Idle</Th>
-                <Th>Overtime</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {logsheets.map((log) => (
-                <Tr key={log.id}>
-                  <Td className="font-mono">{formatDate(log.logDate)}</Td>
-                  <Td>{log.operatingHours ?? "—"}</Td>
-                  <Td>{log.idleHours ?? "—"}</Td>
-                  <Td>{log.overtimeHours ?? "—"}</Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        )}
-      </Card>
-    </div>
-  );
-}
-
 export default function RentalDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const { currentMembership } = useSession();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
@@ -233,7 +47,7 @@ export default function RentalDetailPage() {
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(searchParams.get("tab") ?? "overview");
 
   async function load(orgId: string) {
     const [rentals, invoices] = await Promise.all([

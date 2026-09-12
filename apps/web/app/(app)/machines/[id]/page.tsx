@@ -3,20 +3,16 @@
 import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization } from "@fleetip/contracts/logsheet";
-import type { MaintenanceRecord, MaintenanceType } from "@fleetip/contracts/maintenance";
 import type { Organization } from "@fleetip/contracts/organization";
 import type { Rental } from "@fleetip/contracts/rental";
 import {
   Badge,
   Button,
   Card,
-  Dialog,
   EmptyState,
   ErrorState,
-  Input,
   LoadingState,
   PageHeader,
-  Select,
   StatusBadge,
   Table,
   Tabs,
@@ -26,25 +22,23 @@ import {
   Thead,
   Tr,
 } from "@fleetip/ui";
-import { useParams } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { apiClient } from "../../../../lib/api-client";
 import { formatDate } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
+import { MaintenancePanel } from "../panels";
 import {
   MACHINE_STATUS_MAP,
-  MAINTENANCE_STATUS_MAP,
   currentRentalFor,
   flattenSpecifications,
   legalNextMachineStatuses,
-  legalNextMaintenanceStatuses,
 } from "../shared";
 
 interface Loaded {
   machine: Machine;
   product: Product | null;
   rentals: Rental[];
-  maintenance: MaintenanceRecord[];
   utilization: MachineUtilization | null;
   logsheets: Logsheet[];
   renterNames: Map<string, string>;
@@ -61,18 +55,17 @@ const TABS = [
 
 export default function MachineDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const { currentMembership } = useSession();
   const organizationId = currentMembership?.organizationId;
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState("overview");
-  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [tab, setTab] = useState(searchParams.get("tab") ?? "overview");
 
   async function load(orgId: string) {
-    const [machines, maintenance, utilization, rentals, renterOrgs] = await Promise.all([
+    const [machines, utilization, rentals, renterOrgs] = await Promise.all([
       apiClient.listMachines(orgId) as Promise<Machine[]>,
-      apiClient.listMaintenanceForMachine(orgId, id) as Promise<MaintenanceRecord[]>,
       apiClient.getMachineUtilization(orgId, id) as Promise<MachineUtilization>,
       apiClient.listRentals(orgId) as Promise<Rental[]>,
       apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
@@ -92,7 +85,6 @@ export default function MachineDetailPage() {
       machine,
       product,
       rentals,
-      maintenance,
       utilization,
       logsheets,
       renterNames: new Map(renterOrgs.map((o) => [o.id, o.name])),
@@ -116,34 +108,10 @@ export default function MachineDetailPage() {
     await load(organizationId);
   }
 
-  async function handleSchedule(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!organizationId) return;
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const endDate = form.get("endDate");
-    await apiClient.createMaintenance(organizationId, {
-      machineId: id,
-      maintenanceType: String(form.get("maintenanceType")) as MaintenanceType,
-      startDate: String(form.get("startDate")),
-      endDate: endDate ? String(endDate) : undefined,
-      notes: form.get("notes") ? String(form.get("notes")) : undefined,
-    });
-    formElement.reset();
-    setScheduleOpen(false);
-    await load(organizationId);
-  }
-
-  async function handleMaintenanceStatus(maintenanceId: string, status: MaintenanceRecord["status"]) {
-    if (!organizationId) return;
-    await apiClient.updateMaintenanceStatus(organizationId, maintenanceId, status);
-    await load(organizationId);
-  }
-
   if (error) return <ErrorState message={error} />;
   if (!data) return <LoadingState label="Loading machine…" />;
 
-  const { machine, product, rentals, maintenance, utilization, logsheets, renterNames } = data;
+  const { machine, product, rentals, utilization, logsheets, renterNames } = data;
   const rental = currentRentalFor(machine.id, rentals);
   const rentalName = rental
     ? (rental.renterOrganizationId && renterNames.get(rental.renterOrganizationId)) ||
@@ -306,57 +274,7 @@ export default function MachineDetailPage() {
         </Card>
       )}
 
-      {tab === "maintenance" && (
-        <div className="flex flex-col gap-3">
-          <div>
-            <Button onClick={() => setScheduleOpen(true)}>Schedule maintenance</Button>
-          </div>
-          <Card padding={maintenance.length === 0 ? "md" : "none"}>
-            {maintenance.length === 0 ? (
-              <EmptyState title="No maintenance records" description="Schedule one above." />
-            ) : (
-              <Table>
-                <Thead>
-                  <Tr>
-                    <Th>Type</Th>
-                    <Th>Period</Th>
-                    <Th>Status</Th>
-                    <Th>Notes</Th>
-                    <Th />
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {maintenance.map((record) => (
-                    <Tr key={record.id}>
-                      <Td className="capitalize">{record.maintenanceType}</Td>
-                      <Td className="font-mono">
-                        {formatDate(record.startDate)} → {record.endDate ? formatDate(record.endDate) : "ongoing"}
-                      </Td>
-                      <Td>
-                        <StatusBadge status={record.status} map={MAINTENANCE_STATUS_MAP} />
-                      </Td>
-                      <Td className="text-meta">{record.notes ?? "—"}</Td>
-                      <Td>
-                        <div className="flex gap-2">
-                          {legalNextMaintenanceStatuses(record.status).map((next) => (
-                            <button
-                              key={next}
-                              onClick={() => void handleMaintenanceStatus(record.id, next)}
-                              className="text-xs font-medium text-accent-text"
-                            >
-                              Mark {next.replace("_", " ")}
-                            </button>
-                          ))}
-                        </div>
-                      </Td>
-                    </Tr>
-                  ))}
-                </Tbody>
-              </Table>
-            )}
-          </Card>
-        </div>
-      )}
+      {tab === "maintenance" && organizationId && <MaintenancePanel organizationId={organizationId} machineId={machine.id} />}
 
       {tab === "logsheets" && (
         <Card padding={!rental || logsheets.length === 0 ? "md" : "none"}>
@@ -403,30 +321,6 @@ export default function MachineDetailPage() {
         </Card>
       )}
 
-      <Dialog open={scheduleOpen} onClose={() => setScheduleOpen(false)} title="Schedule maintenance">
-        <form onSubmit={handleSchedule} className="flex flex-col gap-4 text-left">
-          <Select
-            label="Type"
-            name="maintenanceType"
-            required
-            options={[
-              { value: "scheduled", label: "Scheduled" },
-              { value: "breakdown", label: "Breakdown" },
-              { value: "inspection", label: "Inspection" },
-              { value: "other", label: "Other" },
-            ]}
-          />
-          <Input label="Start date" name="startDate" type="date" required />
-          <Input label="End date (leave blank if ongoing)" name="endDate" type="date" />
-          <Input label="Notes" name="notes" />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setScheduleOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Schedule</Button>
-          </div>
-        </form>
-      </Dialog>
     </div>
   );
 }

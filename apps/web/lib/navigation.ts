@@ -67,6 +67,12 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Finance",
     requiredPermissions: ["billing.manage", "billing.respond"],
   },
+  // Rental-Company-only for now (no transport.respond/logsheet.respond
+  // read permission for a Renter exists yet — see the frontend/backend
+  // gap report), same as maintenance.manage.
+  { label: "Transport", href: "/transport", group: "Operations", requiredPermissions: ["transport.manage"] },
+  { label: "Logsheets", href: "/logsheets", group: "Operations", requiredPermissions: ["logsheet.manage"] },
+  { label: "Maintenance", href: "/maintenance", group: "Operations", requiredPermissions: ["maintenance.manage"] },
 ];
 
 export interface PlannedNavItem {
@@ -81,11 +87,7 @@ export interface PlannedNavItem {
  * dimmed with a "Soon" tag rather than omitted, matching the approved
  * design; never linked, so nothing is fabricated.
  */
-export const PLANNED_NAV_ITEMS: PlannedNavItem[] = [
-  { label: "Transport", group: "Operations", requiredPermissions: ["transport.manage"] },
-  { label: "Logsheets", group: "Operations", requiredPermissions: ["logsheet.manage"] },
-  { label: "Maintenance", group: "Operations", requiredPermissions: ["maintenance.manage"] },
-];
+export const PLANNED_NAV_ITEMS: PlannedNavItem[] = [];
 
 function holdsAny(
   requiredPermissions: PermissionCode[] | undefined,
