@@ -81,9 +81,9 @@ export default function QuotationDetailPage() {
       }
     } else {
       // A Renter has no equipment.manage on the Rental Company's org, so
-      // machine/product identity can't be resolved here — see
-      // docs/frontend-backend-gap-report.md (CommercialQuotation has no
-      // server-resolved machine snapshot the way Rental does).
+      // machine/product can't be looked up here — but CommercialQuotation
+      // now carries machineAssetCode/productName resolved server-side just
+      // for the Renter party (see machineLabel/machineAssetCode below).
       const rentalCompanyOrgs = (await apiClient.listRentalCompanyOrganizations(
         orgId,
       )) as Organization[];
@@ -156,6 +156,12 @@ export default function QuotationDetailPage() {
   if (!data || !organizationId || !organizationType) return <LoadingState label="Loading quotation…" />;
 
   const { quotation, offers, machine, product, counterpartyName } = data;
+  // Rental Company side resolves machine/product via listMachines/listProducts
+  // (equipment.manage); the Renter side has no such permission, so
+  // CommercialQuotation carries these server-resolved just for them
+  // (null for the Rental Company) — prefer whichever is populated.
+  const machineLabel = quotation.productName ?? (product ? `${product.manufacturer} ${product.name}` : null);
+  const machineAssetCode = quotation.machineAssetCode ?? machine?.assetCode ?? null;
   const isOwner = quotation.rentalCompanyOrganizationId === organizationId;
   const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
   const needsAcceptance = needsRenterAcceptance(quotation);
@@ -167,8 +173,8 @@ export default function QuotationDetailPage() {
     {
       title: "Equipment & rental period",
       rows: [
-        ["Machine", product ? `${product.manufacturer} ${product.name}` : "—"],
-        ["Asset code", machine?.assetCode ?? "—"],
+        ["Machine", machineLabel ?? "—"],
+        ["Asset code", machineAssetCode ?? "—"],
         ["Registration", machine?.registrationNumber ?? "—"],
         ["Start date", formatDate(quotation.startDate)],
         ["End date", quotation.endDate ? formatDate(quotation.endDate) : "Open-ended"],
@@ -263,8 +269,8 @@ export default function QuotationDetailPage() {
         </div>
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">Machine</span>
-          <span className="text-sm font-medium text-ink">{product ? `${product.manufacturer} ${product.name}` : "—"}</span>
-          <span className="font-mono text-[11px] text-meta-light">{machine?.assetCode ?? "—"}</span>
+          <span className="text-sm font-medium text-ink">{machineLabel ?? "—"}</span>
+          <span className="font-mono text-[11px] text-meta-light">{machineAssetCode ?? "—"}</span>
         </div>
       </div>
 
