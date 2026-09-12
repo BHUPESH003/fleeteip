@@ -30,7 +30,7 @@ export function MobileNav({ onClose }: { onClose: () => void }) {
       </nav>
       <div className="mt-auto flex flex-col gap-2 border-t border-rail-border px-5 py-3">
         <Link
-          href="/settings"
+          href="/settings?tab=organization"
           onClick={onClose}
           className="text-sm font-medium text-rail-muted hover:text-white"
         >

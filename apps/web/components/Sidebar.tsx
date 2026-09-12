@@ -20,7 +20,7 @@ export function Sidebar() {
         <NavList items={items} planned={planned} />
       </nav>
       <div className="mt-auto flex flex-col gap-2 border-t border-rail-border px-5 py-3">
-        <Link href="/settings" className="text-sm font-medium text-rail-muted hover:text-white">
+        <Link href="/settings?tab=organization" className="text-sm font-medium text-rail-muted hover:text-white">
           Organization
         </Link>
         <Link href="/settings" className="text-sm font-medium text-rail-muted hover:text-white">
