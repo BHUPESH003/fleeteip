@@ -44,6 +44,8 @@ export const permissionCodeSchema = z.enum([
   "billing.manage",
   "billing.respond",
   "rental.respond",
+  "transport.respond",
+  "logsheet.respond",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
@@ -67,9 +69,14 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
   // Maintenance/Transport/Logsheets are the Rental Company's own
   // operational records; Billing splits create/manage (Rental Company)
   // from read-only view (Renter), same shape as quotation.manage/.respond.
+  // Maintenance has no Renter-facing side — it's scheduling/servicing the
+  // Rental Company's own fleet, not something tied to a specific rental a
+  // Renter is party to.
   "maintenance.manage": ["rental_company"],
   "transport.manage": ["rental_company"],
+  "transport.respond": ["renter"],
   "logsheet.manage": ["rental_company"],
+  "logsheet.respond": ["renter"],
   "billing.manage": ["rental_company"],
   "billing.respond": ["renter"],
 };

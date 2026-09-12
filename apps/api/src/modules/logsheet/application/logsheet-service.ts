@@ -1,6 +1,7 @@
 import type { Logsheet, SubmitLogsheetRequest } from "@fleetip/contracts/logsheet";
 import { NotFoundError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
+import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import type { LogsheetRecord, LogsheetRepositoryPort } from "../domain/ports.js";
 
@@ -28,6 +29,7 @@ export class LogsheetService {
   constructor(
     private readonly logsheetRepository: LogsheetRepositoryPort,
     private readonly rentalRepository: RentalRepositoryPort,
+    private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
   ) {}
 
@@ -64,18 +66,28 @@ export class LogsheetService {
     return toLogsheet(record);
   }
 
+  // Serves both sides of a single rental's Logsheets tab — same
+  // organization-type branch as TransportService.listByRental /
+  // RentalService.listRentals.
   async listByRental(
     userId: string,
-    rentalCompanyOrganizationId: string,
+    organizationId: string,
     rentalId: string,
   ): Promise<Logsheet[]> {
-    await this.permissionService.requirePermission(
-      userId,
-      rentalCompanyOrganizationId,
-      "logsheet.manage",
-    );
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      await this.permissionService.requirePermission(userId, organizationId, "logsheet.respond");
+      const rental = await this.rentalRepository.findById(rentalId);
+      if (!rental || rental.renter_organization_id !== organizationId) {
+        throw new NotFoundError("Rental not found for this organization");
+      }
+      const records = await this.logsheetRepository.listByRental(rentalId);
+      return records.map(toLogsheet);
+    }
+
+    await this.permissionService.requirePermission(userId, organizationId, "logsheet.manage");
     const rental = await this.rentalRepository.findById(rentalId);
-    if (!rental || rental.rental_company_organization_id !== rentalCompanyOrganizationId) {
+    if (!rental || rental.rental_company_organization_id !== organizationId) {
       throw new NotFoundError("Rental not found in this organization");
     }
     const records = await this.logsheetRepository.listByRental(rentalId);

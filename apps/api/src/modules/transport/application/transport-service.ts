@@ -6,6 +6,7 @@ import type {
 } from "@fleetip/contracts/transport";
 import { ConflictError, NotFoundError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
+import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/transport-status.js";
 import type { TransportRecord, TransportRepositoryPort } from "../domain/ports.js";
@@ -32,6 +33,7 @@ export class TransportService {
   constructor(
     private readonly transportRepository: TransportRepositoryPort,
     private readonly rentalRepository: RentalRepositoryPort,
+    private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
   ) {}
 
@@ -69,17 +71,28 @@ export class TransportService {
     return toTransport(record);
   }
 
+  // Serves both sides of a single rental's Transport tab: a Rental Company
+  // managing its own operational record, or the Renter counterparty reading
+  // it (read-only) — same organization-type branch as
+  // RentalService.listRentals's rental.manage/.respond split.
   async listByRental(
     userId: string,
-    rentalCompanyOrganizationId: string,
+    organizationId: string,
     rentalId: string,
   ): Promise<TransportContract[]> {
-    await this.permissionService.requirePermission(
-      userId,
-      rentalCompanyOrganizationId,
-      "transport.manage",
-    );
-    await this.requireOwnedRental(rentalCompanyOrganizationId, rentalId);
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      await this.permissionService.requirePermission(userId, organizationId, "transport.respond");
+      const rental = await this.rentalRepository.findById(rentalId);
+      if (!rental || rental.renter_organization_id !== organizationId) {
+        throw new NotFoundError("Rental not found for this organization");
+      }
+      const records = await this.transportRepository.listByRental(rentalId);
+      return records.map(toTransport);
+    }
+
+    await this.permissionService.requirePermission(userId, organizationId, "transport.manage");
+    await this.requireOwnedRental(organizationId, rentalId);
     const records = await this.transportRepository.listByRental(rentalId);
     return records.map(toTransport);
   }

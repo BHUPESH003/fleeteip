@@ -23,6 +23,8 @@ import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/erro
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
 const OTHER_RC_ORG_ID = "org-other-rental-company";
+const RENTER_ORG_ID = "org-renter";
+const OTHER_RENTER_ORG_ID = "org-other-renter";
 const RENTAL_ID = "rental-1";
 
 function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "rental_company") {
@@ -41,12 +43,16 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
-      roleId === OWNER_ROLE_ID ? ["transport.manage"] : [],
+      roleId === OWNER_ROLE_ID ? ["transport.manage", "transport.respond"] : [],
   };
   return new PermissionService(
     membershipRepository,
     roleRepository,
-    fakeOrganizationTypeRepository({ [RC_ORG_ID]: organizationTypeCode }),
+    fakeOrganizationTypeRepository({
+      [RC_ORG_ID]: organizationTypeCode,
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+    }),
   );
 }
 
@@ -184,6 +190,11 @@ function buildService(rentals: RentalRecord[] = [rental()]) {
   return new TransportService(
     fakeTransportRepository(),
     fakeRentalRepository(rentals),
+    fakeOrganizationTypeRepository({
+      [RC_ORG_ID]: "rental_company",
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+    }),
     fakePermissionService(),
   );
 }
@@ -193,6 +204,7 @@ describe("TransportService", () => {
     const service = new TransportService(
       fakeTransportRepository(),
       fakeRentalRepository([rental()]),
+      fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
       fakePermissionService("renter"),
     );
     await expect(
@@ -262,6 +274,21 @@ describe("TransportService", () => {
       service.updateTransport("user-1", RC_ORG_ID, RENTAL_ID, "demobilization", {
         status: "dispatched",
       }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("lets the Renter counterparty read-only view their own rental's transport", async () => {
+    const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+    await service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, { leg: "mobilization" });
+
+    const asRenter = await service.listByRental("user-2", RENTER_ORG_ID, RENTAL_ID);
+    expect(asRenter).toHaveLength(1);
+  });
+
+  it("hides transport for a rental the Renter is not the counterparty on", async () => {
+    const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+    await expect(
+      service.listByRental("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID),
     ).rejects.toThrow(NotFoundError);
   });
 });

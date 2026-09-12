@@ -24,6 +24,8 @@ import { NotFoundError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
+const RENTER_ORG_ID = "org-renter";
+const OTHER_RENTER_ORG_ID = "org-other-renter";
 const RENTAL_ID = "rental-1";
 const MACHINE_ID = "machine-1";
 
@@ -43,12 +45,16 @@ function fakePermissionService() {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
-      roleId === OWNER_ROLE_ID ? ["logsheet.manage"] : [],
+      roleId === OWNER_ROLE_ID ? ["logsheet.manage", "logsheet.respond"] : [],
   };
   return new PermissionService(
     membershipRepository,
     roleRepository,
-    fakeOrganizationTypeRepository({ [RC_ORG_ID]: "rental_company" }),
+    fakeOrganizationTypeRepository({
+      [RC_ORG_ID]: "rental_company",
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+    }),
   );
 }
 
@@ -199,12 +205,21 @@ const totals: UtilizationTotals = {
   loggedDayCount: 5,
 };
 
+function fakeOrganizationRepository(): OrganizationRepositoryPort {
+  return fakeOrganizationTypeRepository({
+    [RC_ORG_ID]: "rental_company",
+    [RENTER_ORG_ID]: "renter",
+    [OTHER_RENTER_ORG_ID]: "renter",
+  });
+}
+
 describe("UtilizationService", () => {
   it("computes total rental days from the Rental's own date span", async () => {
     const service = new UtilizationService(
       fakeLogsheetRepository(totals),
       fakeRentalRepository([rental({ start_date: "2026-03-01", end_date: "2026-03-10" })]),
       fakeMachineRepository([machine()]),
+      fakeOrganizationRepository(),
       fakePermissionService(),
     );
     const result = await service.getRentalUtilization("user-1", RC_ORG_ID, RENTAL_ID);
@@ -218,6 +233,7 @@ describe("UtilizationService", () => {
       fakeLogsheetRepository(totals),
       fakeRentalRepository([rental({ rental_company_organization_id: "some-other-org" })]),
       fakeMachineRepository([machine()]),
+      fakeOrganizationRepository(),
       fakePermissionService(),
     );
     await expect(service.getRentalUtilization("user-1", RC_ORG_ID, RENTAL_ID)).rejects.toThrow(
@@ -230,11 +246,37 @@ describe("UtilizationService", () => {
       fakeLogsheetRepository(totals),
       fakeRentalRepository([rental()]),
       fakeMachineRepository([machine()]),
+      fakeOrganizationRepository(),
       fakePermissionService(),
     );
     const result = await service.getMachineUtilization("user-1", RC_ORG_ID, MACHINE_ID);
     expect(result.machineId).toBe(MACHINE_ID);
     expect(result.totalOperatingHours).toBe(40);
     expect("totalRentalDays" in result).toBe(false);
+  });
+
+  it("lets the Renter counterparty read-only view their own rental's utilization", async () => {
+    const service = new UtilizationService(
+      fakeLogsheetRepository(totals),
+      fakeRentalRepository([rental({ renter_organization_id: RENTER_ORG_ID })]),
+      fakeMachineRepository([machine()]),
+      fakeOrganizationRepository(),
+      fakePermissionService(),
+    );
+    const result = await service.getRentalUtilization("user-2", RENTER_ORG_ID, RENTAL_ID);
+    expect(result.totalOperatingHours).toBe(40);
+  });
+
+  it("hides rental utilization for a rental the Renter is not the counterparty on", async () => {
+    const service = new UtilizationService(
+      fakeLogsheetRepository(totals),
+      fakeRentalRepository([rental({ renter_organization_id: RENTER_ORG_ID })]),
+      fakeMachineRepository([machine()]),
+      fakeOrganizationRepository(),
+      fakePermissionService(),
+    );
+    await expect(
+      service.getRentalUtilization("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID),
+    ).rejects.toThrow(NotFoundError);
   });
 });

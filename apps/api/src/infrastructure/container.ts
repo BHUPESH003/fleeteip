@@ -140,14 +140,25 @@ export const container = {
     permissionService,
   ),
 
-  transportService: new TransportService(transportRepository, rentalRepository, permissionService),
+  transportService: new TransportService(
+    transportRepository,
+    rentalRepository,
+    organizationRepository,
+    permissionService,
+  ),
 
-  logsheetService: new LogsheetService(logsheetRepository, rentalRepository, permissionService),
+  logsheetService: new LogsheetService(
+    logsheetRepository,
+    rentalRepository,
+    organizationRepository,
+    permissionService,
+  ),
 
   utilizationService: new UtilizationService(
     logsheetRepository,
     rentalRepository,
     machineRepository,
+    organizationRepository,
     permissionService,
   ),
 
