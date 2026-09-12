@@ -11,8 +11,8 @@ affected domain, recommended enforcement, validation location.
 **Status**: Phases 1–10 of `feat/frontend-revamp` are complete (see
 `docs/frontend-revamp-summary.md`). Only Phase 5 surfaced a new entry;
 Phases 6–9 didn't exercise a path that would reveal further backend
-permissiveness. This document remains open for any future phase or
-backend-hardening pass to add to.
+permissiveness. Phases 11–16 (see below) added two more. This document
+remains open for any future phase or backend-hardening pass to add to.
 
 ---
 
@@ -62,6 +62,100 @@ of which code path writes the row — not just the one service method.
 ### Validation location
 Database constraint/trigger on `commercial_quotations`, in addition to the
 existing service-layer check (defense in depth, not a replacement).
+
+---
+
+Phases 6–9 didn't exercise a path that would reveal further backend
+permissiveness. Phases 11–16 (Catalogue, standalone Transport/Logsheets/
+Maintenance, Rentals/Billing polish, tenant Organization admin, Platform
+Admin shell, Edit flows) surfaced two more, both found while reading the
+real service code to build the Maintenance panel's honest "availability
+impact" derivation and the Rental detail "what happens next" hints (not
+found via a live user-flow bug):
+
+## Phase 12 — Maintenance
+
+### Current behavior
+`MaintenanceService.createMaintenance`
+(`apps/api/src/modules/maintenance/application/maintenance-service.ts`)
+only calls `rentalRepository.isAvailable(...)` before inserting a new
+maintenance record for a machine — it never checks the
+`maintenance_records` table itself for an existing `scheduled`/
+`in_progress` record on the same machine with an overlapping date range.
+
+### Expected business rule
+Two maintenance windows for the same machine shouldn't be allowed to
+overlap — the same way `RentalRepository.isAvailable` already prevents two
+rentals from overlapping, and the same way maintenance-vs-rental overlap
+is already checked in both directions (`hasOverlappingMaintenance` is
+called both when creating a maintenance record and when activating a
+rental).
+
+### Why it matters
+Nothing stops an operator from scheduling two, three, or more overlapping
+"scheduled" maintenance windows for the same machine (e.g. two different
+technicians both scheduling unrelated service on overlapping dates) — each
+creates its own record, `blocksAvailability` in the frontend (Phase 12)
+correctly shows both as blocking, but the underlying data has no integrity
+guarantee that maintenance windows for one machine are non-overlapping.
+
+### Affected domain
+`maintenance_records` (maintenance module).
+
+### Recommended backend enforcement
+Add a `maintenanceRepository.hasOverlappingMaintenance(machineId,
+startDate, endDate, excludeId?)`-style check inside `createMaintenance`,
+mirroring the existing rental-vs-maintenance check — reject (or at least
+warn) when the new record's window overlaps an existing `scheduled`/
+`in_progress` record for the same machine.
+
+### Validation location
+Service layer (`MaintenanceService.createMaintenance`), same layer as the
+existing rental-availability check it already performs.
+
+---
+
+## Phase 13 — Rentals / Transport lifecycle
+
+### Current behavior
+`RentalService.updateRentalStatus`
+(`apps/api/src/modules/marketplace/rental/application/rental-service.ts`)
+transitioning a rental to `active` checks that the machine isn't retired
+and that there's no overlapping maintenance — but never checks the
+`transport_records` table for a `mobilization` leg, let alone whether one
+exists and is `delivered`.
+
+### Expected business rule
+A rental probably shouldn't be markable `active` ("equipment is on site
+and running") before its mobilization transport leg is actually
+`delivered` — otherwise "active" can mean "the paperwork says active" with
+no equipment yet on site, which undermines exactly what the Rental
+detail's new "what happens next" guidance (Phase 13, frontend-only) is
+trying to communicate: mobilize, *then* mark active.
+
+### Why it matters
+The rental lifecycle (`confirmed → active → off_rent → completed`) and
+the transport lifecycle (`planned → dispatched → delivered` per leg) are
+two entirely independent state machines today with no server-side link in
+either direction — a Rental Company can mark a rental `active` having
+never even created a transport record, and equally can mark demobilization
+`delivered` on an already-`completed` rental. The frontend only offers UI
+sequencing hints; nothing stops the two from drifting out of sync via the
+API directly.
+
+### Affected domain
+`rentals` + `transport_records` (rental and transport modules).
+
+### Recommended backend enforcement
+Either a service-layer check in `updateRentalStatus` (transitioning to
+`active` requires a `mobilization` transport record in status
+`delivered`) or, if mobilization is meant to be optional for some rentals,
+an explicit "no transport required" flag instead of silence — silence
+reads as an oversight, not a decision.
+
+### Validation location
+Service layer (`RentalService.updateRentalStatus`), alongside the existing
+retired-machine and maintenance-overlap checks it already performs there.
 
 ---
 

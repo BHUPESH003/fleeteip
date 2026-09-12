@@ -10,8 +10,11 @@ source, Missing capability, Required backend work, Priority, Reason.
 
 **Status**: Phases 1–10 of `feat/frontend-revamp` are complete (see
 `docs/frontend-revamp-summary.md`). Phases 8–9 (Billing, Responsive/a11y
-polish) didn't surface a new entry. This document remains open for any
-future phase or backend-hardening pass to add to.
+polish) didn't surface a new entry. Phases 11–16 (Catalogue, standalone
+Transport/Logsheets/Maintenance, Rentals/Billing polish, tenant
+Organization admin, Platform Admin shell, Edit flows/search polish) add
+the entries below. This document remains open for any future phase or
+backend-hardening pass to add to.
 
 ---
 
@@ -420,6 +423,397 @@ Discovered live while building this phase: the Transport and Logsheets &
 utilization tabs are rendered disabled (with a tooltip explaining why) for a
 Renter rather than silently omitted or faked with placeholder data — this is
 the one place the established manage/respond pattern wasn't extended.
+
+---
+
+## Phase 11 — Catalogue
+
+### Screen
+Catalogue overview, Category/Subcategory/Product detail
+
+### UI requirement
+Machine count per product (and per subcategory/category rolled up), and a
+"machines using this product" list on Product detail, platform-wide.
+
+### Current backend support
+None
+
+### Existing source
+`apps/api/src/modules/equipment` has no `productId` filter on any machine
+list endpoint, and `apps/api/src/modules/catalogue` has no reverse
+product→machine lookup at all. `listMachines` is org-scoped, so even a
+correct implementation could only ever answer "how many of MY org's
+machines use this product" — never a platform-wide count across every
+rental company.
+
+### Missing capability
+Either a denormalized `machine_count` column on `products` (maintained by
+the equipment module on machine create/status change) or a dedicated
+`GET /products/:id/machines` aggregate endpoint — and, if a platform-wide
+count is wanted, it would need to run without organization scoping, which
+is a deliberate boundary today (see Platform Admin entry below).
+
+### Required backend work
+New column/endpoint in the catalogue or equipment module. Out of scope for
+a frontend branch.
+
+### Priority
+Low
+
+### Reason
+Built honestly instead: the catalogue overview and Product detail show
+"in your fleet" — the calling organization's own `listMachines` filtered
+client-side by `productId` (one real call, no loop) — with an explicit
+note that a platform-wide count doesn't exist. No active/inactive column
+exists on any catalogue table either (omitted, not fabricated).
+
+---
+
+### Screen
+Catalogue administration (create/edit category, subcategory, product;
+disable with dependency warning)
+
+### UI requirement
+Full catalogue CRUD for whoever administers the shared platform product
+taxonomy.
+
+### Current backend support
+None
+
+### Existing source
+`apps/api/src/modules/catalogue/presentation/routes.ts` has exactly 3 GET
+routes (`/product-categories`, `/product-categories/:id/subcategories`,
+`/products`) and the service has only `listCategories`/`listSubcategories`/
+`listProducts` — no create/update/delete anywhere in the module, and no
+`is_active`/soft-delete column on any of the three tables.
+
+### Missing capability
+`POST`/`PATCH`/a soft-delete-or-equivalent endpoint for each of
+`product_categories`, `product_subcategories`, `products` — plus whatever
+authorization model decides who's allowed to call them (see the open
+question below).
+
+### Required backend work
+New routes + service methods + migration (an `is_active` column, if
+"disable" rather than hard-delete is the intended semantics — hard-delete
+is unsafe given `machines.product_id` would need `ON DELETE RESTRICT` or
+similar to avoid orphaning registered equipment).
+
+### Priority
+Medium
+
+### Reason
+Designed in full on `/catalogue` and its detail pages (Phase 11):
+create/edit dialogs with every real field, a disable confirmation with
+dependency-warning copy — Submit/Confirm always disabled with a tooltip,
+never implying persistence.
+
+### Open question (not guessed at)
+Who should actually be authorized to manage the shared platform
+catalogue — every rental company (since it's the only reachable admin
+shell today), or a future platform-admin-only capability (see the Platform
+Admin entry)? Not decided here; `/platform-admin`'s Catalogue section
+explicitly defers to this question rather than picking an answer.
+
+---
+
+## Phase 12 — Standalone Transport, Logsheets, Maintenance
+
+### Screen
+Transport list, Logsheets list, Maintenance list (new standalone
+workspaces)
+
+### UI requirement
+A fleet-wide/org-wide table: every transport record, every logsheet, every
+maintenance record across every rental/machine — not just one at a time.
+
+### Current backend support
+None
+
+### Existing source
+`apps/api/src/modules/transport` exposes only
+`listTransportForRental(rentalId)`; `apps/api/src/modules/logsheet` only
+`listLogsheetsForRental(rentalId)`; `apps/api/src/modules/maintenance` only
+`listByMachine(machineId)`. None of the three has an org-scoped list
+method or route.
+
+### Missing capability
+`GET /organizations/:id/transport`, `GET /organizations/:id/logsheets`,
+`GET /organizations/:id/maintenance-records` (or equivalent), each
+returning every record the calling Rental Company owns across its whole
+fleet/rental book, with enough denormalized fields (asset code, rental
+customer name) to avoid a client-side N+1 join.
+
+### Required backend work
+New repository methods (a `JOIN` against `rentals`/`machines` scoped by
+`organization_id`, mirroring how `RentalService.listRentals` already
+scopes by org) + routes + permission checks.
+
+### Priority
+Medium
+
+### Reason
+Built as real page shells at `/transport`, `/logsheets`, `/maintenance`
+(Phase 12): the intended columns/filters render, but the table body is an
+honest "fleet-wide list isn't available yet" empty state instead of an
+N+1 loop over every rental/machine faking an aggregate. Each page's real,
+working part is a rental/machine picker that mounts the exact
+TransportPanel/LogsheetPanel/MaintenancePanel already wired up on Rental/
+Machine detail — genuinely real data, just not a fleet-wide table yet.
+
+---
+
+### Screen
+Transport detail, Logsheets detail, Maintenance detail (standalone)
+
+### UI requirement
+`/transport/:id`, `/logsheets/:id`, `/maintenance/:id` reachable and
+useful on their own (e.g. from a notification or a bookmark), not only
+from inside a Rental/Machine.
+
+### Current backend support
+Partial
+
+### Existing source
+None of the three modules has a get-by-id route independent of its
+parent — a transport record is only reachable via
+`listTransportForRental`, a logsheet via `listLogsheetsForRental`, a
+maintenance record via `listByMachine`.
+
+### Missing capability
+`GET .../transport/:id`, `GET .../logsheets/:id`,
+`GET .../maintenance-records/:id` directly, so a detail page doesn't need
+its parent id in the URL/query string to resolve.
+
+### Required backend work
+Three small new routes + repository `findById` methods (all three
+repositories almost certainly already have an internal `findById` used by
+the update path — likely just needs a route + permission check wired to
+each).
+
+### Priority
+Low
+
+### Reason
+Worked around honestly rather than blocked on: each detail page takes
+`?rentalId=`/`?machineId=` (known whenever it's reached via the working
+per-rental/per-machine panel, which is every real path into it today),
+fetches the existing scoped list endpoint, and finds the record by id —
+zero N+1, genuinely real data. A direct link with only the record's own
+id (no parent) correctly shows a "this link needs its parent" empty
+state instead of guessing or fabricating a lookup.
+
+---
+
+## Phase 14 — Organization admin (tenant)
+
+### Screen
+Settings → Organization
+
+### UI requirement
+Edit organization name/contact/address.
+
+### Current backend support
+None
+
+### Existing source
+`apps/api/src/modules/organizations` has no `presentation/routes.ts` at
+all (infrastructure/domain/application only) — there is no organization
+profile GET/PATCH endpoint, and the `organizations` table has no
+contact/address columns.
+
+### Missing capability
+`PATCH /organizations/:id` + a migration adding contact/address columns.
+
+### Required backend work
+New route + service method + migration.
+
+### Priority
+Low
+
+### Reason
+Shown read-only from the already-fetched `MembershipWithOrganization`
+(real: name/code/type/created), disabled "Edit" with a tooltip.
+
+---
+
+### Screen
+Settings → Members
+
+### UI requirement
+List every member of the organization; invite a new member.
+
+### Current backend support
+None
+
+### Existing source
+No list-members or invite-member endpoint exists anywhere — the only
+membership-creation path in the entire codebase is signup itself
+(`POST /auth/signup`, which creates a user AND their first organization
+together).
+
+### Missing capability
+`GET /organizations/:id/members` and
+`POST /organizations/:id/members/invite` (or similar — likely an
+invite-token + accept flow, since a bare "add member" would need the
+invitee to already have an account).
+
+### Required backend work
+New table (`membership_invitations` or similar) + two-plus new routes +
+service methods + (out of this branch's scope) an email-delivery
+integration for the invite itself.
+
+### Priority
+Medium
+
+### Reason
+Designed the target list/invite UI, but only ever shows the caller's own
+real membership row — never fabricates teammates.
+
+---
+
+### Screen
+Settings → Roles & access
+
+### UI requirement
+List every role used in the organization (who has `owner` vs. `member`).
+
+### Current backend support
+None
+
+### Existing source
+No endpoint returns any membership/role data except the caller's own, via
+`/auth/me`.
+
+### Missing capability
+`GET /organizations/:id/members` (same endpoint as above would cover
+this) returning each member's `roleName`.
+
+### Required backend work
+Same as the Members entry above.
+
+### Priority
+Medium
+
+### Reason
+Shown as a designed not-yet-available state; the caller's own real
+`roleName` + `permissions` array (from `/auth/me`) render as real data
+above it, grouped by domain for readability — not a new permission model.
+
+---
+
+## Phase 15 — Platform Admin (severity: architecture-level)
+
+### Screen
+Every Platform Admin screen: Overview dashboard, Organization directory +
+detail, User directory + detail, Access & roles, Catalogue administration,
+Audit/activity, System settings.
+
+### UI requirement
+An internal FleetIP operations experience, fundamentally separate from
+the Rental Company/Renter tenant model — cross-tenant visibility into
+every organization, every user, platform-wide catalogue administration,
+and a system-level audit trail.
+
+### Current backend support
+None — this is not a missing endpoint, it's a missing authorization tier.
+
+### Existing source
+Read every module in `apps/api/src/modules`: the organization model is
+locked to exactly two types (`organizationTypeCodeSchema` is
+`rental_company | renter`, with a code comment confirming this is a
+deliberate MVP scope decision, not an oversight). There is no
+super-admin/staff role, no third organization type, no cross-tenant query
+method on any repository (every single query in the codebase is scoped by
+a caller's own `organization_id`), and no session/auth concept for a
+principal that isn't a member of exactly one or more of these two
+organization types.
+
+### Missing capability
+An entirely new authorization tier: a platform-staff user/role concept,
+session support for it, and cross-tenant-safe versions of essentially
+every list/aggregate query in the system (organizations, users, machines,
+products, rentals, requirements, quotations, auctions) plus a real
+system-wide audit log (see the Audit entry below).
+
+### Required backend work
+This is a platform architecture decision, not a gap-fix: a new identity/
+authorization model, likely a separate "platform_staff" table +
+session/auth path distinct from the existing organization-membership
+model, plus cross-tenant query support added deliberately (with its own
+security review — this is exactly the kind of capability that needs
+careful scoping, not a quick add) to every domain module that would feed
+the dashboard/directories.
+
+### Priority
+Critical (architecturally), but explicitly out of scope for any frontend
+branch and for the current backend-mvp-gaps branch's stated scope too —
+this needs its own dedicated design pass, not a bolt-on.
+
+### Reason
+Built as target-UI-plus-honest-gap-documentation per the brief (§11):
+`/platform-admin`, a new route outside the tenant shell entirely (never
+linked from navigation.ts/Sidebar/MobileNav, visually distinct dark
+shell), with a permanent top banner stating the gap, every section
+labeled "Sample" (hardcoded placeholder numbers, zero API calls), except
+Access & roles which shows FleetIP's real, static, already-known
+permission list from `packages/contracts` (labeled "Real, static" to
+contrast it against the surrounding mock sections). This is the single
+biggest gap surfaced by the entire frontend-revamp effort — everything
+else in this document is an endpoint or a column; this is a whole
+authorization tier that doesn't exist.
+
+---
+
+### Screen
+Platform Admin → Audit & activity; Rental detail → Activity tab (Phase
+13); Machine detail → Activity tab (pre-existing, Phase 3)
+
+### UI requirement
+A meaningful business/security event feed: organization created, user
+added, role changed, product created, machine registered, rental status
+changed, etc.
+
+### Current backend support
+None — partial substitute exists
+
+### Existing source
+The only cross-domain timestamped table in the whole schema is
+`notifications`, and its `notificationTypeSchema` enum is scoped to
+marketplace/negotiation events only (`quotation.sent`,
+`quotation.awarded`, `auction.started`, etc. — 11 types total, confirmed
+by reading the enum directly). No mutation in transport, logsheet,
+maintenance, machine-status, or membership/organization services writes
+any log row anywhere. `relatedResourceType` is a free-form nullable
+string, and no notification type is ever rental- or machine-scoped, so
+even filtering the real `notifications` feed by a rental/machine id
+returns nothing — confirmed, not assumed (checked every write site in
+`apps/api/src/modules/notification`).
+
+### Missing capability
+A real generalized audit/event table, written by every mutating service
+(organization/membership changes, machine status changes, rental
+lifecycle transitions, maintenance/transport/logsheet writes, catalogue
+changes) — today only the dashboard's "recent activity" and the
+Requirement detail "Activity" panel are legitimately backed by real data,
+because they only ever claim to show marketplace/negotiation events,
+which is exactly what `notifications` contains.
+
+### Required backend work
+New `audit_log` (or similarly-named) table + a write call added to every
+mutating service method across every domain — a cross-cutting change,
+not a single module's job.
+
+### Priority
+Medium
+
+### Reason
+Rental detail's Activity tab (Phase 13) and Machine detail's Activity tab
+(pre-existing) both state the gap plainly rather than rendering a
+permanently-empty "real" feed that would misleadingly look like a working
+but-quiet audit trail. Platform Admin's Audit & activity section (Phase
+15) shows sample rows of the kind of event a future trail would record,
+clearly tagged as illustrative, not live.
 
 ---
 
