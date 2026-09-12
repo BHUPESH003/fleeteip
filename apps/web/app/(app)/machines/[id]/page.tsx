@@ -11,6 +11,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Input,
   LoadingState,
   PageHeader,
   StatusBadge,
@@ -24,6 +25,7 @@ import {
 } from "@fleetip/ui";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { NotYetAvailableFormDialog } from "../../../../components/NotYetAvailableDialog";
 import { apiClient } from "../../../../lib/api-client";
 import { formatDate } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
@@ -62,6 +64,7 @@ export default function MachineDetailPage() {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState(searchParams.get("tab") ?? "overview");
+  const [editOpen, setEditOpen] = useState(false);
 
   async function load(orgId: string) {
     const [machines, utilization, rentals, renterOrgs] = await Promise.all([
@@ -139,7 +142,7 @@ export default function MachineDetailPage() {
                 Mark {MACHINE_STATUS_MAP[next]?.label ?? next}
               </Button>
             ))}
-            <Button variant="secondary" disabled title="Editing machine fields isn't supported yet">
+            <Button variant="secondary" onClick={() => setEditOpen(true)}>
               Edit
             </Button>
             <Button disabled={Boolean(rental)} title={rental ? "Already on rent" : "Not built yet"}>
@@ -321,6 +324,25 @@ export default function MachineDetailPage() {
         </Card>
       )}
 
+      <NotYetAvailableFormDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit machine"
+        submitLabel="Save changes"
+        reason="Machine editing has no backend endpoint yet — only status can be updated today (apps/api's equipment module has POST .../machines and PATCH .../machines/:id/status only). This form shows the intended fix for a mistyped registration/chassis number or year of manufacture; nothing entered here is saved. See the frontend/backend gap report."
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Input label="Asset code" defaultValue={machine.assetCode} disabled />
+          <Input label="Registration number" defaultValue={machine.registrationNumber} disabled />
+          <Input label="Chassis number" defaultValue={machine.chassisNumber ?? ""} disabled />
+          <Input
+            label="Year of manufacture"
+            type="number"
+            defaultValue={machine.yearOfManufacture ?? undefined}
+            disabled
+          />
+        </div>
+      </NotYetAvailableFormDialog>
     </div>
   );
 }
