@@ -17,8 +17,12 @@ the entries below, and the `feat/backend-mvp-gaps` pass then closed most
 of them — each resolved entry now carries a **Resolved** block recording
 the endpoint/service, migration, permission, and tests added. See that
 branch's own summary in this document's final section for the full list
-of what shipped and what remains intentionally deferred. This document
-remains open for any future phase or backend-hardening pass to add to.
+of what shipped and what remains intentionally deferred. A subsequent
+session (2026-09-12, still on `feat/frontend-revamp`) then wired the
+already-built frontend to every one of those now-real endpoints — each
+resolved entry above also carries its own **Frontend wiring** note, and
+the final section has a dated summary. This document remains open for
+any future phase or backend-hardening pass to add to.
 
 ---
 
@@ -79,6 +83,15 @@ uses (`equipment.manage`, `rfq.manage`, `quotation.manage`/`.respond`,
 `apps/api/test/search-service.test.ts` (5 cases — per-org-type resource
 visibility, cross-tenant isolation, unknown org).
 
+### Frontend wiring (2026-09-12)
+
+The header's disabled "coming soon" search box is now a real
+`apps/web/components/GlobalSearch.tsx`: a debounced (300ms)
+`apiClient.search(organizationId, q)` call, results grouped by
+`SearchResult.type` in the order Machines/Requirements/Quotations/
+Rentals, each row linking straight to its detail page. Fully resolved,
+frontend and backend both.
+
 ---
 
 ### Screen
@@ -137,9 +150,20 @@ list), gated by the existing `transport.manage`/`logsheet.manage`/
 `maintenance.manage` permissions. Catalogue's standalone screen needed no
 new read endpoint (`listCategories`/`listSubcategories`/`listProducts`
 were already org-agnostic global reads) but did gain write capability — see
-the new Catalogue administration entry below. Building the actual frontend
-pages for these four standalone screens remains separate, later frontend
-work — this entry only tracked the backend gap, which is now closed.
+the new Catalogue administration entry below.
+
+### Frontend wiring (2026-09-12)
+
+The standalone `/transport`, `/logsheets`, `/maintenance` pages (already
+built in Phase 12 of `feat/frontend-revamp`, behind an honest empty
+state) now call `listTransportRecords`/`listLogsheets`/
+`listMaintenanceRecords` and render the real org-wide table as the
+primary view — the per-rental/per-machine picker + panel stays
+underneath since it's still the only create/update path. Catalogue's
+own standalone pages (`/catalogue`, category/subcategory/product
+detail) were already real reads from Phase 11; their create/edit
+dialogs are wired up separately below. Fully resolved, frontend and
+backend both.
 
 ---
 
@@ -205,6 +229,18 @@ auction joined). New `AuctionSummary` contract
 Tests: `apps/api/test/auction-service.test.ts`
 (`listAuctionsForOrganization` describe block, 3 cases).
 
+### Frontend wiring (2026-09-12)
+
+`apiClient.listAuctionsForOrganization` added; both dashboards now show
+an "Auctions" KPI tile (Renter: total owned + "N awaiting selection";
+Rental Company: total participated + "N selected — proceed") and an
+attention row for every `needsAttention` auction ("Auction closed —
+select a participant" for the Renter owner, "Selected in auction" for
+the Rental Company participant), linking to
+`/auctions?requirementId=&auctionId=` — the same deep-link shape the
+Auctions screen itself already used. Fully resolved, frontend and
+backend both.
+
 ---
 
 ## Phase 3 — Machines
@@ -259,6 +295,14 @@ through this endpoint. `MachineRepositoryPort.assetCodeExists` gained an
 tripping its own uniqueness check. Tests: `apps/api/test/equipment-service.test.ts`
 (4 new cases — update fields, duplicate asset code, self-reuse, cross-org
 NotFoundError).
+
+### Frontend wiring (2026-09-12)
+
+`apiClient.updateMachine` added. Machine detail's Edit dialog (Phase
+16's full prefilled form, previously permanently disabled) is now a
+real `EditMachineDialog` — submits, refreshes the machine in place,
+shows a real error on failure. Fully resolved, frontend and backend
+both.
 
 ---
 
@@ -398,6 +442,15 @@ method `updateFields`. Tests: `apps/api/test/requirement-service.test.ts`
 NotFoundError). See `docs/backend-hardening-report.md` for a related
 observation: editing is not yet blocked once a QuotationResponse/Auction
 already exists against the Requirement.
+
+### Frontend wiring (2026-09-12)
+
+`apiClient.updateRequirement` added. Requirement detail's Edit dialog is
+now a real `EditRequirementDialog` (project name/location/quantity/
+requested start date — the fields the design already showed); the Edit
+button is disabled once `status !== "open"` with an accurate tooltip,
+respecting the same restriction the server enforces. Fully resolved,
+frontend and backend both.
 
 ---
 
@@ -547,6 +600,14 @@ depends on `ProductRepositoryPort`. No new permission — reuses
 (2 new cases — Renter sees resolved fields on both `getQuotation` and
 `listQuotationsForRenter`, Rental Company sees null on the same record).
 
+### Frontend wiring (2026-09-12)
+
+Quotation detail's "Equipment & rental period" section and summary-strip
+Machine tile now render `quotation.productName`/`machineAssetCode`
+(falling back to the Rental Company's own `listMachines`/`listProducts`
+lookup on that side) instead of "—" for a Renter. Fully resolved,
+frontend and backend both.
+
 ---
 
 ## Phase 7 — Rentals / Operations
@@ -616,6 +677,21 @@ only. Tests: `apps/api/test/transport-service.test.ts`,
 `logsheet-service.test.ts`, `utilization-service.test.ts` (2 new cases
 each — Renter reads own rental, Renter denied on a rental they aren't
 party to).
+
+### Frontend wiring (2026-09-12)
+
+Rental detail's Transport and Logsheets & utilization tabs are now
+gated on `hasPermission("transport.respond"/"logsheet.respond")`
+instead of a blanket `isRenter` check (a Renter `member` role without
+the permission — seeded owner-only per migration 0019 — correctly stays
+disabled, with an accurate tooltip naming the permission gate instead of
+the old "not visible to Renters yet" one). `TransportPanel`/
+`LogsheetPanel` gained a `readOnly` prop that hides the plan/mark-status
+buttons and the submit-logsheet form for a Renter, reusing the exact
+same components already wired up on the Rental Company side — no
+duplicate rendering logic. Maintenance tab stays Rental-Company-only
+(no renter permission exists for it, unchanged). Fully resolved,
+frontend and backend both.
 
 ---
 
@@ -706,7 +782,29 @@ Who should actually be authorized to manage the shared platform
 catalogue — every rental company (since it's the only reachable admin
 shell today), or a future platform-admin-only capability (see the Platform
 Admin entry)? Not decided here; `/platform-admin`'s Catalogue section
-explicitly defers to this question rather than picking an answer.
+explicitly defers to this question rather than picking an answer. Still
+open after this pass — unchanged.
+
+### Resolved (feat/backend-mvp-gaps) + frontend wiring (2026-09-12)
+
+Backend: `POST`/`PATCH` for product-categories/product-subcategories/
+products, gated by a new `catalogue.manage` permission (seeded
+`rental_company`-only — see the open question above and
+`docs/backend-hardening-report.md`). Frontend: `apiClient` gained
+`create`/`updateProductCategory`/`Subcategory`/`Product`;
+`CatalogueFormDialog` now renders a real working form (Cancel/Submit,
+error state) for a caller with `catalogue.manage`, falling back to the
+existing disabled-dialog treatment — with an accurate
+"requires catalogue.manage (Rental Company only)" reason instead of the
+stale "no backend endpoint" one — for everyone else. Wired on all four
+surfaces: catalogue overview's New category/subcategory/product,
+category detail's Edit/Add subcategory, subcategory detail's Edit/Add
+product, product detail's Edit product. Product specifications stay
+read-only in the edit form (no safe label→key round-trip exists via
+`flattenSpecifications`) — noted inline, not faked. The disable/delete
+confirm dialogs are untouched and stay permanently disabled — no
+delete endpoint exists (`ON DELETE RESTRICT` FKs), correct and
+unchanged.
 
 ---
 
@@ -863,6 +961,20 @@ Medium
 Designed the target list/invite UI, but only ever shows the caller's own
 real membership row — never fabricates teammates.
 
+### Resolved (feat/backend-mvp-gaps) + frontend wiring (2026-09-12)
+
+Backend: new `OrganizationService` + `apps/api/src/modules/organizations/
+presentation/routes.ts` — `GET .../members` (list) and
+`POST .../members` (invite, `inviteMemberRequestSchema`: email +
+roleName), reusing the existing `membership.manage` permission. The
+invitee must already hold a FleetIP account (looked up by email) — no
+email-delivery/signup-invite flow exists, a documented limitation, not
+attempted here. Frontend: `apiClient.listOrganizationMembers`/
+`inviteMember` added; Settings → Members now lists every real member
+(gated on `membership.manage`) with a real "Invite member" dialog,
+replacing the "only your own membership" caption and disabled button.
+Fully resolved, frontend and backend both.
+
 ---
 
 ### Screen
@@ -892,6 +1004,17 @@ Medium
 Shown as a designed not-yet-available state; the caller's own real
 `roleName` + `permissions` array (from `/auth/me`) render as real data
 above it, grouped by domain for readability — not a new permission model.
+
+### Resolved (feat/backend-mvp-gaps) + frontend wiring (2026-09-12)
+
+Backend: `GET .../roles` (`OrganizationService.listRolesAndPermissions`),
+gated by `organization.manage`, iterating the fixed `owner`/`member`
+role set and each role's seeded permissions, filtered by the caller's
+own organization type. Frontend: `apiClient.listRolesAndPermissions`
+added; Settings → Roles & access's "All roles in this organization" now
+renders the real list (gated on `organization.manage`, matching the
+endpoint's own requirement) instead of the "not available yet" empty
+state. Fully resolved, frontend and backend both.
 
 ---
 
@@ -1036,6 +1159,22 @@ RESTRICT` foreign keys already prevent deleting a referenced record).
 - **Platform administration** — deliberately NOT implemented. Documented in
   `docs/platform-admin-architecture-requirements.md` per the task's own
   "document, don't build" instruction.
+
+### Frontend integration pass (2026-09-12)
+
+A later session on `feat/frontend-revamp` wired the already-built
+Phase 11–16 target UI to every one of the backend capabilities above —
+see `docs/frontend-revamp-summary.md`'s "Phase 17 — Backend
+integration" section for the full list, and each entry above (Phases
+1, 2, 3, 4, 5, 7, 11, 12, 14) for the per-screen detail. Machine/
+Requirement edit, Renter quotation machine info, Renter Transport/
+Logsheets read access, the Auctions dashboard tile/attention row, the
+three standalone fleet-wide lists, Catalogue create/edit, Organization
+Members/Roles, and global search are now fully resolved end to end.
+Left exactly as documented and correctly not faked: Platform Admin (no
+authorization tier exists, out of scope by design), Organization profile
+update, Catalogue disable/delete, saved views, machine/rental audit
+logs, "N companies notified", and quotation PDF/share.
 
 ### Deferred, unchanged from before this pass
 

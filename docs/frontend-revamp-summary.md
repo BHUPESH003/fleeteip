@@ -117,6 +117,68 @@ maintenance-vs-rental), and `RentalService.updateRentalStatus` has no
 link between the rental lifecycle and the transport lifecycle (a rental
 can go `active` with no delivered mobilization leg).
 
+## Phase 17 — Backend integration
+
+`feat/backend-mvp-gaps` merged into this branch (2026-09-12), closing
+almost every gap Phases 11–16 had documented. This pass wired the
+already-built target UI to each now-real endpoint — a wiring pass, not a
+redesign; every component/token/convention from Phases 1–16 is unchanged.
+Confirmed against the actual route/contract code before wiring each one
+(not paraphrased). One commit per item, matching the existing
+per-phase granularity:
+
+1. **Machine edit** — `apiClient.updateMachine` → `PATCH
+   .../machines/:machineId`. Machine detail's disabled edit dialog is now
+   a real `EditMachineDialog` (own submit/error/loading state, refreshes
+   the machine in place).
+2. **Requirement edit** — `apiClient.updateRequirement` → `PATCH
+   .../requirements/:requirementId`. Requirement detail's disabled edit
+   dialog is now a real `EditRequirementDialog`; the Edit button disables
+   once the requirement is no longer `open` (server-enforced, respected
+   client-side too).
+3. **Renter quotation machine info** — Quotation detail now reads
+   `CommercialQuotation.productName`/`machineAssetCode` (server-resolved
+   for the Renter) instead of showing "—".
+4. **Renter Transport/Logsheets read access** — Rental detail's Transport
+   and Logsheets & utilization tabs now gate on
+   `hasPermission("transport.respond"/"logsheet.respond")` instead of a
+   blanket `isRenter` check; `TransportPanel`/`LogsheetPanel` gained a
+   `readOnly` prop reused as-is on the Renter side (no new components).
+5. **Auctions dashboard tile** — `apiClient.listAuctionsForOrganization`
+   → `GET .../auctions`. Both dashboards gained an "Auctions" KPI tile
+   and a `needsAttention`-driven attention row (previously omitted
+   entirely, not just disabled — no org-scoped auction list existed).
+6. **Standalone Transport/Logsheets/Maintenance** — `apiClient.
+   listTransportRecords`/`listLogsheets`/`listMaintenanceRecords` → the
+   new org-wide list routes. `/transport`, `/logsheets`, `/maintenance`
+   now render the real fleet-wide table as the primary view, with
+   working search/status filters; the per-rental/per-machine picker +
+   panel stays underneath as the only create/update path.
+7. **Catalogue administration** — `apiClient` gained create/update
+   methods for categories/subcategories/products.
+   `CatalogueFormDialog` now renders a real form for a caller with
+   `catalogue.manage`, falling back to an accurate permission-gated
+   message otherwise. Disable/delete stays correctly disabled (no
+   endpoint exists).
+8. **Organization administration (tenant)** — `apiClient` gained
+   `listOrganizationMembers`/`inviteMember`/`listRolesAndPermissions`.
+   Settings → Members lists real members with a real invite dialog;
+   Settings → Roles & access lists every role's real permissions. Org
+   profile stays read-only (no update endpoint exists, deliberately
+   deferred).
+9. **Global search** — `apiClient.search` → `GET .../search?q=`. The
+   header's disabled "coming soon" input is now a real, debounced,
+   grouped-by-resource-type `GlobalSearch` component.
+
+Left exactly as-is, correctly still gapped: Platform Admin (entirely
+out of scope, no backend exists), organization-profile update,
+Catalogue disable/delete, saved views, machine/rental audit-log tabs,
+"N companies notified", quotation PDF/share.
+
+Verification: `pnpm typecheck`, `pnpm lint`, `pnpm build` (whole repo)
+all clean; see `docs/frontend-backend-gap-report.md` for the per-entry
+detail and dates.
+
 ## Six brief-vs-canvas conflicts (from the canvas itself)
 
 The approved design canvas documents these directly (its own "conflicts"

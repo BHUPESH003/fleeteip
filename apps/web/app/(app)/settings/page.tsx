@@ -132,7 +132,7 @@ export default function SettingsPage() {
   }
 
   if (!session || !currentMembership) return null;
-  const { organization, roleName, permissions, status, createdAt } = currentMembership;
+  const { organization, roleName, permissions } = currentMembership;
 
   return (
     <div className="flex flex-col gap-4">
