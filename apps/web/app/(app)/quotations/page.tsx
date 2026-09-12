@@ -122,7 +122,7 @@ export default function QuotationsPage() {
     .filter((q) => q.status === "sent" || q.status === "negotiating")
     .reduce((sum, q) => sum + q.rate, 0);
   const awaitingAcceptanceCount = data.quotations.filter(
-    (q) => q.status === "sent" && !q.renterAcceptedAt && q.renterOrganizationId && !q.sourceAuctionId,
+    (q) => q.status === "sent" && !q.renterAcceptedAt && q.renterOrganizationId,
   ).length;
   const expiringSoonCount = data.quotations.filter(
     (q) => (q.status === "sent" || q.status === "negotiating") && daysUntil(q.validityDate) <= 7,

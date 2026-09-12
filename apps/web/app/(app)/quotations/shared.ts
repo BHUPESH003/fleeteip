@@ -21,22 +21,21 @@ export const OFFER_STATUS_MAP: StatusMap = {
 
 /**
  * Awarding requires the Renter's explicit acceptance whenever a real
- * in-app Renter is on the other end — an auction-sourced quotation is
- * exempt (the Renter's earlier participant selection already is that
- * consent). Mirrors the server-side gate in awardQuotation/acceptQuotation
- * — the server remains the real enforcement point regardless of this.
+ * in-app Renter is on the other end — including a quotation sourced from an
+ * auction. (An earlier version exempted auction-sourced quotations on the
+ * reasoning that selecting a participant was already consent — that was
+ * wrong: selection only picks who gets to quote, not the terms they later
+ * set, so the Rental Company could award those terms unilaterally with no
+ * Accept/counter-offer option ever shown to the Renter. Reverted.)
+ * Mirrors the server-side gate in awardQuotation/acceptQuotation — the
+ * server remains the real enforcement point regardless of this.
  */
 export function needsRenterAcceptance(quotation: CommercialQuotation): boolean {
-  return (
-    Boolean(quotation.renterOrganizationId) &&
-    !quotation.sourceAuctionId &&
-    !quotation.renterAcceptedAt
-  );
+  return Boolean(quotation.renterOrganizationId) && !quotation.renterAcceptedAt;
 }
 
 export function acceptanceLabel(quotation: CommercialQuotation): { text: string; tone: "success" | "warning" | "neutral" } {
   if (!quotation.renterOrganizationId) return { text: "Not applicable (external client)", tone: "neutral" };
-  if (quotation.sourceAuctionId) return { text: "Not applicable (from auction)", tone: "neutral" };
   if (quotation.renterAcceptedAt) return { text: `Accepted ${quotation.renterAcceptedAt.slice(0, 10)}`, tone: "success" };
   return { text: "Awaiting acceptance", tone: "warning" };
 }

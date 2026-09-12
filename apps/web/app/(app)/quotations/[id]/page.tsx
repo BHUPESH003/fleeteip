@@ -252,7 +252,7 @@ export default function QuotationDetailPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={quotation.status} map={QUOTATION_STATUS_MAP} />
-        {quotation.renterOrganizationId && !quotation.sourceAuctionId && (
+        {quotation.renterOrganizationId && (
           <Badge tone={quotation.renterAcceptedAt ? "success" : "warning"}>
             {quotation.renterAcceptedAt ? "Accepted" : "Not yet accepted"}
           </Badge>

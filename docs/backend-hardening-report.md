@@ -42,11 +42,27 @@ real `renterOrganizationId` shouldn't be reachable through the real
 `awardQuotation` service method, which requires `renterAcceptedAt` to be
 set first in exactly that case.
 
+**Update (2026-09-12):** the rule below now applies uniformly — a
+`sourceAuctionId` no longer exempts a quotation from requiring
+`renterAcceptedAt` either. An earlier version of `awardQuotation` treated
+a Path C (auction-sourced) quotation as exempt, reasoning that the
+Renter's earlier auction participant-selection was already consent to
+whatever commercial terms followed. That was itself a live "award to
+self" bug: selecting a participant only decides who gets to quote, not an
+agreement to the rate/terms that participant later sets — the Rental
+Company could send Path C terms and award them unilaterally, and the
+Renter never saw an Accept/counter-offer option in the UI at all
+(`needsRenterAcceptance` short-circuited on `sourceAuctionId`). Reported
+live by the user; fixed by removing the `sourceAuctionId` exemption from
+`awardQuotation`'s guard and from the frontend's
+`needsRenterAcceptance`/`acceptanceLabel`/acceptance-badge/KPI-count
+logic, so Path C is now held to exactly the same rule as Path A/B.
+
 ### Expected business rule
 
-An `awarded` `CommercialQuotation` with a real `renterOrganizationId` and
-no `sourceAuctionId` should always have `renterAcceptedAt` set — enforced
-today only inside `CommercialQuotationService.awardQuotation`.
+An `awarded` `CommercialQuotation` with a real `renterOrganizationId`
+should always have `renterAcceptedAt` set, regardless of `sourceAuctionId`
+— enforced today only inside `CommercialQuotationService.awardQuotation`.
 
 ### Why it matters
 
@@ -65,8 +81,9 @@ exact "award to self" shape this rule exists to prevent.
 ### Recommended backend enforcement
 
 A `CHECK` constraint (e.g. `renter_accepted_at IS NOT NULL OR
-renter_organization_id IS NULL OR source_auction_id IS NOT NULL OR status
-<> 'awarded'`) or an equivalent trigger, so the invariant holds regardless
+renter_organization_id IS NULL OR status <> 'awarded'` — note
+`source_auction_id` no longer belongs in this clause, see the 2026-09-12
+update above) or an equivalent trigger, so the invariant holds regardless
 of which code path writes the row — not just the one service method.
 
 ### Validation location
@@ -277,6 +294,58 @@ Product decision needed on which; not made in this pass.
 Service layer (`RequirementService.updateRequirement`), checking existing
 `QuotationResponseRepository`/`AuctionRepository` rows before allowing the
 edit.
+
+---
+
+## Commercial quotation negotiation is one-directional per round
+
+Found while fixing the Path C award-without-acceptance bug above (not
+itself a security/isolation hole — noted for the later audit).
+
+### Current behavior
+
+`CommercialQuotationService.makeOffer` lets either party create a new
+counter-offer whenever the quotation is `sent`/`negotiating`, and
+`acceptOffer` lets either party accept the other's pending offer — the
+backend supports a real back-and-forth. The frontend
+(`apps/web/app/(app)/quotations/[id]/page.tsx`) only ever renders a
+"Send counter offer" form inside the Renter's own `canAccept` panel; the
+Rental Company's action panel (`isOwner` branch) has no equivalent trigger
+— it can Send/Withdraw/Award, or "Accept this offer" on a pending Renter
+counter from the Offer trail card, but has no way to counter that counter
+with a different number of its own. A round-trip negotiation is possible
+(Renter counters → Rental Company accepts or the Renter's terms stand),
+but the Rental Company can't push back with its own number without going
+around the UI.
+
+### Expected business rule
+
+Both parties in an active negotiation should be able to counter, not just
+accept/reject — the backend already allows it.
+
+### Why it matters
+
+Not a correctness or isolation bug — the state machine and permissions
+are sound — but it's a real UX/business gap: a Rental Company that
+disagrees with a Renter's counter-offer has no in-app way to propose a
+different number, only to accept the Renter's number as-is or leave the
+quotation stalled.
+
+### Affected domain
+
+Frontend only (`apps/web/app/(app)/quotations/[id]/page.tsx`) — no
+backend change needed, the `makeOffer` endpoint already accepts a caller
+on either side of the quotation.
+
+### Recommended backend enforcement
+
+None needed. Add a "Send counter offer" trigger to the Rental Company's
+own action panel, reusing the exact form already built for the Renter's
+`canAccept` panel.
+
+### Validation location
+
+n/a (frontend UI gap, not a business-rule/validation gap).
 
 ---
 

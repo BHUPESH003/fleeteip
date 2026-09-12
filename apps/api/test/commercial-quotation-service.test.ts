@@ -1052,7 +1052,13 @@ describe("CommercialQuotationService", () => {
     );
   });
 
-  it("does not require Renter acceptance for a Path C quotation — the auction selection is that consent", async () => {
+  // Regression: a Path C (auction-sourced) quotation used to be exempt from
+  // requiring Renter acceptance, on the reasoning that the earlier auction
+  // participant-selection was already consent to whatever terms followed.
+  // That let a Rental Company send Path C terms and award them unilaterally
+  // with the Renter never seeing an Accept/counter-offer option. Path C now
+  // requires acceptance exactly like Path A/B.
+  it("requires Renter acceptance for a Path C quotation too — auction selection is not consent to the terms", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
       ...pathBInput,
@@ -1061,6 +1067,11 @@ describe("CommercialQuotationService", () => {
       sourceAuctionId: WON_AUCTION_ID,
     });
     await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
+      ConflictError,
+    );
+
+    await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
     const awarded = await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
     expect(awarded.status).toBe("awarded");
   });

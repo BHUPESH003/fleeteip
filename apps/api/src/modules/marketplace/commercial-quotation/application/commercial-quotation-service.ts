@@ -589,9 +589,16 @@ export class CommercialQuotationService {
   // self" gap already closed for the auction path (selectParticipant/
   // assertSelectedParticipant). An external client (clientSnapshot, no
   // renterOrganizationId) has no user account to click Accept, so that
-  // sub-case is unchanged. A Path C (sourceAuctionId) quotation is also
-  // exempt — the Renter's explicit auction selection already is that
-  // consent; requiring a second Accept click would be pure friction.
+  // sub-case is unchanged.
+  //
+  // A Path C (sourceAuctionId) quotation used to be exempt too, on the
+  // reasoning that the Renter's earlier auction participant selection was
+  // already that consent. That was wrong and has been reverted: selecting a
+  // participant only picks WHO gets to quote, not an agreement to whatever
+  // rate/terms that participant later sets in the CommercialQuotation — the
+  // Rental Company could (and did) send Path C terms and award them
+  // unilaterally, with the Renter never seeing an Accept/counter-offer
+  // option at all. Path C is now held to exactly the same rule as Path A/B.
   async awardQuotation(
     userId: string,
     rentalCompanyOrganizationId: string,
@@ -606,11 +613,7 @@ export class CommercialQuotationService {
     if (!canTransition(existing.status, "awarded")) {
       throw new ConflictError(`Cannot award a quotation that is ${existing.status}`);
     }
-    if (
-      existing.renter_organization_id &&
-      !existing.source_auction_id &&
-      !existing.renter_accepted_at
-    ) {
+    if (existing.renter_organization_id && !existing.renter_accepted_at) {
       throw new ConflictError("The Renter has not accepted this quotation yet");
     }
 

@@ -1004,6 +1004,11 @@ describe("Flow B: Auction (Requirement -> Auction -> bids -> close -> select -> 
     const pending = offers.find((o) => o.status === "pending")!;
     await h.commercialQuotationService.acceptOffer("user-rc1", RC_ORG_ID, quotation.id, pending.id);
 
+    // acceptOffer settles the negotiated rate but is not itself the Renter's
+    // award-gating acceptance (Path C is no longer exempt from it either —
+    // see the reverted "auction selection is consent" bug).
+    await h.commercialQuotationService.acceptQuotation("user-renter", RENTER_ORG_ID, quotation.id);
+
     const awarded = await h.commercialQuotationService.awardQuotation(
       "user-rc1",
       RC_ORG_ID,
@@ -1233,6 +1238,11 @@ describe("Flow E: Negotiated price reaches the Rental", () => {
     );
     expect(accepted.rate).toBe(negotiatedFinalRate);
     expect(accepted.rate).not.toBe(originalBid);
+
+    // acceptOffer settles the negotiated rate but is not itself the Renter's
+    // award-gating acceptance (Path C is no longer exempt from it either —
+    // see the reverted "auction selection is consent" bug).
+    await h.commercialQuotationService.acceptQuotation("user-renter", RENTER_ORG_ID, quotation.id);
 
     await h.commercialQuotationService.awardQuotation("user-rc1", RC_ORG_ID, quotation.id);
     const rentals = await h.rentalRepository.listByOrganization(RC_ORG_ID);
