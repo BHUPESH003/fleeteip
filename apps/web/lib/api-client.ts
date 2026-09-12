@@ -1,6 +1,7 @@
 import type {
   Auction,
   AuctionDetail,
+  AuctionEvent,
   AuctionParticipant,
   BiddingDirection,
 } from "@fleetip/contracts/auction";
@@ -356,6 +357,10 @@ export const apiClient = {
   closeAuctionEarly: (organizationId: string, auctionId: string) =>
     apiRequest<Auction>(`/organizations/${organizationId}/auctions/${auctionId}/close`, {
       method: "POST",
+    }),
+  listAuctionEvents: (organizationId: string, auctionId: string) =>
+    apiRequest<AuctionEvent[]>(`/organizations/${organizationId}/auctions/${auctionId}/events`, {
+      method: "GET",
     }),
   cancelAuction: (organizationId: string, auctionId: string) =>
     apiRequest<Auction>(`/organizations/${organizationId}/auctions/${auctionId}/cancel`, {
