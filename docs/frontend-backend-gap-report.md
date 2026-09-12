@@ -127,6 +127,106 @@ of the most prominent "waiting on you" items, so this is worth building.
 
 ---
 
+## Phase 3 — Machines
+
+### Screen
+Machine detail
+
+### UI requirement
+An "Edit" action on a machine (correct a mistyped registration number,
+chassis number, or year of manufacture after registration).
+
+### Current backend support
+None
+
+### Existing source
+`apps/api/src/modules/equipment/presentation/routes.ts` only has `POST
+.../machines` (create) and `PATCH .../machines/:id/status` (status only).
+
+### Missing capability
+`PATCH .../machines/:id` (or similar) to update assetCode/registration
+number/chassis number/year of manufacture post-creation.
+
+### Required backend work
+Add an update endpoint + service method, with the same organization-scoped
+authorization as `updateMachineStatus`.
+
+### Priority
+Medium
+
+### Reason
+Data entry mistakes are inevitable; today the only fix is deleting and
+re-registering, which isn't possible either (no delete endpoint). Rendered
+as a disabled "Edit" button with a tooltip rather than faked.
+
+---
+
+### Screen
+Machines list
+
+### UI requirement
+"Saved views" — named, reusable filter presets (e.g. "Idle over 14 days",
+"Boom pumps").
+
+### Current backend support
+None
+
+### Existing source
+No persistence mechanism for per-user or per-org named filter presets
+exists anywhere in the API.
+
+### Missing capability
+A small `saved_views`-style store (owner, name, filter payload) plus
+list/create/delete endpoints.
+
+### Required backend work
+New table + CRUD endpoints, likely generalizable across list pages
+(machines, rentals, quotations) rather than machine-specific.
+
+### Priority
+Low
+
+### Reason
+A nice-to-have from the approved design, not core to managing the fleet.
+Omitted this phase rather than faked with client-only (non-persisted,
+per-tab) state.
+
+---
+
+### Screen
+Machine detail — Activity tab
+
+### UI requirement
+A per-machine event/audit feed (status changes, rentals created, maintenance
+scheduled, etc.).
+
+### Current backend support
+None
+
+### Existing source
+Unlike the dashboard's "Recent activity" (legitimately backed by the real
+`notifications` table), there is no per-machine audit log. Notifications are
+scoped to quotation/auction/requirement business events, not machine state
+changes.
+
+### Missing capability
+A machine (or general entity) event log — either a dedicated audit table or
+a derived view over existing timestamped records (maintenance, rentals,
+status changes).
+
+### Required backend work
+New audit/event table written by the relevant services on each mutation, or
+a service-side aggregation across existing tables' `createdAt`/`updatedAt`.
+
+### Priority
+Low
+
+### Reason
+The tab is kept (matches the approved design's tab set) but its content is
+an honest "not available yet" note rather than fabricated events.
+
+---
+
 ## Template for new entries
 
 ```

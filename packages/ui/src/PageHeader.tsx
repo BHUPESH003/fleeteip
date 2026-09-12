@@ -35,7 +35,7 @@ export function PageHeader({ title, description, breadcrumbs, actions }: PageHea
         <h1 className="text-xl font-semibold text-ink">{title}</h1>
         {description && <p className="mt-1 text-sm text-meta">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap gap-2 sm:shrink-0">{actions}</div>}
     </div>
   );
 }

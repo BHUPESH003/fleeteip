@@ -13,7 +13,8 @@ export interface TabsProps {
 
 export function Tabs({ items, active, onChange, className }: TabsProps) {
   return (
-    <div className={["flex gap-1 border-b border-border", className].filter(Boolean).join(" ")}>
+    <div className={["overflow-x-auto border-b border-border", className].filter(Boolean).join(" ")}>
+      <div className="flex w-max min-w-full gap-1">
       {items.map((item) => {
         const isActive = item.key === active;
         return (
@@ -23,7 +24,7 @@ export function Tabs({ items, active, onChange, className }: TabsProps) {
             disabled={item.disabled}
             onClick={() => !item.disabled && onChange(item.key)}
             className={[
-              "border-b-2 px-3 py-2 text-sm",
+              "shrink-0 border-b-2 px-3 py-2 text-sm",
               isActive
                 ? "border-accent font-semibold text-ink"
                 : "border-transparent font-medium text-meta hover:text-ink",
@@ -36,6 +37,7 @@ export function Tabs({ items, active, onChange, className }: TabsProps) {
           </button>
         );
       })}
+      </div>
     </div>
   );
 }
