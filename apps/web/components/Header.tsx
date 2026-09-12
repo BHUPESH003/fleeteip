@@ -44,7 +44,10 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
         <Dropdown
           align="right"
           trigger={
-            <span className="flex h-[30px] w-[30px] items-center justify-center rounded-control bg-ink-strong text-[11px] font-semibold text-white">
+            <span
+              aria-label="Account menu"
+              className="flex h-[30px] w-[30px] items-center justify-center rounded-control bg-ink-strong text-[11px] font-semibold text-white"
+            >
               {initialsFor(session?.user.displayName)}
             </span>
           }

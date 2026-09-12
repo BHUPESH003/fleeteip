@@ -16,6 +16,14 @@ export function MobileNav({ onClose }: { onClose: () => void }) {
       <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-rail-border px-4">
         <div className="h-5 w-5 rounded-xs bg-accent" />
         <span className="text-[15px] font-bold tracking-wide text-white">FleetIP</span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close menu"
+          className="ml-auto rounded-control p-1 text-lg text-rail-muted hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
+          &times;
+        </button>
       </div>
       <nav className="flex-1 overflow-y-auto px-2.5 py-3.5">
         <NavList items={items} planned={planned} onNavigate={onClose} />

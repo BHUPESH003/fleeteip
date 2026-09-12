@@ -11,15 +11,15 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Your account and organization details." />
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
-          <h2 className="mb-2 text-sm font-medium text-gray-500">Account</h2>
-          <p className="text-sm text-gray-900">{session?.user.displayName}</p>
-          <p className="text-sm text-gray-500">{session?.user.email}</p>
+          <h2 className="mb-2 text-sm font-medium text-meta">Account</h2>
+          <p className="text-sm text-ink">{session?.user.displayName}</p>
+          <p className="text-sm text-meta">{session?.user.email}</p>
         </Card>
         {currentMembership && (
           <Card>
-            <h2 className="mb-2 text-sm font-medium text-gray-500">Organization</h2>
-            <p className="text-sm text-gray-900">{currentMembership.organization.name}</p>
-            <p className="text-sm text-gray-500">
+            <h2 className="mb-2 text-sm font-medium text-meta">Organization</h2>
+            <p className="text-sm text-ink">{currentMembership.organization.name}</p>
+            <p className="text-sm text-meta">
               {currentMembership.organization.code} ·{" "}
               {currentMembership.organization.organizationTypeCode} · {currentMembership.roleName}
             </p>
