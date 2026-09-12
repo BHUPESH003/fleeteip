@@ -1,4 +1,4 @@
-import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
+import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import { ConflictError, NotFoundError } from "../../../shared/errors.js";
 import type { ProductRepositoryPort } from "../../catalogue/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
@@ -77,6 +77,36 @@ export class EquipmentService {
     }
 
     const record = await this.machineRepository.updateStatus(machineId, newStatus);
+    return toMachine(record);
+  }
+
+  async updateMachine(
+    userId: string,
+    organizationId: string,
+    machineId: string,
+    updates: UpdateMachineRequest,
+  ): Promise<Machine> {
+    await this.permissionService.requirePermission(userId, organizationId, "equipment.manage");
+    const machine = await this.machineRepository.findById(machineId);
+    if (!machine) {
+      throw new NotFoundError("Machine not found");
+    }
+    if (machine.organization_id !== organizationId) {
+      throw new NotFoundError("Machine not found in this organization");
+    }
+
+    if (updates.assetCode && updates.assetCode !== machine.asset_code) {
+      const assetCodeExists = await this.machineRepository.assetCodeExists(
+        organizationId,
+        updates.assetCode,
+        machineId,
+      );
+      if (assetCodeExists) {
+        throw new ConflictError("Asset code already exists");
+      }
+    }
+
+    const record = await this.machineRepository.updateDetails(machineId, updates);
     return toMachine(record);
   }
 

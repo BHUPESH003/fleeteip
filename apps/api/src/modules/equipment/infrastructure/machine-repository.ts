@@ -2,7 +2,12 @@ import type { MachineStatus } from "@fleetip/contracts/equipment";
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import { ConflictError } from "../../../shared/errors.js";
-import type { CreateMachineInput, MachineRecord, MachineRepositoryPort } from "../domain/ports.js";
+import type {
+  CreateMachineInput,
+  MachineRecord,
+  MachineRepositoryPort,
+  UpdateMachineInput,
+} from "../domain/ports.js";
 
 // SQLSTATE 23505 = unique_violation — backstops EquipmentService's
 // check-then-insert assetCodeExists pre-check (see
@@ -101,13 +106,53 @@ export class MachineRepository implements MachineRepositoryPort {
     return toMachineRecord(row);
   }
 
-  assetCodeExists(organizationId: string, assetCode: string) {
-    return this.db
+  async updateDetails(id: string, updates: UpdateMachineInput) {
+    try {
+      const row = await this.db
+        .updateTable("machines")
+        .set({
+          ...(updates.assetCode !== undefined && { asset_code: updates.assetCode }),
+          ...(updates.chassisNumber !== undefined && { chassis_number: updates.chassisNumber }),
+          ...(updates.registrationNumber !== undefined && {
+            registration_number: updates.registrationNumber,
+          }),
+          ...(updates.yearOfManufacture !== undefined && {
+            year_of_manufacture: updates.yearOfManufacture,
+          }),
+        })
+        .where("id", "=", id)
+        .returning([
+          "id",
+          "organization_id",
+          "product_id",
+          "asset_code",
+          "chassis_number",
+          "registration_number",
+          "year_of_manufacture",
+          "status",
+          "created_at",
+        ])
+        .executeTakeFirstOrThrow();
+      return toMachineRecord(row);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictError(
+          "A machine with this asset code already exists in this organization",
+        );
+      }
+      throw error;
+    }
+  }
+
+  assetCodeExists(organizationId: string, assetCode: string, excludeMachineId?: string) {
+    let query = this.db
       .selectFrom("machines")
       .select("id")
       .where("organization_id", "=", organizationId)
-      .where("asset_code", "=", assetCode)
-      .executeTakeFirst()
-      .then((row) => row !== undefined);
+      .where("asset_code", "=", assetCode);
+    if (excludeMachineId) {
+      query = query.where("id", "!=", excludeMachineId);
+    }
+    return query.executeTakeFirst().then((row) => row !== undefined);
   }
 }

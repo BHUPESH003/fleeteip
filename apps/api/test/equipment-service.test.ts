@@ -131,9 +131,29 @@ function fakeMachineRepository(): MachineRepositoryPort {
       machines.set(id, updated);
       return updated;
     },
-    assetCodeExists: async (organizationId, assetCode) =>
+    updateDetails: async (id, updates) => {
+      const existing = machines.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated: MachineRecord = {
+        ...existing,
+        ...(updates.assetCode !== undefined && { asset_code: updates.assetCode }),
+        ...(updates.chassisNumber !== undefined && { chassis_number: updates.chassisNumber }),
+        ...(updates.registrationNumber !== undefined && {
+          registration_number: updates.registrationNumber,
+        }),
+        ...(updates.yearOfManufacture !== undefined && {
+          year_of_manufacture: updates.yearOfManufacture,
+        }),
+      };
+      machines.set(id, updated);
+      return updated;
+    },
+    assetCodeExists: async (organizationId, assetCode, excludeMachineId) =>
       [...machines.values()].some(
-        (machine) => machine.organization_id === organizationId && machine.asset_code === assetCode,
+        (machine) =>
+          machine.organization_id === organizationId &&
+          machine.asset_code === assetCode &&
+          machine.id !== excludeMachineId,
       ),
   };
 }
@@ -193,6 +213,49 @@ describe("EquipmentService", () => {
 
     await expect(
       service.updateMachineStatus("user-2", "org-B", machine.id, "under_maintenance"),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("updates editable machine details", async () => {
+    const service = buildService();
+    const machine = await service.createMachine("user-1", "org-1", baseInput);
+    const updated = await service.updateMachine("user-1", "org-1", machine.id, {
+      registrationNumber: "RJ01AB9999",
+      yearOfManufacture: 2020,
+    });
+    expect(updated.registrationNumber).toBe("RJ01AB9999");
+    expect(updated.yearOfManufacture).toBe(2020);
+    expect(updated.assetCode).toBe("EXC-001");
+  });
+
+  it("rejects updating a machine to an asset code already used by another machine in the org", async () => {
+    const service = buildService();
+    await service.createMachine("user-1", "org-1", baseInput);
+    const second = await service.createMachine("user-1", "org-1", {
+      ...baseInput,
+      assetCode: "EXC-002",
+    });
+
+    await expect(
+      service.updateMachine("user-1", "org-1", second.id, { assetCode: "EXC-001" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("allows updating a machine's own asset code to itself without a conflict", async () => {
+    const service = buildService();
+    const machine = await service.createMachine("user-1", "org-1", baseInput);
+    const updated = await service.updateMachine("user-1", "org-1", machine.id, {
+      assetCode: "EXC-001",
+      chassisNumber: "CH-123",
+    });
+    expect(updated.chassisNumber).toBe("CH-123");
+  });
+
+  it("hides a machine update for a different organization behind NotFoundError", async () => {
+    const service = buildService();
+    const machine = await service.createMachine("user-1", "org-A", baseInput);
+    await expect(
+      service.updateMachine("user-2", "org-B", machine.id, { chassisNumber: "CH-999" }),
     ).rejects.toThrow(NotFoundError);
   });
 

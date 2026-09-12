@@ -552,6 +552,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
+    updateDetails: async () => {
+      throw new Error("not used in this test");
+    },
     assetCodeExists: async () => {
       throw new Error("not used in this test");
     },
