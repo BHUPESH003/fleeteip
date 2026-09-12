@@ -1,40 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { filterNavItems, NAV_ITEMS } from "../lib/navigation";
+import { NAV_ITEMS, PLANNED_NAV_ITEMS, filterNavItems, filterPlannedNavItems } from "../lib/navigation";
 import { useSession } from "../lib/session-context";
-import { OrganizationSwitcher } from "./OrganizationSwitcher";
+import { NavList } from "./NavList";
 
 export function Sidebar() {
   const { hasPermission } = useSession();
-  const pathname = usePathname();
-
   const items = filterNavItems(NAV_ITEMS, { hasPermission });
+  const planned = filterPlannedNavItems(PLANNED_NAV_ITEMS, { hasPermission });
 
   return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-white sm:flex">
-      <div className="border-b border-gray-200 px-4 py-4">
-        <p className="mb-3 text-sm font-semibold tracking-tight text-gray-900">FleetIP</p>
-        <OrganizationSwitcher />
+    <aside className="hidden w-[236px] shrink-0 flex-col bg-rail sm:flex">
+      <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-rail-border px-4">
+        <div className="h-5 w-5 rounded-xs bg-accent" />
+        <span className="text-[15px] font-bold tracking-wide text-white">FleetIP</span>
       </div>
-      <nav className="flex-1 space-y-1 px-2 py-4">
-        {items.map((item) => {
-          const active = pathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={[
-                "block rounded-md px-3 py-2 text-sm font-medium",
-                active ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-50",
-              ].join(" ")}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 overflow-y-auto px-2.5 py-3.5">
+        <NavList items={items} planned={planned} />
       </nav>
+      <div className="mt-auto flex flex-col gap-2 border-t border-rail-border px-5 py-3">
+        <Link href="/settings" className="text-sm font-medium text-rail-muted hover:text-white">
+          Organization
+        </Link>
+        <Link href="/settings" className="text-sm font-medium text-rail-muted hover:text-white">
+          Settings
+        </Link>
+      </div>
     </aside>
   );
 }

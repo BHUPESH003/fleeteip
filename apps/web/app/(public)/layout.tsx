@@ -22,8 +22,11 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-6 py-12">
-      <h1 className="text-center text-2xl font-semibold text-gray-900">FleetIP</h1>
+    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 bg-surface-page px-6 py-12">
+      <div className="flex items-center justify-center gap-2.5">
+        <div className="h-6 w-6 rounded-xs bg-accent" />
+        <h1 className="text-2xl font-bold tracking-wide text-ink">FleetIP</h1>
+      </div>
       {children}
     </div>
   );

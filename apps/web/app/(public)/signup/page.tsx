@@ -35,8 +35,8 @@ export default function SignupPage() {
 
   return (
     <Card>
-      <h2 className="mb-4 text-lg font-semibold text-gray-900">Sign up</h2>
-      {error && <p className="mb-4 text-sm text-red-700">{error}</p>}
+      <h2 className="mb-4 text-lg font-semibold text-ink">Sign up</h2>
+      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
       <form onSubmit={handleSubmit}>
         <Input label="Email" name="email" type="email" required />
         <Input label="Password" name="password" type="password" minLength={10} required />
@@ -52,9 +52,9 @@ export default function SignupPage() {
           Create account
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-gray-500">
+      <p className="mt-4 text-center text-sm text-meta">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-blue-600 hover:underline">
+        <Link href="/login" className="font-medium text-accent-text hover:underline">
           Log in
         </Link>
       </p>

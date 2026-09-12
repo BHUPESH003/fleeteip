@@ -3,6 +3,21 @@
 import { Dropdown, DropdownItem } from "@fleetip/ui";
 import { useSession } from "../lib/session-context";
 
+const ORG_TYPE_LABEL: Record<string, string> = {
+  rental_company: "Rental company",
+  renter: "Renter",
+};
+
+function OrgChip({ code, name, typeLabel }: { code: string; name: string; typeLabel?: string }) {
+  return (
+    <div className="flex h-[30px] items-center gap-2 rounded-control border border-border px-2.5">
+      <span className="font-mono text-[11px] font-semibold text-accent-text">{code}</span>
+      <span className="max-w-[10rem] truncate text-xs font-medium text-ink-strong">{name}</span>
+      {typeLabel && <span className="hidden text-xs text-meta-light lg:inline">{typeLabel}</span>}
+    </div>
+  );
+}
+
 export function OrganizationSwitcher() {
   const { session, currentOrganizationId, setCurrentOrganizationId } = useSession();
   if (!session) return null;
@@ -10,25 +25,17 @@ export function OrganizationSwitcher() {
   const current = session.memberships.find((m) => m.organizationId === currentOrganizationId);
   if (!current) return null;
 
+  const typeLabel = ORG_TYPE_LABEL[current.organization.organizationTypeCode];
+
   if (session.memberships.length === 1) {
-    return (
-      <div>
-        <p className="truncate text-sm font-semibold text-gray-900">{current.organization.name}</p>
-        <p className="text-xs text-gray-500">{current.organization.organizationTypeCode}</p>
-      </div>
-    );
+    return <OrgChip code={current.organization.code} name={current.organization.name} typeLabel={typeLabel} />;
   }
 
   return (
     <Dropdown
       align="left"
       trigger={
-        <div className="text-left">
-          <p className="truncate text-sm font-semibold text-gray-900">
-            {current.organization.name}
-          </p>
-          <p className="text-xs text-gray-500">Switch organization</p>
-        </div>
+        <OrgChip code={current.organization.code} name={current.organization.name} typeLabel={typeLabel} />
       }
     >
       {session.memberships.map((membership) => (

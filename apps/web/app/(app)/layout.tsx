@@ -26,7 +26,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-surface-page">
       <Sidebar />
       {mobileNavOpen && <MobileNav onClose={() => setMobileNavOpen(false)} />}
       <div className="flex min-w-0 flex-1 flex-col">
