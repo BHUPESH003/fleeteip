@@ -4,8 +4,9 @@ import tseslint from "typescript-eslint";
 export const baseConfig = tseslint.config(
   {
     // public_html is the legacy PHP app (reference material only, not part of this
-    // codebase) — never lint it. The rest are ordinary build/output directories,
-    // matched at any depth since apps/packages nest them below the repo root.
+    // codebase) — never lint it. Same for the approved design canvas export.
+    // The rest are ordinary build/output directories, matched at any depth
+    // since apps/packages nest them below the repo root.
     ignores: [
       "**/dist/**",
       "**/build/**",
@@ -14,6 +15,7 @@ export const baseConfig = tseslint.config(
       "**/node_modules/**",
       "**/next-env.d.ts",
       "public_html/**",
+      "Form setup and integration questions/**",
     ],
   },
   ...tseslint.configs.recommended,

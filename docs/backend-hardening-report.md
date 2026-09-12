@@ -8,6 +8,12 @@ fixed on the frontend branch; it is input for a later backend-hardening pass.
 Format per entry: current behavior, expected business rule, why it matters,
 affected domain, recommended enforcement, validation location.
 
+**Status**: Phases 1–10 of `feat/frontend-revamp` are complete (see
+`docs/frontend-revamp-summary.md`). Only Phase 5 surfaced a new entry;
+Phases 6–9 didn't exercise a path that would reveal further backend
+permissiveness. This document remains open for any future phase or
+backend-hardening pass to add to.
+
 ---
 
 Phases 1–4 (design system/shell, dashboards, machines, marketplace/

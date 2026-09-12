@@ -8,6 +8,11 @@ instead of silently faked in the frontend.
 Format per entry: Screen, UI requirement, Current backend support, Existing
 source, Missing capability, Required backend work, Priority, Reason.
 
+**Status**: Phases 1–10 of `feat/frontend-revamp` are complete (see
+`docs/frontend-revamp-summary.md`). Phases 8–9 (Billing, Responsive/a11y
+polish) didn't surface a new entry. This document remains open for any
+future phase or backend-hardening pass to add to.
+
 ---
 
 ## Phase 1 — Design system + application shell
