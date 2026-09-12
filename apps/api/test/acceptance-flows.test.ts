@@ -208,6 +208,9 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
     updateFields: async () => {
       throw new Error("not used in this test");
     },
+    search: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -333,6 +336,12 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
     },
     // Validity dates in these flows are always far in the future — never due.
     expireIfDue: async (id) => quotations.get(id),
+    searchByRentalCompany: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenter: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -571,6 +580,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
     findById: async (id) => machines.get(id),
     listByOrganization: async (organizationId) =>
       [...machines.values()].filter((m) => m.organization_id === organizationId),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
@@ -679,6 +691,12 @@ function fakeRentalRepository(): RentalRepositoryPort {
       return updated;
     },
     isAvailable: async () => true,
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

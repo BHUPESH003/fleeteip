@@ -62,4 +62,6 @@ export interface RequirementRepositoryPort {
   listOpenForDiscovery(): Promise<RequirementRecord[]>;
   updateStatus(id: string, status: RequirementStatus): Promise<RequirementRecord>;
   updateFields(id: string, updates: UpdateRequirementFieldsInput): Promise<RequirementRecord>;
+  // Global search — project name match, this Renter's own requirements only.
+  search(renterOrganizationId: string, query: string): Promise<RequirementRecord[]>;
 }

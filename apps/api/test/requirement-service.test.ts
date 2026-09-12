@@ -184,6 +184,9 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
       requirements.set(id, updated);
       return updated;
     },
+    search: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

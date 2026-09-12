@@ -155,4 +155,19 @@ export class MachineRepository implements MachineRepositoryPort {
     }
     return query.executeTakeFirst().then((row) => row !== undefined);
   }
+
+  async search(organizationId: string, query: string) {
+    const pattern = `%${query}%`;
+    const rows = await this.db
+      .selectFrom("machines")
+      .selectAll()
+      .where("organization_id", "=", organizationId)
+      .where((eb) =>
+        eb.or([eb("asset_code", "ilike", pattern), eb("registration_number", "ilike", pattern)]),
+      )
+      .orderBy("created_at", "desc")
+      .limit(10)
+      .execute();
+    return rows.map(toMachineRecord);
+  }
 }

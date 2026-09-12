@@ -34,6 +34,7 @@ import { BillingService } from "../modules/billing/application/billing-service.j
 import { InvoiceRepository } from "../modules/billing/infrastructure/invoice-repository.js";
 import { NotificationService } from "../modules/notification/application/notification-service.js";
 import { NotificationRepository } from "../modules/notification/infrastructure/notification-repository.js";
+import { SearchService } from "../modules/search/application/search-service.js";
 import { db } from "./database/client.js";
 
 /**
@@ -175,4 +176,13 @@ export const container = {
   billingService: new BillingService(invoiceRepository, rentalRepository, permissionService),
 
   notificationService,
+
+  searchService: new SearchService(
+    machineRepository,
+    requirementRepository,
+    commercialQuotationRepository,
+    rentalRepository,
+    organizationRepository,
+    permissionService,
+  ),
 };

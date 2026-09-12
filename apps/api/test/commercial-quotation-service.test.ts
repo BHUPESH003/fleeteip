@@ -211,6 +211,9 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
       throw new Error("not used in this test");
     },
     findById: async (id) => machines.find((m) => m.id === id),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -275,6 +278,9 @@ function fakeRequirementRepository(
       return updated;
     },
     updateFields: async () => {
+      throw new Error("not used in this test");
+    },
+    search: async () => {
       throw new Error("not used in this test");
     },
   };
@@ -548,6 +554,12 @@ function fakeRentalRepository(): RentalRepositoryPort {
       );
       return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
     },
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -681,6 +693,18 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       }
       return existing;
     },
+    searchByRentalCompany: async (rentalCompanyOrganizationId, query) =>
+      [...quotations.values()].filter(
+        (q) =>
+          q.rental_company_organization_id === rentalCompanyOrganizationId &&
+          (q.reference_number.includes(query) || q.client_snapshot?.name?.includes(query)),
+      ),
+    searchByRenter: async (renterOrganizationId, query) =>
+      [...quotations.values()].filter(
+        (q) =>
+          q.renter_organization_id === renterOrganizationId &&
+          (q.reference_number.includes(query) || q.client_snapshot?.name?.includes(query)),
+      ),
   };
 }
 

@@ -42,4 +42,8 @@ export interface MachineRepositoryPort {
     assetCode: string,
     excludeMachineId?: string,
   ): Promise<boolean>;
+  // Global search — asset code/registration number match, this org's own
+  // fleet only. Capped (see implementation) since it backs a type-ahead box,
+  // not a paginated list.
+  search(organizationId: string, query: string): Promise<MachineRecord[]>;
 }

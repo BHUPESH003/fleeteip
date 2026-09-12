@@ -107,6 +107,9 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
       throw new Error("not used in this test");
     },
     findById: async (id) => machines.find((m) => m.id === id),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -143,6 +146,12 @@ function fakeRentalRepository(machineIsAvailable: boolean): RentalRepositoryPort
       throw new Error("not used in this test");
     },
     isAvailable: async () => machineIsAvailable,
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

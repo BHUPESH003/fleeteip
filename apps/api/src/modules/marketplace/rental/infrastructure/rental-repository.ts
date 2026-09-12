@@ -185,4 +185,31 @@ export class RentalRepository implements RentalRepositoryPort {
     `.execute(this.db);
     return result.rows[0]?.available ?? false;
   }
+
+  async searchByOrganization(rentalCompanyOrganizationId: string, query: string) {
+    return this.search("rental_company_organization_id", rentalCompanyOrganizationId, query);
+  }
+
+  async searchByRenterOrganization(renterOrganizationId: string, query: string) {
+    return this.search("renter_organization_id", renterOrganizationId, query);
+  }
+
+  private async search(
+    ownerColumn: "rental_company_organization_id" | "renter_organization_id",
+    ownerId: string,
+    query: string,
+  ) {
+    const pattern = `%${query}%`;
+    const rows = await this.db
+      .selectFrom("rentals")
+      .selectAll()
+      .where(ownerColumn, "=", ownerId)
+      .where(
+        sql<boolean>`(project_name ilike ${pattern} or client_snapshot ->> 'name' ilike ${pattern})`,
+      )
+      .orderBy("created_at", "desc")
+      .limit(10)
+      .execute();
+    return rows.map(toRentalRecord);
+  }
 }

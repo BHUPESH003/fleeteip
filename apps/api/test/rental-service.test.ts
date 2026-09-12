@@ -121,6 +121,9 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
       throw new Error("not used in this test");
     },
     findById: async (id) => machines.find((machine) => machine.id === id),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -230,6 +233,12 @@ function fakeRentalRepository(): RentalRepositoryPort {
         (r) => r.machine_id === machineId && ["confirmed", "active", "off_rent"].includes(r.status),
       );
       return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
+    },
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
     },
   };
 }

@@ -164,6 +164,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
           machine.asset_code === assetCode &&
           machine.id !== excludeMachineId,
       ),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

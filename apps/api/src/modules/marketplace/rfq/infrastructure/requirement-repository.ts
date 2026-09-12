@@ -139,4 +139,17 @@ export class RequirementRepository implements RequirementRepositoryPort {
       .executeTakeFirstOrThrow();
     return toRequirementRecord(row);
   }
+
+  async search(renterOrganizationId: string, query: string) {
+    const pattern = `%${query}%`;
+    const rows = await this.db
+      .selectFrom("requirements")
+      .selectAll()
+      .where("renter_organization_id", "=", renterOrganizationId)
+      .where("project_name", "ilike", pattern)
+      .orderBy("created_at", "desc")
+      .limit(10)
+      .execute();
+    return rows.map(toRequirementRecord);
+  }
 }
