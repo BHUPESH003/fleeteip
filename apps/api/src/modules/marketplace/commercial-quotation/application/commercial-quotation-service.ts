@@ -401,6 +401,17 @@ export class CommercialQuotationService {
 
   // The Renter's explicit consent gate awardQuotation checks — see the
   // comment above that method.
+  //
+  // "Accept" must accept whatever is actually on the table, not whatever
+  // rate happens to be stored on the quotation row — that field is only
+  // ever updated by applyAcceptedOffer/updateTerms, so while a counter-offer
+  // from the Rental Company is still pending (not yet accepted by anyone),
+  // it's stale. If the Rental Company's own offer is the one still pending,
+  // apply it first so acceptance actually attaches to those terms — don't
+  // rely on the caller to have called acceptOffer first (defense in depth;
+  // the frontend also sequences this correctly, but the server must hold
+  // regardless of which client calls this). A pending offer that is the
+  // *Renter's own* (not yet responded to) is left alone — nothing to apply.
   async acceptQuotation(
     userId: string,
     renterOrganizationId: string,
@@ -417,6 +428,17 @@ export class CommercialQuotationService {
     }
     if (existing.status !== "sent" && existing.status !== "negotiating") {
       throw new ConflictError(`Cannot accept a quotation that is ${existing.status}`);
+    }
+    const offers = await this.offerRepository.listByQuotation(quotationId);
+    const pendingOffer = offers.find((offer) => offer.status === "pending");
+    if (pendingOffer && pendingOffer.offered_by_organization_id !== renterOrganizationId) {
+      await this.offerRepository.updateStatus(pendingOffer.id, "accepted");
+      await this.quotationRepository.applyAcceptedOffer(quotationId, {
+        rate: pendingOffer.rate,
+        rateUnit: pendingOffer.rate_unit,
+        startDate: pendingOffer.start_date,
+        endDate: pendingOffer.end_date,
+      });
     }
     const record = await this.quotationRepository.setRenterAccepted(quotationId, true);
     await this.notify({

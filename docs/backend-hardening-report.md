@@ -355,6 +355,75 @@ n/a (frontend UI gap, not a business-rule/validation gap).
 
 ---
 
+## acceptQuotation ignored a still-pending counter-offer (resolved)
+
+Found and fixed live from a user-supplied screenshot: the Renter's
+"Your decision" panel said "Crest Y countered at 11750/shift", but the
+Offer trail directly below it showed the actual pending counter-offer at
+11650/shift (11700 from the Renter, superseded) — the two numbers didn't
+match at all.
+
+### Current behavior (as originally found)
+
+`CommercialQuotationService.acceptQuotation` only ever called
+`quotationRepository.setRenterAccepted` — it never looked at
+`quotation_offers` at all. `commercial_quotations.rate` is only updated by
+`applyAcceptedOffer`/`updateTerms`, so while a counter-offer sits
+`pending` (created but not yet accepted via `acceptOffer`), `rate` is
+whatever it was before that offer existed — stale. The frontend's "Your
+decision" copy and "Accept these terms" button both read `quotation.rate`
+directly, so a Renter clicking Accept while the Rental Company's
+counter-offer was still pending would record acceptance against the wrong
+(older/stale) rate — and `awardQuotation` creates the Rental from
+`commercial_quotations.rate`, so the Rental itself would have been created
+at that wrong number.
+
+### Expected business rule
+
+Accepting a quotation should always apply whatever is genuinely the
+latest, still-open counter-offer from the *other* party first, so
+acceptance (and the Rental it produces) reflects the real negotiated
+number — never a stale one.
+
+### Why it matters
+
+Financial correctness: the Rental's rate is derived directly from
+`commercial_quotations.rate` at award time. A mismatch here isn't
+cosmetic — it means the wrong price could be silently attached to a real
+Rental, in either party's favor depending on which way the stale rate
+happened to differ from the pending offer.
+
+### Affected domain
+
+`commercial_quotations` + `quotation_offers` (marketplace/
+commercial-quotation module).
+
+### Recommended backend enforcement — implemented
+
+`acceptQuotation` now looks up `quotation_offers` for a `pending` row; if
+one exists and was made by the *other* party (not the Renter's own
+still-unanswered counter), it applies that offer first
+(`updateStatus(offerId, "accepted")` +
+`quotationRepository.applyAcceptedOffer`) before recording
+`renter_accepted_at`. This holds regardless of which client calls
+`acceptQuotation` — the frontend no longer needs to sequence
+`acceptOffer` + `acceptQuotation` itself. Frontend also fixed
+independently (belt-and-suspenders): the "Your decision" panel now reads
+the actual pending offer's rate when one exists from the counterparty,
+and shows a "waiting for a response" state instead of an Accept button
+when the only pending offer is the Renter's own. Test:
+`apps/api/test/commercial-quotation-service.test.ts` — "acceptQuotation
+applies a still-pending counter-offer from the Rental Company before
+recording acceptance".
+
+### Validation location
+
+Service layer (`CommercialQuotationService.acceptQuotation`) — the real
+fix; the frontend display fix is defense in depth, not the enforcement
+point.
+
+---
+
 ## Template for new entries
 
 ```

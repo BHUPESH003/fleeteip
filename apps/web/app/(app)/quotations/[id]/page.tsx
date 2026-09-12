@@ -114,6 +114,10 @@ export default function QuotationDetailPage() {
     try {
       if (action === "send") await apiClient.sendQuotation(organizationId, id);
       if (action === "withdraw") await apiClient.withdrawQuotation(organizationId, id);
+      // acceptQuotation itself applies any pending counter-offer from the
+      // other party before recording acceptance, so "Accept these terms"
+      // always attaches to whatever is actually on the table right now, not
+      // a stale pre-negotiation rate — see the server-side comment.
       if (action === "accept") await apiClient.acceptQuotation(organizationId, id);
       if (action === "reject") await apiClient.rejectQuotation(organizationId, id);
       if (action === "award") await apiClient.awardQuotation(organizationId, id);
@@ -170,6 +174,15 @@ export default function QuotationDetailPage() {
   const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
   const needsAcceptance = needsRenterAcceptance(quotation);
   const canAccept = !isOwner && organizationType === "renter" && canNegotiate && needsAcceptance;
+  // There is at most one "pending" offer at a time — a new one supersedes
+  // whichever was pending before, from either party (offerRepository.
+  // supersedePending). quotation.rate only reflects an *accepted* offer, so
+  // while one is still pending it's stale — the pending offer's own rate is
+  // the actual number on the table right now.
+  const pendingOffer = offers.find((o) => o.status === "pending") ?? null;
+  const pendingFromCounterparty = Boolean(pendingOffer) && pendingOffer!.offeredByOrganizationId !== organizationId;
+  const decisionRate = pendingFromCounterparty ? pendingOffer!.rate : quotation.rate;
+  const decisionRateUnit = pendingFromCounterparty ? pendingOffer!.rateUnit : quotation.rateUnit;
   const delta = rateDelta(quotation, offers);
   const value = contractValue(quotation);
 
@@ -352,14 +365,18 @@ export default function QuotationDetailPage() {
                 <div>
                   <h2 className="text-sm font-semibold text-ink">Your decision</h2>
                   <p className="mt-1 text-xs text-meta">
-                    {counterpartyName} {offers.length > 0 ? "countered at" : "sent"}{" "}
-                    {quotation.rate}/{quotation.rateUnit}. Accepting records your acceptance; the
-                    rental company then awards it and the rental is created.
+                    {pendingFromCounterparty
+                      ? `${counterpartyName} countered at ${decisionRate}/${decisionRateUnit}. Accepting records your acceptance; the rental company then awards it and the rental is created.`
+                      : pendingOffer
+                        ? `You countered at ${decisionRate}/${decisionRateUnit} — waiting for ${counterpartyName} to respond.`
+                        : `${counterpartyName} sent ${decisionRate}/${decisionRateUnit}. Accepting records your acceptance; the rental company then awards it and the rental is created.`}
                   </p>
                 </div>
                 {!showCounterForm ? (
                   <div className="flex flex-col gap-2">
-                    <Button onClick={() => void handleAction("accept")}>Accept these terms</Button>
+                    {(!pendingOffer || pendingFromCounterparty) && (
+                      <Button onClick={() => void handleAction("accept")}>Accept these terms</Button>
+                    )}
                     <Button variant="secondary" onClick={() => setShowCounterForm(true)}>
                       Send counter offer
                     </Button>
@@ -378,7 +395,7 @@ export default function QuotationDetailPage() {
                       label="Unit"
                       name="rateUnit"
                       options={RATE_UNIT_OPTIONS}
-                      defaultValue={quotation.rateUnit}
+                      defaultValue={decisionRateUnit}
                     />
                     <Input label="Notes" name="notes" />
                     <div className="flex gap-2">
@@ -439,7 +456,7 @@ export default function QuotationDetailPage() {
                         label="Unit"
                         name="rateUnit"
                         options={RATE_UNIT_OPTIONS}
-                        defaultValue={quotation.rateUnit}
+                        defaultValue={decisionRateUnit}
                       />
                       <Input label="Notes" name="notes" />
                       <div className="flex gap-2">

@@ -972,6 +972,46 @@ describe("CommercialQuotationService", () => {
     expect(accepted.status).toBe("negotiating");
   });
 
+  // Regression: acceptQuotation used to just flag the quotation's own
+  // (possibly stale) rate field as accepted, ignoring a still-pending
+  // counter-offer entirely — a Renter clicking "Accept" while a Rental
+  // Company counter-offer sat unresolved would record acceptance against
+  // the wrong number, and awardQuotation would create the Rental at that
+  // wrong rate. Reported live by the user via a screenshot showing exactly
+  // this mismatch (displayed "countered at X" not matching the pending
+  // offer in the trail).
+  it("acceptQuotation applies a still-pending counter-offer from the Rental Company before recording acceptance", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      rate: 4500,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+
+    // Renter counters, then the Rental Company counters that — leaving the
+    // Rental Company's offer pending, never explicitly accepted via
+    // acceptOffer.
+    await service.makeOffer("user-2", RENTER_ORG_ID, quotation.id, {
+      rate: 4200,
+      rateUnit: "day",
+      startDate: "2026-03-01",
+    });
+    const rentalCompanyOffer = await service.makeOffer("user-1", RC_ORG_ID, quotation.id, {
+      rate: 4350,
+      rateUnit: "day",
+      startDate: "2026-03-01",
+    });
+
+    const accepted = await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
+    expect(accepted.rate).toBe(4350); // the pending offer's rate, not the original 4500
+    expect(accepted.renterAcceptedAt).not.toBeNull();
+
+    const offers = await service.listOffers("user-1", RC_ORG_ID, quotation.id);
+    expect(offers.find((o) => o.id === rentalCompanyOffer.id)?.status).toBe("accepted");
+  });
+
   it("rejects making an offer before the quotation has been sent", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
