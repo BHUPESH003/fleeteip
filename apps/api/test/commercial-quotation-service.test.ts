@@ -136,6 +136,12 @@ function fakeProductRepository(): ProductRepositoryPort {
   return {
     listAll: async () => [product],
     findById: async (id) => (id === product.id ? product : undefined),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

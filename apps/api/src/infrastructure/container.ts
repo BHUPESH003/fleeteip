@@ -92,6 +92,7 @@ export const container = {
     productCategoryRepository,
     productSubcategoryRepository,
     productRepository,
+    permissionService,
   ),
 
   equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),

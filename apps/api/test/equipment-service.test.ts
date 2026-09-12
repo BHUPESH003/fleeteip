@@ -68,6 +68,12 @@ function fakeProductRepository(): ProductRepositoryPort {
   return {
     listAll: async () => [product],
     findById: async (id) => (id === PRODUCT_ID ? product : undefined),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

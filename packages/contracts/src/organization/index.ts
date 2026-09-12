@@ -46,6 +46,7 @@ export const permissionCodeSchema = z.enum([
   "rental.respond",
   "transport.respond",
   "logsheet.respond",
+  "catalogue.manage",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
@@ -79,6 +80,11 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
   "logsheet.respond": ["renter"],
   "billing.manage": ["rental_company"],
   "billing.respond": ["renter"],
+  // The Product Catalogue is platform-level, not organization-owned — see
+  // docs/platform-admin-architecture-requirements.md for why this permission
+  // is scoped to rental_company (not a real platform-admin tier) as a known,
+  // documented limitation of the current two-org-type authorization model.
+  "catalogue.manage": ["rental_company"],
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;

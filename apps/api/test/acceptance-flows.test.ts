@@ -152,6 +152,15 @@ function fakeProductSubcategoryRepository(): ProductSubcategoryRepositoryPort {
       id === SUBCATEGORY_ID
         ? { id, product_category_id: "category-1", code: "EXC", name: "Excavator", created_at: new Date() }
         : undefined,
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    updateName: async () => {
+      throw new Error("not used in this test");
+    },
+    codeExistsInCategory: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -585,6 +594,12 @@ function fakeProductRepository(): ProductRepositoryPort {
   return {
     listAll: async () => [product],
     findById: async (id) => (id === product.id ? product : undefined),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

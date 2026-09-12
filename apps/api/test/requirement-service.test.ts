@@ -105,6 +105,15 @@ function fakeProductSubcategoryRepository(
       throw new Error("not used in this test");
     },
     findById: async (id) => subcategories.find((subcategory) => subcategory.id === id),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    updateName: async () => {
+      throw new Error("not used in this test");
+    },
+    codeExistsInCategory: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
