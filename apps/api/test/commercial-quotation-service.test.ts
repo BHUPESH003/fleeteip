@@ -12,7 +12,10 @@ import type {
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
-import type { ProductRecord, ProductRepositoryPort } from "../src/modules/catalogue/domain/ports.js";
+import type {
+  ProductRecord,
+  ProductRepositoryPort,
+} from "../src/modules/catalogue/domain/ports.js";
 import type {
   RequirementRecord,
   RequirementRepositoryPort,
@@ -1209,8 +1212,8 @@ describe("CommercialQuotationService", () => {
     expect(rentalCompanies[0]?.id).toBe(RC_ORG_ID);
     expect(rentalCompanies[0]?.organizationTypeCode).toBe("rental_company");
 
-    await expect(
-      service.listRentalCompanyOrganizations("user-1", RC_ORG_ID),
-    ).rejects.toThrow(ForbiddenError);
+    await expect(service.listRentalCompanyOrganizations("user-1", RC_ORG_ID)).rejects.toThrow(
+      ForbiddenError,
+    );
   });
 });

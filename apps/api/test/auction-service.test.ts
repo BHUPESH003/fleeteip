@@ -352,9 +352,7 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
       [...auctions.values()]
         .filter((a) => a.created_by_organization_id === organizationId)
         .map((a) => {
-          const ownParticipants = [...participants.values()].filter(
-            (p) => p.auction_id === a.id,
-          );
+          const ownParticipants = [...participants.values()].filter((p) => p.auction_id === a.id);
           return {
             ...a,
             requirement_project_name: null,

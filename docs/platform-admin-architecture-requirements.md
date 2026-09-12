@@ -17,7 +17,7 @@ The target frontend distinguishes two kinds of administration:
    gated by the existing `organization.manage`/`membership.manage`
    permissions.
 2. **FleetIP platform administration** — a FleetIP staff member managing
-   *any* tenant's data, the catalogue, or the platform itself, independent
+   _any_ tenant's data, the catalogue, or the platform itself, independent
    of being a member of any tenant organization. This is **not**
    implemented, and cannot be safely bolted onto the current authorization
    model.

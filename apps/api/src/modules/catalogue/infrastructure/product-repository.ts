@@ -1,7 +1,11 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import { ConflictError } from "../../../shared/errors.js";
-import type { CreateProductInput, ProductRepositoryPort, UpdateProductInput } from "../domain/ports.js";
+import type {
+  CreateProductInput,
+  ProductRepositoryPort,
+  UpdateProductInput,
+} from "../domain/ports.js";
 
 // SQLSTATE 23505 = unique_violation — backstops against
 // products_manufacturer_name_unique (0003_create_product_catalogue.ts),

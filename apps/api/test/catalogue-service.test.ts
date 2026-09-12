@@ -84,7 +84,10 @@ function fakeOrganizationTypeRepository(
 
 function fakeProductCategoryRepository(): ProductCategoryRepositoryPort {
   const categories = new Map<string, ProductCategoryRecord>([
-    [CATEGORY_ID, { id: CATEGORY_ID, code: "EXCAVATOR", name: "Excavator", created_at: new Date() }],
+    [
+      CATEGORY_ID,
+      { id: CATEGORY_ID, code: "EXCAVATOR", name: "Excavator", created_at: new Date() },
+    ],
   ]);
   let nextId = 2;
   return {

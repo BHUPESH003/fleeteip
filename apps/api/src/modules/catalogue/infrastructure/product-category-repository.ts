@@ -1,9 +1,6 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
-import type {
-  CreateProductCategoryInput,
-  ProductCategoryRepositoryPort,
-} from "../domain/ports.js";
+import type { CreateProductCategoryInput, ProductCategoryRepositoryPort } from "../domain/ports.js";
 
 export class ProductCategoryRepository implements ProductCategoryRepositoryPort {
   constructor(private readonly db: Kysely<Database>) {}

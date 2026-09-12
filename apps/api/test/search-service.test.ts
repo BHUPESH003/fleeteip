@@ -7,7 +7,10 @@ import type {
 } from "../src/modules/organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
 import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
-import type { MachineRecord, MachineRepositoryPort } from "../src/modules/equipment/domain/ports.js";
+import type {
+  MachineRecord,
+  MachineRepositoryPort,
+} from "../src/modules/equipment/domain/ports.js";
 import type {
   RequirementRecord,
   RequirementRepositoryPort,
@@ -220,9 +223,7 @@ function fakeMachineRepository(): MachineRepositoryPort {
       throw new Error("not used in this test");
     },
     search: async (organizationId, query) =>
-      MACHINES.filter(
-        (m) => m.organization_id === organizationId && m.asset_code.includes(query),
-      ),
+      MACHINES.filter((m) => m.organization_id === organizationId && m.asset_code.includes(query)),
   };
 }
 
@@ -295,7 +296,8 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       ),
     searchByRenter: async (renterOrganizationId, query) =>
       QUOTATIONS.filter(
-        (q) => q.renter_organization_id === renterOrganizationId && q.reference_number.includes(query),
+        (q) =>
+          q.renter_organization_id === renterOrganizationId && q.reference_number.includes(query),
       ),
   };
 }
@@ -331,7 +333,9 @@ function fakeRentalRepository(): RentalRepositoryPort {
       ),
     searchByRenterOrganization: async (renterOrganizationId, query) =>
       RENTALS.filter(
-        (r) => r.renter_organization_id === renterOrganizationId && (r.project_name ?? "").includes(query),
+        (r) =>
+          r.renter_organization_id === renterOrganizationId &&
+          (r.project_name ?? "").includes(query),
       ),
   };
 }

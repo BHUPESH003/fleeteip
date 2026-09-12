@@ -83,14 +83,9 @@ export class OrganizationService {
 
     const user = await this.userRepository.findByEmail(input.email);
     if (!user) {
-      throw new NotFoundError(
-        "No FleetIP account exists for this email — they must sign up first",
-      );
+      throw new NotFoundError("No FleetIP account exists for this email — they must sign up first");
     }
-    const existing = await this.membershipRepository.findActiveMembership(
-      user.id,
-      organizationId,
-    );
+    const existing = await this.membershipRepository.findActiveMembership(user.id, organizationId);
     if (existing) {
       throw new ConflictError("This user is already a member of this organization");
     }

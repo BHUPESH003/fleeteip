@@ -52,5 +52,8 @@ export async function down(db: Kysely<any>): Promise<void> {
       .execute();
   }
 
-  await db.deleteFrom("permissions").where("code", "in", ["transport.respond", "logsheet.respond"]).execute();
+  await db
+    .deleteFrom("permissions")
+    .where("code", "in", ["transport.respond", "logsheet.respond"])
+    .execute();
 }

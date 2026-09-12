@@ -44,10 +44,7 @@ export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void>
     "/organizations/:organizationId/maintenance-records",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
-      return container.maintenanceService.listByOrganization(
-        userId,
-        request.params.organizationId,
-      );
+      return container.maintenanceService.listByOrganization(userId, request.params.organizationId);
     },
   );
 

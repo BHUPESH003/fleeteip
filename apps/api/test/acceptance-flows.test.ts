@@ -35,7 +35,10 @@ import type {
   QuotationOfferRepositoryPort,
 } from "../src/modules/marketplace/commercial-quotation/domain/ports.js";
 import { AuctionService } from "../src/modules/marketplace/auction/application/auction-service.js";
-import { pickWinningBid, isImprovingBid } from "../src/modules/marketplace/auction/domain/auction-rules.js";
+import {
+  pickWinningBid,
+  isImprovingBid,
+} from "../src/modules/marketplace/auction/domain/auction-rules.js";
 import type {
   AuctionBidRecord,
   AuctionEventRecord,
@@ -49,15 +52,26 @@ import type {
   RentalRecord,
   RentalRepositoryPort,
 } from "../src/modules/marketplace/rental/domain/ports.js";
-import type { MachineRecord, MachineRepositoryPort } from "../src/modules/equipment/domain/ports.js";
-import type { ProductRecord, ProductRepositoryPort } from "../src/modules/catalogue/domain/ports.js";
+import type {
+  MachineRecord,
+  MachineRepositoryPort,
+} from "../src/modules/equipment/domain/ports.js";
+import type {
+  ProductRecord,
+  ProductRepositoryPort,
+} from "../src/modules/catalogue/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
 import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import type {
   NotificationRecord,
   NotificationRepositoryPort,
 } from "../src/modules/notification/domain/ports.js";
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RENTER_ORG_ID = "org-renter";
@@ -153,7 +167,13 @@ function fakeProductSubcategoryRepository(): ProductSubcategoryRepositoryPort {
     },
     findById: async (id): Promise<ProductSubcategoryRecord | undefined> =>
       id === SUBCATEGORY_ID
-        ? { id, product_category_id: "category-1", code: "EXC", name: "Excavator", created_at: new Date() }
+        ? {
+            id,
+            product_category_id: "category-1",
+            code: "EXC",
+            name: "Excavator",
+            created_at: new Date(),
+          }
         : undefined,
     create: async () => {
       throw new Error("not used in this test");
@@ -486,7 +506,9 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     },
     findParticipantByOrganization: async (auctionId, rentalCompanyOrganizationId) =>
       [...participants.values()].find(
-        (p) => p.auction_id === auctionId && p.rental_company_organization_id === rentalCompanyOrganizationId,
+        (p) =>
+          p.auction_id === auctionId &&
+          p.rental_company_organization_id === rentalCompanyOrganizationId,
       ),
     findParticipantById: async (id) => participants.get(id),
     listParticipants: async (auctionId) =>
@@ -503,7 +525,9 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
       if (!synced) throw new ConflictError("Auction not found");
       if (synced.status !== "live") {
         throw new ConflictError(
-          synced.status === "scheduled" ? "Auction has not started yet" : `Auction is ${synced.status}`,
+          synced.status === "scheduled"
+            ? "Auction has not started yet"
+            : `Auction is ${synced.status}`,
         );
       }
       const auctionBids = [...bids.values()].filter((b) => b.auction_id === auctionId);
@@ -867,7 +891,11 @@ describe("Flow A: Normal RFQ (Requirement -> Response -> Quotation -> Negotiatio
       rateUnit: "day",
       startDate: "2026-10-01",
     });
-    const offers = await h.commercialQuotationService.listOffers("user-rc", RC_ORG_ID, quotation.id);
+    const offers = await h.commercialQuotationService.listOffers(
+      "user-rc",
+      RC_ORG_ID,
+      quotation.id,
+    );
     const counterOffer = offers.find((o) => o.status === "pending")!;
     const accepted = await h.commercialQuotationService.acceptOffer(
       "user-rc",
@@ -878,7 +906,11 @@ describe("Flow A: Normal RFQ (Requirement -> Response -> Quotation -> Negotiatio
     expect(accepted.rate).toBe(4700);
 
     await h.commercialQuotationService.acceptQuotation("user-renter", RENTER_ORG_ID, quotation.id);
-    const awarded = await h.commercialQuotationService.awardQuotation("user-rc", RC_ORG_ID, quotation.id);
+    const awarded = await h.commercialQuotationService.awardQuotation(
+      "user-rc",
+      RC_ORG_ID,
+      quotation.id,
+    );
     expect(awarded.status).toBe("awarded");
 
     const rentals = await h.rentalRepository.listByOrganization(RC_ORG_ID);
@@ -902,16 +934,36 @@ describe("Flow B: Auction (Requirement -> Auction -> bids -> close -> select -> 
 
     const p1 = await h.auctionService.requestToJoin("user-rc1", RC_ORG_ID, auction.id);
     const p2 = await h.auctionService.requestToJoin("user-rc2", RC2_ORG_ID, auction.id);
-    await h.auctionService.reviewParticipant("user-renter", RENTER_ORG_ID, auction.id, p1.id, "approved");
-    await h.auctionService.reviewParticipant("user-renter", RENTER_ORG_ID, auction.id, p2.id, "approved");
+    await h.auctionService.reviewParticipant(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+      p1.id,
+      "approved",
+    );
+    await h.auctionService.reviewParticipant(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+      p2.id,
+      "approved",
+    );
 
     await h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1200);
     await h.auctionService.placeBid("user-rc2", RC2_ORG_ID, auction.id, 1300);
 
-    const closed = await h.auctionService.closeAuctionEarly("user-renter", RENTER_ORG_ID, auction.id);
+    const closed = await h.auctionService.closeAuctionEarly(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+    );
     expect(closed.status).toBe("closed");
 
-    const detail = await h.auctionService.getAuctionDetail("user-renter", RENTER_ORG_ID, auction.id);
+    const detail = await h.auctionService.getAuctionDetail(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+    );
     expect(detail.bids).toHaveLength(2);
     const leadingBid = detail.bids.find((b) => b.isLeading);
     expect(leadingBid?.amount).toBe(1300); // RC2 is the mathematical bid leader...
@@ -944,11 +996,19 @@ describe("Flow B: Auction (Requirement -> Auction -> bids -> close -> select -> 
       rateUnit: "day",
       startDate: "2026-10-01",
     });
-    const offers = await h.commercialQuotationService.listOffers("user-rc1", RC_ORG_ID, quotation.id);
+    const offers = await h.commercialQuotationService.listOffers(
+      "user-rc1",
+      RC_ORG_ID,
+      quotation.id,
+    );
     const pending = offers.find((o) => o.status === "pending")!;
     await h.commercialQuotationService.acceptOffer("user-rc1", RC_ORG_ID, quotation.id, pending.id);
 
-    const awarded = await h.commercialQuotationService.awardQuotation("user-rc1", RC_ORG_ID, quotation.id);
+    const awarded = await h.commercialQuotationService.awardQuotation(
+      "user-rc1",
+      RC_ORG_ID,
+      quotation.id,
+    );
     expect(awarded.status).toBe("awarded");
 
     const rentals = await h.rentalRepository.listByOrganization(RC_ORG_ID);
@@ -964,8 +1024,20 @@ describe("Flow C: Auction security", () => {
     const auction = await runningAuction(h, requirement.id);
     const p1 = await h.auctionService.requestToJoin("user-rc1", RC_ORG_ID, auction.id);
     const p2 = await h.auctionService.requestToJoin("user-rc2", RC2_ORG_ID, auction.id);
-    await h.auctionService.reviewParticipant("user-renter", RENTER_ORG_ID, auction.id, p1.id, "approved");
-    await h.auctionService.reviewParticipant("user-renter", RENTER_ORG_ID, auction.id, p2.id, "approved");
+    await h.auctionService.reviewParticipant(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+      p1.id,
+      "approved",
+    );
+    await h.auctionService.reviewParticipant(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+      p2.id,
+      "approved",
+    );
     await h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1200);
     await h.auctionService.placeBid("user-rc2", RC2_ORG_ID, auction.id, 1300);
     return { h, requirement, auction, p1, p2 };
@@ -1017,16 +1089,16 @@ describe("Flow C: Auction security", () => {
   it("rejects bids placed after the auction has closed", async () => {
     const { h, auction } = await setupAuctionWithTwoBidders();
     await h.auctionService.closeAuctionEarly("user-renter", RENTER_ORG_ID, auction.id);
-    await expect(h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1400)).rejects.toThrow(
-      ConflictError,
-    );
+    await expect(
+      h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1400),
+    ).rejects.toThrow(ConflictError);
   });
 
   it("rejects a bid that doesn't improve on the current leader", async () => {
     const { h, auction } = await setupAuctionWithTwoBidders();
-    await expect(h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1250)).rejects.toThrow(
-      ValidationError,
-    );
+    await expect(
+      h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1250),
+    ).rejects.toThrow(ValidationError);
   });
 });
 
@@ -1036,7 +1108,13 @@ describe("Flow D: Notifications", () => {
     const requirement = await postRequirement(h);
     const auction = await runningAuction(h, requirement.id);
     const p1 = await h.auctionService.requestToJoin("user-rc1", RC_ORG_ID, auction.id);
-    await h.auctionService.reviewParticipant("user-renter", RENTER_ORG_ID, auction.id, p1.id, "approved");
+    await h.auctionService.reviewParticipant(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+      p1.id,
+      "approved",
+    );
     await h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, 1200);
     await h.auctionService.closeAuctionEarly("user-renter", RENTER_ORG_ID, auction.id);
 
@@ -1109,7 +1187,13 @@ describe("Flow E: Negotiated price reaches the Rental", () => {
     const requirement = await postRequirement(h);
     const auction = await runningAuction(h, requirement.id);
     const p1 = await h.auctionService.requestToJoin("user-rc1", RC_ORG_ID, auction.id);
-    await h.auctionService.reviewParticipant("user-renter", RENTER_ORG_ID, auction.id, p1.id, "approved");
+    await h.auctionService.reviewParticipant(
+      "user-renter",
+      RENTER_ORG_ID,
+      auction.id,
+      p1.id,
+      "approved",
+    );
 
     const originalBid = 1200;
     await h.auctionService.placeBid("user-rc1", RC_ORG_ID, auction.id, originalBid);
@@ -1135,7 +1219,11 @@ describe("Flow E: Negotiated price reaches the Rental", () => {
       rateUnit: "day",
       startDate: "2026-10-01",
     });
-    const offers = await h.commercialQuotationService.listOffers("user-rc1", RC_ORG_ID, quotation.id);
+    const offers = await h.commercialQuotationService.listOffers(
+      "user-rc1",
+      RC_ORG_ID,
+      quotation.id,
+    );
     const pendingOffer = offers.find((o) => o.status === "pending")!;
     const accepted = await h.commercialQuotationService.acceptOffer(
       "user-rc1",

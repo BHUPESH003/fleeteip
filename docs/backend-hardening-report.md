@@ -28,6 +28,7 @@ live user flow bug:
 ## Phase 5 — Quotations
 
 ### Current behavior
+
 Querying `commercial_quotations` directly: multiple rows have
 `status = 'awarded'`, `source_auction_id IS NULL`, and
 `renter_accepted_at IS NULL` (e.g. reference number `Q-2026-1` recurs
@@ -35,17 +36,19 @@ across 4 different seeded rental companies' quotations, 3 of which are in
 exactly this state). The frontend (this phase's detail page) correctly
 renders these as "Awarded" + "Not yet accepted" side by side — which is
 itself the intended UI per the Phase-1-recorded decision — but the
-*existence* of that combination for a non-auction-sourced quotation with a
+_existence_ of that combination for a non-auction-sourced quotation with a
 real `renterOrganizationId` shouldn't be reachable through the real
 `awardQuotation` service method, which requires `renterAcceptedAt` to be
 set first in exactly that case.
 
 ### Expected business rule
+
 An `awarded` `CommercialQuotation` with a real `renterOrganizationId` and
 no `sourceAuctionId` should always have `renterAcceptedAt` set — enforced
 today only inside `CommercialQuotationService.awardQuotation`.
 
 ### Why it matters
+
 The invariant has no backing at the database level (no `CHECK` constraint
 or trigger), so it only holds as long as every code path that can set
 `status = 'awarded'` goes through that one service method. The seed script
@@ -55,15 +58,18 @@ that writes `commercial_quotations` directly can silently reintroduce the
 exact "award to self" shape this rule exists to prevent.
 
 ### Affected domain
+
 `commercial_quotations` (marketplace/commercial-quotation module).
 
 ### Recommended backend enforcement
+
 A `CHECK` constraint (e.g. `renter_accepted_at IS NOT NULL OR
 renter_organization_id IS NULL OR source_auction_id IS NOT NULL OR status
 <> 'awarded'`) or an equivalent trigger, so the invariant holds regardless
 of which code path writes the row — not just the one service method.
 
 ### Validation location
+
 Database constraint/trigger on `commercial_quotations`, in addition to the
 existing service-layer check (defense in depth, not a replacement).
 

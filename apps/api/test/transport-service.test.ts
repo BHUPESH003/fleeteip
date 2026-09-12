@@ -304,9 +304,9 @@ describe("TransportService", () => {
 
   it("hides transport for a rental the Renter is not the counterparty on", async () => {
     const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
-    await expect(
-      service.listByRental("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID),
-    ).rejects.toThrow(NotFoundError);
+    await expect(service.listByRental("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID)).rejects.toThrow(
+      NotFoundError,
+    );
   });
 
   it("lists transport across the whole organization's fleet on the standalone screen", async () => {

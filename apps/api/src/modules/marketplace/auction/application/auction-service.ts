@@ -39,7 +39,10 @@ function toAuction(record: AuctionRecord): Auction {
   };
 }
 
-function toParticipant(record: AuctionParticipantRecord, organizationName: string): AuctionParticipant {
+function toParticipant(
+  record: AuctionParticipantRecord,
+  organizationName: string,
+): AuctionParticipant {
   return {
     id: record.id,
     auctionId: record.auction_id,
@@ -50,7 +53,11 @@ function toParticipant(record: AuctionParticipantRecord, organizationName: strin
   };
 }
 
-function toBid(record: AuctionBidRecord, isLeading: boolean, organizationName: string | null): AuctionBid {
+function toBid(
+  record: AuctionBidRecord,
+  isLeading: boolean,
+  organizationName: string | null,
+): AuctionBid {
   return {
     id: record.id,
     auctionId: record.auction_id,
@@ -191,11 +198,7 @@ export class AuctionService {
   ): Promise<AuctionSummary[]> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
     if (organization?.organization_type_code === "rental_company") {
-      await this.permissionService.requirePermission(
-        userId,
-        organizationId,
-        "auction.participate",
-      );
+      await this.permissionService.requirePermission(userId, organizationId, "auction.participate");
       const rows = await this.auctionRepository.listByParticipantOrganization(organizationId);
       return rows.map((row) => ({
         ...toAuction(row),

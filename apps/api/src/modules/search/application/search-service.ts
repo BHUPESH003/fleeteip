@@ -33,8 +33,14 @@ export class SearchService {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
     if (!organization) return [];
 
-    const [canManageEquipment, canManageRfq, canManageQuotation, canRespondQuotation,
-      canManageRental, canRespondRental] = await Promise.all([
+    const [
+      canManageEquipment,
+      canManageRfq,
+      canManageQuotation,
+      canRespondQuotation,
+      canManageRental,
+      canRespondRental,
+    ] = await Promise.all([
       this.permissionService.hasPermission(userId, organizationId, "equipment.manage"),
       this.permissionService.hasPermission(userId, organizationId, "rfq.manage"),
       this.permissionService.hasPermission(userId, organizationId, "quotation.manage"),
@@ -59,38 +65,30 @@ export class SearchService {
     ]);
 
     return [
-      ...machines.map(
-        (m): SearchResult => ({
-          type: "machine",
-          id: m.id,
-          title: m.asset_code,
-          subtitle: m.registration_number,
-        }),
-      ),
-      ...requirements.map(
-        (r): SearchResult => ({
-          type: "requirement",
-          id: r.id,
-          title: r.project_name ?? "Untitled requirement",
-          subtitle: r.requested_start_date,
-        }),
-      ),
-      ...quotations.map(
-        (q): SearchResult => ({
-          type: "quotation",
-          id: q.id,
-          title: q.reference_number,
-          subtitle: q.client_snapshot?.name ?? null,
-        }),
-      ),
-      ...rentals.map(
-        (r): SearchResult => ({
-          type: "rental",
-          id: r.id,
-          title: r.project_name ?? "Untitled rental",
-          subtitle: r.client_snapshot?.name ?? null,
-        }),
-      ),
+      ...machines.map((m): SearchResult => ({
+        type: "machine",
+        id: m.id,
+        title: m.asset_code,
+        subtitle: m.registration_number,
+      })),
+      ...requirements.map((r): SearchResult => ({
+        type: "requirement",
+        id: r.id,
+        title: r.project_name ?? "Untitled requirement",
+        subtitle: r.requested_start_date,
+      })),
+      ...quotations.map((q): SearchResult => ({
+        type: "quotation",
+        id: q.id,
+        title: q.reference_number,
+        subtitle: q.client_snapshot?.name ?? null,
+      })),
+      ...rentals.map((r): SearchResult => ({
+        type: "rental",
+        id: r.id,
+        title: r.project_name ?? "Untitled rental",
+        subtitle: r.client_snapshot?.name ?? null,
+      })),
     ];
   }
 }
