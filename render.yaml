@@ -1,0 +1,48 @@
+# Render Blueprint for apps/api.
+#
+# Import: dashboard.render.com -> New -> Blueprint -> connect this repo.
+# Render reads this file automatically and previews everything below before
+# you confirm — that preview screen is also where to pick your actual plan
+# tier (the `plan` values here are placeholders; Render's exact plan names
+# can change, so choose deliberately at import time rather than trusting
+# these).
+#
+# apps/web (Next.js) is NOT deployed from here — it goes to Vercel
+# separately (Root Directory: apps/web in the Vercel dashboard).
+
+databases:
+  - name: fleetip-db
+    plan: free
+    region: oregon
+
+services:
+  - type: web
+    name: fleetip-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: apps/api
+    # pnpm workspace: install must run from the repo root to link
+    # @fleetip/contracts correctly, then the build runs scoped to this
+    # package (esbuild output lands back in apps/api/dist).
+    buildCommand: cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @fleetip/api run build
+    # Runs after buildCommand, before startCommand, on every deploy — keeps
+    # the schema current without a manual step to remember.
+    preDeployCommand: pnpm run migrate
+    startCommand: pnpm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fleetip-db
+          property: connectionString
+      - key: SESSION_COOKIE_SECRET
+        generateValue: true
+      - key: SESSION_COOKIE_NAME
+        value: fleetip_session
+      - key: WEB_ORIGIN
+        sync: false # set to your production frontend URL (e.g. https://app.yourdomain.com) once the custom domain is mapped in Vercel
