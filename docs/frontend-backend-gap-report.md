@@ -296,6 +296,84 @@ framing without first deciding whether targeted broadcast is in scope.
 
 ---
 
+## Phase 5 — Quotations / Negotiation
+
+### Screen
+Quotation detail
+
+### UI requirement
+"Download PDF" and "Share" on a commercial quotation — a formal document
+should be exportable/shareable outside the app.
+
+### Current backend support
+None
+
+### Existing source
+No PDF generation, document template, or share-link/token endpoint exists
+anywhere in `apps/api`.
+
+### Missing capability
+A PDF rendering service (quotation → formatted commercial document) and,
+for sharing, a signed/expiring link endpoint that doesn't require the
+recipient to have a FleetIP login (useful for the external-client path,
+which already has no user account).
+
+### Required backend work
+New endpoint(s): `GET .../quotations/:id/pdf` (or a queued
+generate-and-store job) and a share-token mechanism if external sharing
+is wanted.
+
+### Priority
+Medium
+
+### Reason
+A "formal commercial document" (per the product brief's own framing of
+this entity) is expected to leave the app as a real document. Rendered as
+disabled buttons with a tooltip rather than faked with a client-side PDF
+of unclear legal/audit standing.
+
+---
+
+### Screen
+Quotation detail (Renter)
+
+### UI requirement
+A Renter viewing their own quotation should see the machine's identity
+(asset code, product) — the approved design shows it prominently in the
+summary strip.
+
+### Current backend support
+Partial
+
+### Existing source
+`CommercialQuotation` only carries `machineId` (a UUID). Resolving it to
+an asset code/product needs `equipment.manage`, which is Rental-Company-
+only — a Renter has no permission to call `listMachines`/`listProducts`
+even for a machine referenced by their own quotation.
+
+### Missing capability
+`CommercialQuotation` has no server-resolved machine snapshot fields for
+the Renter side, unlike `Rental` (which already gained
+`machineAssetCode`/`rentalCompanyOrganizationName`, resolved server-side,
+specifically for this "renter can't look up the other org's data
+themselves" shape — see the Phase 1 recorded decision on
+`rental.respond`).
+
+### Required backend work
+Add `machineAssetCode` (and optionally product name/capacity) to
+`CommercialQuotation`, populated server-side only when the caller is the
+Renter — same pattern already established for Rental.
+
+### Priority
+Medium
+
+### Reason
+Discovered live while building this phase: a Renter's quotation detail
+page currently shows "—" for machine identity rather than fabricate it by
+calling an endpoint the Renter has no permission for.
+
+---
+
 ## Template for new entries
 
 ```
