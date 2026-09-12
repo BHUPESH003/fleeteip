@@ -85,6 +85,12 @@ export const commercialQuotationSchema = z.object({
   renterAcceptedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  // Resolved server-side, only for the Renter party viewing its own
+  // quotation (they hold no equipment.manage on the Rental Company's org to
+  // look these up themselves) — null on every other call. Same pattern as
+  // Rental.machineAssetCode/rentalCompanyOrganizationName.
+  machineAssetCode: z.string().nullable(),
+  productName: z.string().nullable(),
 });
 export type CommercialQuotation = z.infer<typeof commercialQuotationSchema>;
 

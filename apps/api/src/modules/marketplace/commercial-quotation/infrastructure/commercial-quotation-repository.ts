@@ -220,4 +220,31 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
     if (row) return toQuotationRecord(row);
     return this.findById(id);
   }
+
+  async searchByRentalCompany(rentalCompanyOrganizationId: string, query: string) {
+    return this.search("rental_company_organization_id", rentalCompanyOrganizationId, query);
+  }
+
+  async searchByRenter(renterOrganizationId: string, query: string) {
+    return this.search("renter_organization_id", renterOrganizationId, query);
+  }
+
+  private async search(
+    ownerColumn: "rental_company_organization_id" | "renter_organization_id",
+    ownerId: string,
+    query: string,
+  ) {
+    const pattern = `%${query}%`;
+    const rows = await this.db
+      .selectFrom("commercial_quotations")
+      .selectAll()
+      .where(ownerColumn, "=", ownerId)
+      .where(
+        sql<boolean>`(reference_number ilike ${pattern} or client_snapshot ->> 'name' ilike ${pattern})`,
+      )
+      .orderBy("created_at", "desc")
+      .limit(10)
+      .execute();
+    return rows.map(toQuotationRecord);
+  }
 }

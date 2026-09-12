@@ -108,6 +108,13 @@ export interface CommercialQuotationRepositoryPort {
   // else races against this transition). See
   // docs/marketplace-core-loop-design.md §6.
   expireIfDue(id: string): Promise<CommercialQuotationRecord | undefined>;
+  // Global search — reference number/client name match, scoped to one side
+  // of the party split (mirrors listByRentalCompany/listByRenter).
+  searchByRentalCompany(
+    rentalCompanyOrganizationId: string,
+    query: string,
+  ): Promise<CommercialQuotationRecord[]>;
+  searchByRenter(renterOrganizationId: string, query: string): Promise<CommercialQuotationRecord[]>;
 }
 
 export interface QuotationOfferRecord {

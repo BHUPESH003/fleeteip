@@ -1,738 +1,256 @@
 "use client";
 
-import type { AuctionDetail } from "@fleetip/contracts/auction";
-import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
-import type {
-  CommercialQuotation,
-  CommercialQuotationStatus,
-  QuotationOffer,
-} from "@fleetip/contracts/quotation";
-import type { RateUnit } from "@fleetip/contracts/rental";
-import type { Requirement } from "@fleetip/contracts/rfq";
+import type { CommercialQuotation, CommercialQuotationStatus } from "@fleetip/contracts/quotation";
 import {
   Badge,
   Button,
-  Card,
   EmptyState,
   ErrorState,
   Input,
   LoadingState,
   PageHeader,
-  Select,
+  StatusBadge,
+  Table,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
 } from "@fleetip/ui";
-import { useSearchParams } from "next/navigation";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { daysUntil, formatCurrencyINR, formatDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
+import { CreateQuotationDialog } from "./CreateQuotationDialog";
+import { acceptanceLabel, QUOTATION_STATUS_MAP } from "./shared";
 
-const STATUS_TONE: Record<CommercialQuotationStatus, "success" | "warning" | "neutral" | "danger"> =
-  {
-    draft: "neutral",
-    sent: "warning",
-    negotiating: "warning",
-    awarded: "success",
-    rejected: "danger",
-    expired: "danger",
-    withdrawn: "danger",
-  };
+type Filter = "all" | CommercialQuotationStatus;
 
-const RATE_UNIT_OPTIONS = [
-  { value: "shift", label: "Per shift" },
-  { value: "day", label: "Per day" },
-  { value: "week", label: "Per week" },
-  { value: "month", label: "Per month" },
-];
+const FILTERS: Filter[] = ["all", "draft", "sent", "negotiating", "awarded", "rejected", "expired", "withdrawn"];
 
-function QuotationRow({
-  quotation,
-  organizationId,
-  organizationType,
-  machinesById,
-  renterOrganizationsById,
-  rentalCompanyOrganizationsById,
-  initiallyExpanded,
-  onChanged,
-}: {
-  quotation: CommercialQuotation;
-  organizationId: string;
-  organizationType: "renter" | "rental_company";
-  machinesById: Record<string, Machine>;
-  renterOrganizationsById: Record<string, Organization>;
-  rentalCompanyOrganizationsById: Record<string, Organization>;
-  initiallyExpanded: boolean;
-  onChanged: () => void;
-}) {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
-  const [offers, setOffers] = useState<QuotationOffer[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const isOwner = quotation.rentalCompanyOrganizationId === organizationId;
-
-  const loadOffers = useCallback(async () => {
-    try {
-      setOffers((await apiClient.listOffers(organizationId, quotation.id)) as QuotationOffer[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load offers");
-    }
-  }, [organizationId, quotation.id]);
-
-  useEffect(() => {
-    if (!initiallyExpanded) return;
-    setExpanded(true);
-    void loadOffers();
-  }, [initiallyExpanded, loadOffers]);
-
-  async function toggle() {
-    setExpanded((prev) => !prev);
-    if (!expanded) await loadOffers();
-  }
-
-  async function handleOffer(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    try {
-      await apiClient.makeOffer(organizationId, quotation.id, {
-        rate: Number(form.get("rate")),
-        rateUnit: String(form.get("rateUnit")) as RateUnit,
-        startDate: quotation.startDate,
-        notes: form.get("notes") ? String(form.get("notes")) : undefined,
-      });
-      formElement.reset();
-      await loadOffers();
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit offer");
-    }
-  }
-
-  async function handleAccept(offerId: string) {
-    setError(null);
-    try {
-      await apiClient.acceptOffer(organizationId, quotation.id, offerId);
-      await loadOffers();
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to accept offer");
-    }
-  }
-
-  async function handleAction(action: "send" | "withdraw" | "accept" | "reject" | "award") {
-    setError(null);
-    try {
-      if (action === "send") await apiClient.sendQuotation(organizationId, quotation.id);
-      if (action === "withdraw") await apiClient.withdrawQuotation(organizationId, quotation.id);
-      if (action === "accept") await apiClient.acceptQuotation(organizationId, quotation.id);
-      if (action === "reject") await apiClient.rejectQuotation(organizationId, quotation.id);
-      if (action === "award") await apiClient.awardQuotation(organizationId, quotation.id);
-      onChanged();
-    } catch (err) {
-      setExpanded(true);
-      setError(err instanceof Error ? err.message : `Failed to ${action} quotation`);
-    }
-  }
-
-  // The "customer" column always shows the counterparty relative to the
-  // viewer — a Renter looking at its own quotations wants to know which
-  // Rental Company sent it, not its own organization id.
-  const customer =
-    organizationType === "renter"
-      ? rentalCompanyOrganizationsById[quotation.rentalCompanyOrganizationId]?.name ??
-        `Rental Company ${quotation.rentalCompanyOrganizationId.slice(0, 8)}…`
-      : (quotation.clientSnapshot?.name ??
-        (quotation.renterOrganizationId && renterOrganizationsById[quotation.renterOrganizationId]?.name) ??
-        `Renter ${quotation.renterOrganizationId?.slice(0, 8)}…`);
-  const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
-  // Awarding now requires the Renter's explicit acceptance whenever a real
-  // in-app Renter is on the other end — an auction-sourced quotation is
-  // exempt (the Renter's earlier participant selection already is that
-  // consent). Mirrors the server-side gate in awardQuotation/acceptQuotation
-  // — the server remains the real enforcement point regardless of what's
-  // rendered here.
-  const needsRenterAcceptance =
-    Boolean(quotation.renterOrganizationId) &&
-    !quotation.sourceAuctionId &&
-    !quotation.renterAcceptedAt;
-  const canAccept =
-    !isOwner && organizationType === "renter" && canNegotiate && needsRenterAcceptance;
-
-  return (
-    <>
-      <tr className="border-b border-gray-100">
-        <td className="py-2 pr-4 font-medium text-gray-900">
-          {quotation.referenceNumber}
-          <span className="block text-xs font-normal text-gray-500 sm:hidden">{customer}</span>
-        </td>
-        <td className="hidden py-2 pr-4 sm:table-cell">
-          {machinesById[quotation.machineId]?.assetCode ?? "—"}
-        </td>
-        <td className="hidden py-2 pr-4 sm:table-cell">{customer}</td>
-        <td className="py-2 pr-4">
-          {quotation.rate} / {quotation.rateUnit}
-        </td>
-        <td className="py-2 pr-4">
-          <Badge tone={STATUS_TONE[quotation.status]}>{quotation.status}</Badge>
-        </td>
-        <td className="py-2 pr-4">
-          <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:gap-2">
-            <button
-              onClick={() => void toggle()}
-              className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-            >
-              {expanded ? "Hide" : "Details"}
-            </button>
-            {isOwner && quotation.status === "draft" && (
-              <button
-                onClick={() => void handleAction("send")}
-                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-              >
-                Send
-              </button>
-            )}
-            {isOwner && (quotation.status === "draft" || quotation.status === "sent") && (
-              <button
-                onClick={() => void handleAction("withdraw")}
-                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-              >
-                Withdraw
-              </button>
-            )}
-            {isOwner && canNegotiate && !needsRenterAcceptance && (
-              <button
-                onClick={() => void handleAction("award")}
-                className="rounded-md border border-green-300 bg-green-50 px-2 py-1 text-xs text-green-700 hover:bg-green-100"
-              >
-                Award
-              </button>
-            )}
-            {isOwner && canNegotiate && needsRenterAcceptance && (
-              <span className="self-center text-xs text-gray-500">
-                Awaiting the Renter&rsquo;s acceptance
-              </span>
-            )}
-            {canAccept && (
-              <button
-                onClick={() => void handleAction("accept")}
-                className="rounded-md border border-green-300 bg-green-50 px-2 py-1 text-xs text-green-700 hover:bg-green-100"
-              >
-                Accept
-              </button>
-            )}
-            {!isOwner &&
-              organizationType === "renter" &&
-              !needsRenterAcceptance &&
-              quotation.renterAcceptedAt &&
-              canNegotiate && (
-                <span className="self-center text-xs text-gray-500">
-                  You accepted — awaiting award
-                </span>
-              )}
-            {!isOwner && organizationType === "renter" && canNegotiate && (
-              <button
-                onClick={() => void handleAction("reject")}
-                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-              >
-                Reject
-              </button>
-            )}
-          </div>
-        </td>
-      </tr>
-      {expanded && (
-        <tr className="border-b border-gray-100 bg-gray-50">
-          <td colSpan={6} className="px-4 py-4">
-            {error && <ErrorState message={error} />}
-            {quotation.requirementId && (
-              <p className="mb-2 text-sm text-gray-700">
-                Requirement RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}
-              </p>
-            )}
-            <p className="mb-2 text-sm text-gray-700">
-              {quotation.startDate} → {quotation.endDate ?? "open-ended"} · Validity{" "}
-              {quotation.validityDate}
-            </p>
-            <h3 className="mb-2 text-sm font-semibold text-gray-900">Negotiation</h3>
-            {offers.length === 0 ? (
-              <p className="mb-3 text-sm text-gray-500">No offers yet.</p>
-            ) : (
-              <ul className="mb-3 flex flex-col gap-2">
-                {offers.map((offer) => (
-                  <li key={offer.id} className="flex items-center gap-3 text-sm">
-                    <Badge
-                      tone={
-                        offer.status === "accepted"
-                          ? "success"
-                          : offer.status === "pending"
-                            ? "warning"
-                            : "neutral"
-                      }
-                    >
-                      {offer.status}
-                    </Badge>
-                    <span>
-                      {offer.rate} / {offer.rateUnit} from{" "}
-                      {offer.offeredByOrganizationId === organizationId ? "you" : "the other side"}
-                    </span>
-                    {offer.status === "pending" &&
-                      offer.offeredByOrganizationId !== organizationId && (
-                        <button
-                          onClick={() => void handleAccept(offer.id)}
-                          className="rounded-md border border-green-300 bg-green-50 px-2 py-0.5 text-xs text-green-700 hover:bg-green-100"
-                        >
-                          Accept
-                        </button>
-                      )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {canNegotiate && (
-              <form
-                onSubmit={(event) => void handleOffer(event)}
-                className="flex flex-wrap items-end gap-3"
-              >
-                <Input label="Rate" name="rate" type="number" step="0.01" required />
-                <Select label="Unit" name="rateUnit" options={RATE_UNIT_OPTIONS} />
-                <Input label="Notes" name="notes" />
-                <Button type="submit">Make offer</Button>
-              </form>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function RequirementContext({
-  requirement,
-  subcategoryName,
-  renterName,
-}: {
-  requirement: Requirement;
-  subcategoryName: string | null;
-  renterName: string;
-}) {
-  const reference = `RFQ-${requirement.id.slice(0, 8).toUpperCase()}`;
-  const duration =
-    requirement.expectedDurationValue && requirement.expectedDurationUnit
-      ? `${requirement.expectedDurationValue} ${requirement.expectedDurationUnit}(s)`
-      : "—";
-
-  return (
-    <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
-      <p className="mb-3 text-sm font-medium text-blue-900">
-        Quoting against requirement {reference} — this quotation stays tied to it.
-      </p>
-      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-        <div>
-          <dt className="text-blue-600">Renter</dt>
-          <dd className="text-blue-900">{renterName}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Equipment</dt>
-          <dd className="text-blue-900">{subcategoryName ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Quantity</dt>
-          <dd className="text-blue-900">{requirement.quantity}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Capacity</dt>
-          <dd className="text-blue-900">
-            {requirement.capacity
-              ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}`
-              : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Project</dt>
-          <dd className="text-blue-900">{requirement.projectName ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Location</dt>
-          <dd className="text-blue-900">{requirement.projectLocation ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Requested start</dt>
-          <dd className="text-blue-900">{requirement.requestedStartDate}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Duration needed</dt>
-          <dd className="text-blue-900">{duration}</dd>
-        </div>
-        <div>
-          <dt className="text-blue-600">Requirement valid until</dt>
-          <dd className="text-blue-900">{requirement.validityDate}</dd>
-        </div>
-      </dl>
-      {requirement.notes && (
-        <p className="mt-3 text-sm text-blue-800">Notes: {requirement.notes}</p>
-      )}
-    </div>
-  );
-}
-
-function CreateQuotationForm({
-  organizationId,
-  requirementIdParam,
-  sourceAuctionIdParam,
-  onCreated,
-}: {
-  organizationId: string;
-  requirementIdParam: string | null;
-  sourceAuctionIdParam: string | null;
-  onCreated: () => void;
-}) {
-  const isFromRequirement = Boolean(requirementIdParam);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [renterOrganizations, setRenterOrganizations] = useState<Organization[]>([]);
-  const [requirement, setRequirement] = useState<Requirement | null>(null);
-  const [subcategoryName, setSubcategoryName] = useState<string | null>(null);
-  const [prefilledRate, setPrefilledRate] = useState<number | null>(null);
-  const [customerMode, setCustomerMode] = useState<"external" | "renter">(
-    isFromRequirement ? "renter" : "external",
-  );
-  const [loadingContext, setLoadingContext] = useState(isFromRequirement);
-  const [loadingAuctionPrefill, setLoadingAuctionPrefill] = useState(
-    Boolean(sourceAuctionIdParam),
-  );
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void apiClient.listMachines(organizationId).then((list) => setMachines(list as Machine[]));
-    void apiClient
-      .listRenterOrganizations(organizationId)
-      .then((list) => setRenterOrganizations(list as Organization[]));
-  }, [organizationId]);
-
-  useEffect(() => {
-    if (!requirementIdParam) return;
-    void (async () => {
-      try {
-        const req = (await apiClient.getRequirementForDiscovery(
-          organizationId,
-          requirementIdParam,
-        )) as Requirement;
-        setRequirement(req);
-
-        const categories = (await apiClient.listProductCategories()) as ProductCategory[];
-        const subcategoryLists = await Promise.all(
-          categories.map((c) => apiClient.listProductSubcategories(c.id)),
-        );
-        const match = (subcategoryLists.flat() as ProductSubcategory[]).find(
-          (s) => s.id === req.productSubcategoryId,
-        );
-        setSubcategoryName(match?.name ?? null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load the requirement");
-      } finally {
-        setLoadingContext(false);
-      }
-    })();
-  }, [organizationId, requirementIdParam]);
-
-  useEffect(() => {
-    if (!sourceAuctionIdParam) return;
-    void (async () => {
-      try {
-        const detail = (await apiClient.getAuctionDetail(
-          organizationId,
-          sourceAuctionIdParam,
-        )) as AuctionDetail;
-        // The selected participant's own bids only (never a competitor's) —
-        // the last one placed is always their best, since every accepted
-        // bid must strictly improve on the one before it.
-        const ownParticipantId = detail.participants[0]?.id;
-        const ownBids = detail.bids.filter((bid) => bid.participantId === ownParticipantId);
-        const lastBid = ownBids[ownBids.length - 1];
-        if (lastBid) setPrefilledRate(lastBid.amount);
-      } catch {
-        // Best-effort pre-fill only — the form still works without it.
-      } finally {
-        setLoadingAuctionPrefill(false);
-      }
-    })();
-  }, [organizationId, sourceAuctionIdParam]);
-
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const endDate = form.get("endDate");
-
-    try {
-      await apiClient.createQuotation(organizationId, {
-        machineId: String(form.get("machineId")),
-        requirementId: requirementIdParam ?? undefined,
-        sourceAuctionId: sourceAuctionIdParam ?? undefined,
-        ...(customerMode === "renter"
-          ? { renterOrganizationId: String(form.get("renterOrganizationId")) }
-          : { clientSnapshot: { name: String(form.get("clientName")) } }),
-        startDate: String(form.get("startDate")),
-        endDate: endDate ? String(endDate) : undefined,
-        rate: Number(form.get("rate")),
-        rateUnit: String(form.get("rateUnit")) as RateUnit,
-        validityDate: String(form.get("validityDate")),
-        commercialNotes: form.get("commercialNotes")
-          ? String(form.get("commercialNotes"))
-          : undefined,
-      });
-      formElement.reset();
-      onCreated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create quotation");
-    }
-  }
-
-  const activeMachines = machines.filter((m) => m.status === "active");
-  const renterName = (id: string) =>
-    renterOrganizations.find((o) => o.id === id)?.name ?? `Renter ${id.slice(0, 8)}…`;
-
-  return (
-    <Card className="mb-8 mt-4">
-      <h2 className="mb-4 text-lg font-medium text-gray-900">Create a quotation</h2>
-      {error && <ErrorState message={error} />}
-      {loadingContext || loadingAuctionPrefill ? (
-        <LoadingState label="Loading requirement…" />
-      ) : activeMachines.length === 0 ? (
-        <EmptyState
-          title="No available machines"
-          description="Register a machine and mark it active before quoting."
-        />
-      ) : (
-        <form
-          key={requirement?.id ?? "no-requirement"}
-          onSubmit={handleCreate}
-          className="flex flex-col gap-4"
-        >
-          {requirement && (
-            <RequirementContext
-              requirement={requirement}
-              subcategoryName={subcategoryName}
-              renterName={renterName(requirement.renterOrganizationId)}
-            />
-          )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Select
-              label="Machine"
-              name="machineId"
-              required
-              options={[
-                { value: "", label: "Select a machine" },
-                ...activeMachines.map((m) => ({ value: m.id, label: m.assetCode })),
-              ]}
-            />
-            {!isFromRequirement && (
-              <div>
-                <span className="mb-1 block text-sm font-medium text-gray-700">Customer</span>
-                <div className="flex gap-4 pt-2 text-sm text-gray-700">
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={customerMode === "external"}
-                      onChange={() => setCustomerMode("external")}
-                    />
-                    External client
-                  </label>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={customerMode === "renter"}
-                      onChange={() => setCustomerMode("renter")}
-                    />
-                    FleetIP Renter
-                  </label>
-                </div>
-              </div>
-            )}
-          </div>
-          {isFromRequirement && requirement ? (
-            <div>
-              <span className="mb-1 block text-sm font-medium text-gray-700">
-                Renter organization
-              </span>
-              <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                {renterName(requirement.renterOrganizationId)} (locked to this requirement)
-              </p>
-              <input
-                type="hidden"
-                name="renterOrganizationId"
-                value={requirement.renterOrganizationId}
-              />
-            </div>
-          ) : customerMode === "external" ? (
-            <Input label="Client name" name="clientName" required />
-          ) : (
-            <Select
-              label="Renter organization"
-              name="renterOrganizationId"
-              required
-              options={[
-                { value: "", label: "Select a renter" },
-                ...renterOrganizations.map((o) => ({ value: o.id, label: o.name })),
-              ]}
-            />
-          )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input
-              label="Start date"
-              name="startDate"
-              type="date"
-              required
-              defaultValue={requirement?.requestedStartDate}
-            />
-            <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
-            <Input
-              label="Rate"
-              name="rate"
-              type="number"
-              step="0.01"
-              required
-              defaultValue={prefilledRate ?? undefined}
-            />
-            <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
-            <Input
-              label="Valid until"
-              name="validityDate"
-              type="date"
-              required
-              defaultValue={requirement?.validityDate}
-            />
-          </div>
-          <Input label="Commercial notes" name="commercialNotes" />
-          <div>
-            <Button type="submit">Create quotation</Button>
-          </div>
-        </form>
-      )}
-    </Card>
-  );
+interface Loaded {
+  quotations: CommercialQuotation[];
+  machinesById: Map<string, Machine>;
+  renterNames: Map<string, string>;
+  rentalCompanyNames: Map<string, string>;
 }
 
 export default function QuotationsPage() {
   const { currentMembership } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
-  const searchParams = useSearchParams();
+
   const requirementIdParam = searchParams.get("requirementId");
   const sourceAuctionIdParam = searchParams.get("sourceAuctionId");
   const quotationIdParam = searchParams.get("quotationId");
 
-  const [quotations, setQuotations] = useState<CommercialQuotation[]>([]);
-  const [machinesById, setMachinesById] = useState<Record<string, Machine>>({});
-  const [renterOrganizationsById, setRenterOrganizationsById] = useState<
-    Record<string, Organization>
-  >({});
-  const [rentalCompanyOrganizationsById, setRentalCompanyOrganizationsById] = useState<
-    Record<string, Organization>
-  >({});
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
+  const [createOpen, setCreateOpen] = useState(Boolean(requirementIdParam || sourceAuctionIdParam));
 
-  async function refresh() {
-    if (!organizationId) return;
+  async function load(orgId: string, orgType: "renter" | "rental_company") {
     try {
-      setQuotations((await apiClient.listQuotations(organizationId)) as CommercialQuotation[]);
+      const quotations = (await apiClient.listQuotations(orgId)) as CommercialQuotation[];
+      if (orgType === "rental_company") {
+        const [machines, renterOrgs] = await Promise.all([
+          apiClient.listMachines(orgId) as Promise<Machine[]>,
+          apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
+        ]);
+        setData({
+          quotations,
+          machinesById: new Map(machines.map((m) => [m.id, m])),
+          renterNames: new Map(renterOrgs.map((o) => [o.id, o.name])),
+          rentalCompanyNames: new Map(),
+        });
+      } else {
+        const rentalCompanyOrgs = (await apiClient.listRentalCompanyOrganizations(
+          orgId,
+        )) as Organization[];
+        setData({
+          quotations,
+          machinesById: new Map(),
+          renterNames: new Map(),
+          rentalCompanyNames: new Map(rentalCompanyOrgs.map((o) => [o.id, o.name])),
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load quotations");
     }
   }
 
   useEffect(() => {
-    if (!organizationId) return;
-    void (async () => {
-      try {
-        setQuotations((await apiClient.listQuotations(organizationId)) as CommercialQuotation[]);
-        if (organizationType === "rental_company") {
-          const [machines, renterOrganizations] = await Promise.all([
-            apiClient.listMachines(organizationId) as Promise<Machine[]>,
-            apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
-          ]);
-          setMachinesById(Object.fromEntries(machines.map((m) => [m.id, m])));
-          setRenterOrganizationsById(Object.fromEntries(renterOrganizations.map((o) => [o.id, o])));
-        } else {
-          const rentalCompanyOrganizations = (await apiClient.listRentalCompanyOrganizations(
-            organizationId,
-          )) as Organization[];
-          setRentalCompanyOrganizationsById(
-            Object.fromEntries(rentalCompanyOrganizations.map((o) => [o.id, o])),
-          );
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load quotations");
-      } finally {
-        setLoading(false);
-      }
-    })();
+    if (organizationId && organizationType) void load(organizationId, organizationType);
   }, [organizationId, organizationType]);
 
-  if (!organizationId || !organizationType) return null;
+  useEffect(() => {
+    if (quotationIdParam) router.replace(`/quotations/${quotationIdParam}`);
+  }, [quotationIdParam, router]);
+
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    const q = search.trim().toLowerCase();
+    return data.quotations.filter((quotation) => {
+      if (filter !== "all" && quotation.status !== filter) return false;
+      if (!q) return true;
+      const machine = data.machinesById.get(quotation.machineId);
+      const counterparty =
+        organizationType === "renter"
+          ? data.rentalCompanyNames.get(quotation.rentalCompanyOrganizationId)
+          : quotation.clientSnapshot?.name ??
+            (quotation.renterOrganizationId && data.renterNames.get(quotation.renterOrganizationId));
+      const haystack = [quotation.referenceNumber, counterparty, machine?.assetCode]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [data, filter, search, organizationType]);
+
+  if (!organizationId || !organizationType) return <LoadingState label="Loading…" />;
+  if (error) return <ErrorState message={error} />;
+  if (!data) return <LoadingState label="Loading quotations…" />;
+
+  const openValue = data.quotations
+    .filter((q) => q.status === "sent" || q.status === "negotiating")
+    .reduce((sum, q) => sum + q.rate, 0);
+  const awaitingAcceptanceCount = data.quotations.filter(
+    (q) => q.status === "sent" && !q.renterAcceptedAt && q.renterOrganizationId,
+  ).length;
+  const expiringSoonCount = data.quotations.filter(
+    (q) => (q.status === "sent" || q.status === "negotiating") && daysUntil(q.validityDate) <= 7,
+  ).length;
 
   return (
-    <>
+    <div className="flex flex-col gap-4">
       <PageHeader
         title="Quotations"
-        description="Formal commercial offers, negotiation, and award."
+        description={`${formatCurrencyINR(openValue)} of open commercial value · ${awaitingAcceptanceCount} awaiting renter acceptance · ${expiringSoonCount} expiring this week`}
+        actions={
+          organizationType === "rental_company" ? (
+            <Button onClick={() => setCreateOpen(true)}>New quotation</Button>
+          ) : undefined
+        }
       />
-      {loading ? (
-        <LoadingState label="Loading quotations…" />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Input placeholder="Reference, renter, machine…" className="w-64" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {FILTERS.map((key) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setFilter(key)}
+            className={[
+              "rounded-control border px-3 py-1.5 text-xs font-semibold capitalize",
+              filter === key
+                ? "border-ink-strong bg-ink-strong text-white"
+                : "border-border-strong bg-surface text-ink-muted hover:bg-surface-sunk",
+            ].join(" ")}
+          >
+            {key} · {key === "all" ? data.quotations.length : data.quotations.filter((q) => q.status === key).length}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState title="No quotations match these filters" />
       ) : (
-        <>
-          {error && <ErrorState message={error} />}
-          {organizationType === "rental_company" && (
-            <CreateQuotationForm
-              organizationId={organizationId}
-              requirementIdParam={requirementIdParam}
-              sourceAuctionIdParam={sourceAuctionIdParam}
-              onCreated={() => void refresh()}
-            />
-          )}
-          <Card>
-            <h2 className="mb-4 text-lg font-medium text-gray-900">
-              {organizationType === "rental_company" ? "Your quotations" : "Quotations for you"}
-            </h2>
-            {quotations.length === 0 ? (
-              <EmptyState title="No quotations yet" description="Nothing to show yet." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-200 text-gray-500">
-                      <th className="py-2 pr-4 font-medium">Reference</th>
-                      <th className="hidden py-2 pr-4 font-medium sm:table-cell">Machine</th>
-                      <th className="hidden py-2 pr-4 font-medium sm:table-cell">
-                        {organizationType === "rental_company" ? "Customer" : "From"}
-                      </th>
-                      <th className="py-2 pr-4 font-medium">Rate</th>
-                      <th className="py-2 pr-4 font-medium">Status</th>
-                      <th className="py-2 pr-4 font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {quotations.map((quotation) => (
-                      <QuotationRow
-                        key={quotation.id}
-                        quotation={quotation}
-                        organizationId={organizationId}
-                        organizationType={organizationType}
-                        machinesById={machinesById}
-                        renterOrganizationsById={renterOrganizationsById}
-                        rentalCompanyOrganizationsById={rentalCompanyOrganizationsById}
-                        initiallyExpanded={quotation.id === quotationIdParam}
-                        onChanged={() => void refresh()}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
+        <Table>
+          <Thead>
+            <Tr>
+              <Th>Quotation</Th>
+              <Th>{organizationType === "rental_company" ? "Renter / client" : "From"}</Th>
+              {organizationType === "rental_company" && <Th>Machine</Th>}
+              <Th>Period</Th>
+              <Th>Rate</Th>
+              <Th>Status</Th>
+              <Th>Acceptance</Th>
+              <Th />
+            </Tr>
+          </Thead>
+          <Tbody>
+            {filtered.map((quotation) => {
+              const machine = data.machinesById.get(quotation.machineId);
+              const counterparty =
+                organizationType === "renter"
+                  ? data.rentalCompanyNames.get(quotation.rentalCompanyOrganizationId) ?? "Rental company"
+                  : quotation.clientSnapshot?.name ??
+                    (quotation.renterOrganizationId && data.renterNames.get(quotation.renterOrganizationId)) ??
+                    "Renter";
+              const acceptance = acceptanceLabel(quotation);
+              const source = quotation.sourceAuctionId
+                ? `from AU-${quotation.sourceAuctionId.slice(0, 8).toUpperCase()}`
+                : quotation.requirementId
+                  ? `from RFQ-${quotation.requirementId.slice(0, 8).toUpperCase()}`
+                  : "direct";
+              return (
+                <Tr key={quotation.id}>
+                  <Td>
+                    <div className="flex flex-col">
+                      <span className="font-mono text-xs text-ink">{quotation.referenceNumber}</span>
+                      <span className="text-xs text-meta">{source}</span>
+                    </div>
+                  </Td>
+                  <Td>
+                    <div className="flex flex-col">
+                      <span className="text-xs text-ink">{counterparty}</span>
+                      <span className="text-xs text-meta">
+                        {organizationType === "rental_company"
+                          ? quotation.renterOrganizationId
+                            ? "Renter organization"
+                            : "External client"
+                          : ""}
+                      </span>
+                    </div>
+                  </Td>
+                  {organizationType === "rental_company" && (
+                    <Td>
+                      <div className="flex flex-col">
+                        <span className="font-mono text-xs">{machine?.assetCode ?? "—"}</span>
+                      </div>
+                    </Td>
+                  )}
+                  <Td className="font-mono">
+                    {formatDate(quotation.startDate)} → {quotation.endDate ? formatDate(quotation.endDate) : "open"}
+                  </Td>
+                  <Td className="font-mono">
+                    {quotation.rate}/{quotation.rateUnit}
+                  </Td>
+                  <Td>
+                    <StatusBadge status={quotation.status} map={QUOTATION_STATUS_MAP} />
+                  </Td>
+                  <Td>
+                    <Badge tone={acceptance.tone}>{acceptance.text}</Badge>
+                  </Td>
+                  <Td>
+                    <Link href={`/quotations/${quotation.id}`} className="text-xs font-medium text-accent-text">
+                      Open
+                    </Link>
+                  </Td>
+                </Tr>
+              );
+            })}
+          </Tbody>
+        </Table>
       )}
-    </>
+
+      {organizationType === "rental_company" && (
+        <CreateQuotationDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          organizationId={organizationId}
+          requirementIdParam={requirementIdParam}
+          sourceAuctionIdParam={sourceAuctionIdParam}
+          onCreated={() => void load(organizationId, organizationType)}
+        />
+      )}
+    </div>
   );
 }

@@ -1,14 +1,31 @@
 import type {
   Auction,
   AuctionDetail,
+  AuctionEvent,
   AuctionParticipant,
+  AuctionSummary,
   BiddingDirection,
 } from "@fleetip/contracts/auction";
 import type { CreateInvoiceRequest, Invoice, InvoiceDetail } from "@fleetip/contracts/billing";
-import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
-import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
+import type {
+  CreateProductCategoryRequest,
+  CreateProductRequest,
+  CreateProductSubcategoryRequest,
+  Product,
+  ProductCategory,
+  ProductSubcategory,
+  UpdateProductCategoryRequest,
+  UpdateProductRequest,
+  UpdateProductSubcategoryRequest,
+} from "@fleetip/contracts/catalogue";
+import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
-import type { Organization } from "@fleetip/contracts/organization";
+import type {
+  InviteMemberRequest,
+  Organization,
+  OrganizationMember,
+  RoleWithPermissions,
+} from "@fleetip/contracts/organization";
 import type {
   CreateMaintenanceRequest,
   MaintenanceRecord,
@@ -30,7 +47,12 @@ import type {
   RentalStatus,
   UpdateRentalTermsRequest,
 } from "@fleetip/contracts/rental";
-import type { CreateRequirementRequest, Requirement } from "@fleetip/contracts/rfq";
+import type {
+  CreateRequirementRequest,
+  Requirement,
+  UpdateRequirementRequest,
+} from "@fleetip/contracts/rfq";
+import type { SearchResult } from "@fleetip/contracts/search";
 import type {
   CreateTransportRequest,
   TransportLeg,
@@ -113,6 +135,23 @@ export const apiClient = {
   logout: () => apiRequest("/auth/logout", { method: "POST" }),
   me: () => apiRequest("/auth/me", { method: "GET" }),
 
+  // --- Organization administration (tenant) ---
+  getOrganizationProfile: (organizationId: string) =>
+    apiRequest<Organization>(`/organizations/${organizationId}`, { method: "GET" }),
+  listOrganizationMembers: (organizationId: string) =>
+    apiRequest<OrganizationMember[]>(`/organizations/${organizationId}/members`, {
+      method: "GET",
+    }),
+  inviteMember: (organizationId: string, input: InviteMemberRequest) =>
+    apiRequest<OrganizationMember>(`/organizations/${organizationId}/members`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  listRolesAndPermissions: (organizationId: string) =>
+    apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/roles`, {
+      method: "GET",
+    }),
+
   listProductCategories: () =>
     apiRequest<ProductCategory[]>("/product-categories", { method: "GET" }),
   listProductSubcategories: (categoryId: string) =>
@@ -122,6 +161,44 @@ export const apiClient = {
   listProducts: (subcategoryId?: string) =>
     apiRequest<Product[]>(`/products${subcategoryId ? `?subcategoryId=${subcategoryId}` : ""}`, {
       method: "GET",
+    }),
+  createProductCategory: (organizationId: string, input: CreateProductCategoryRequest) =>
+    apiRequest<ProductCategory>(`/organizations/${organizationId}/product-categories`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProductCategory: (
+    organizationId: string,
+    categoryId: string,
+    input: UpdateProductCategoryRequest,
+  ) =>
+    apiRequest<ProductCategory>(
+      `/organizations/${organizationId}/product-categories/${categoryId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  createProductSubcategory: (organizationId: string, input: CreateProductSubcategoryRequest) =>
+    apiRequest<ProductSubcategory>(`/organizations/${organizationId}/product-subcategories`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProductSubcategory: (
+    organizationId: string,
+    subcategoryId: string,
+    input: UpdateProductSubcategoryRequest,
+  ) =>
+    apiRequest<ProductSubcategory>(
+      `/organizations/${organizationId}/product-subcategories/${subcategoryId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  createProduct: (organizationId: string, input: CreateProductRequest) =>
+    apiRequest<Product>(`/organizations/${organizationId}/products`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProduct: (organizationId: string, productId: string, input: UpdateProductRequest) =>
+    apiRequest<Product>(`/organizations/${organizationId}/products/${productId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
     }),
   listMachines: (organizationId: string) =>
     apiRequest<Machine[]>(`/organizations/${organizationId}/machines`, { method: "GET" }),
@@ -134,6 +211,11 @@ export const apiClient = {
     apiRequest<Machine>(`/organizations/${organizationId}/machines/${machineId}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    }),
+  updateMachine: (organizationId: string, machineId: string, input: UpdateMachineRequest) =>
+    apiRequest<Machine>(`/organizations/${organizationId}/machines/${machineId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
     }),
 
   listRentals: (organizationId: string) =>
@@ -195,6 +277,15 @@ export const apiClient = {
       `/organizations/${organizationId}/requirements/${requirementId}/status`,
       { method: "PATCH", body: JSON.stringify({ status }) },
     ),
+  updateRequirement: (
+    organizationId: string,
+    requirementId: string,
+    input: UpdateRequirementRequest,
+  ) =>
+    apiRequest<Requirement>(`/organizations/${organizationId}/requirements/${requirementId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
   discoverRequirements: (organizationId: string) =>
     apiRequest<Requirement[]>(`/organizations/${organizationId}/requirement-discovery`, {
       method: "GET",
@@ -299,6 +390,8 @@ export const apiClient = {
     ),
 
   // --- Auction ---
+  listAuctionsForOrganization: (organizationId: string) =>
+    apiRequest<AuctionSummary[]>(`/organizations/${organizationId}/auctions`, { method: "GET" }),
   listAuctionsForRequirement: (organizationId: string, requirementId: string) =>
     apiRequest<Auction[]>(
       `/organizations/${organizationId}/requirements/${requirementId}/auctions`,
@@ -357,12 +450,20 @@ export const apiClient = {
     apiRequest<Auction>(`/organizations/${organizationId}/auctions/${auctionId}/close`, {
       method: "POST",
     }),
+  listAuctionEvents: (organizationId: string, auctionId: string) =>
+    apiRequest<AuctionEvent[]>(`/organizations/${organizationId}/auctions/${auctionId}/events`, {
+      method: "GET",
+    }),
   cancelAuction: (organizationId: string, auctionId: string) =>
     apiRequest<Auction>(`/organizations/${organizationId}/auctions/${auctionId}/cancel`, {
       method: "POST",
     }),
 
   // --- Maintenance ---
+  listMaintenanceRecords: (organizationId: string) =>
+    apiRequest<MaintenanceRecord[]>(`/organizations/${organizationId}/maintenance-records`, {
+      method: "GET",
+    }),
   listMaintenanceForMachine: (organizationId: string, machineId: string) =>
     apiRequest<MaintenanceRecord[]>(
       `/organizations/${organizationId}/machines/${machineId}/maintenance-records`,
@@ -384,6 +485,10 @@ export const apiClient = {
     ),
 
   // --- Transport ---
+  listTransportRecords: (organizationId: string) =>
+    apiRequest<TransportRecord[]>(`/organizations/${organizationId}/transport-records`, {
+      method: "GET",
+    }),
   listTransportForRental: (organizationId: string, rentalId: string) =>
     apiRequest<TransportRecord[]>(
       `/organizations/${organizationId}/rentals/${rentalId}/transport`,
@@ -408,6 +513,8 @@ export const apiClient = {
     ),
 
   // --- Logsheets + Utilization ---
+  listLogsheets: (organizationId: string) =>
+    apiRequest<Logsheet[]>(`/organizations/${organizationId}/logsheets`, { method: "GET" }),
   listLogsheetsForRental: (organizationId: string, rentalId: string) =>
     apiRequest<Logsheet[]>(`/organizations/${organizationId}/rentals/${rentalId}/logsheets`, {
       method: "GET",
@@ -462,6 +569,13 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  // --- Search ---
+  search: (organizationId: string, q: string) =>
+    apiRequest<SearchResult[]>(
+      `/organizations/${organizationId}/search?q=${encodeURIComponent(q)}`,
+      { method: "GET" },
+    ),
 
   // --- Notifications ---
   listNotifications: (organizationId: string) =>

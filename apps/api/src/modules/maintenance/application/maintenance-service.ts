@@ -85,6 +85,23 @@ export class MaintenanceService {
     return records.map(toMaintenance);
   }
 
+  // Standalone Maintenance screen — every maintenance record across the
+  // Rental Company's own fleet, not one machine at a time.
+  async listByOrganization(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<MaintenanceContract[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "maintenance.manage",
+    );
+    const records = await this.maintenanceRepository.listByOrganization(
+      rentalCompanyOrganizationId,
+    );
+    return records.map(toMaintenance);
+  }
+
   async updateStatus(
     userId: string,
     rentalCompanyOrganizationId: string,

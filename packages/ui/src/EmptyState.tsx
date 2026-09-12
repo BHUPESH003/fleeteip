@@ -1,16 +1,24 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
-export interface EmptyStateProps {
+export interface EmptyStateProps extends HTMLAttributes<HTMLDivElement> {
   title: string;
   description?: string;
   action?: ReactNode;
 }
 
-export function EmptyState({ title, description, action }: EmptyStateProps) {
+export function EmptyState({ title, description, action, className, ...props }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 px-6 py-12 text-center">
-      <p className="text-sm font-medium text-gray-700">{title}</p>
-      {description && <p className="text-sm text-gray-500">{description}</p>}
+    <div
+      className={[
+        "flex flex-col items-center justify-center gap-2 rounded-panel border border-dashed border-border-strong bg-surface-sunk px-6 py-12 text-center",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      {...props}
+    >
+      <p className="text-sm font-semibold text-ink">{title}</p>
+      {description && <p className="text-sm text-meta">{description}</p>}
       {action}
     </div>
   );

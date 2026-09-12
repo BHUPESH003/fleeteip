@@ -27,8 +27,8 @@ export default function LoginPage() {
 
   return (
     <Card>
-      <h2 className="mb-4 text-lg font-semibold text-gray-900">Log in</h2>
-      {error && <p className="mb-4 text-sm text-red-700">{error}</p>}
+      <h2 className="mb-4 text-lg font-semibold text-ink">Log in</h2>
+      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
       <form onSubmit={handleSubmit}>
         <Input label="Email" name="email" type="email" required />
         <Input label="Password" name="password" type="password" required />
@@ -36,9 +36,9 @@ export default function LoginPage() {
           Log in
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-gray-500">
+      <p className="mt-4 text-center text-sm text-meta">
         Don&apos;t have an account?{" "}
-        <Link href="/signup" className="font-medium text-blue-600 hover:underline">
+        <Link href="/signup" className="font-medium text-accent-text hover:underline">
           Sign up
         </Link>
       </p>

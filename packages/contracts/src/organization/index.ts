@@ -44,6 +44,9 @@ export const permissionCodeSchema = z.enum([
   "billing.manage",
   "billing.respond",
   "rental.respond",
+  "transport.respond",
+  "logsheet.respond",
+  "catalogue.manage",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
@@ -67,11 +70,21 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
   // Maintenance/Transport/Logsheets are the Rental Company's own
   // operational records; Billing splits create/manage (Rental Company)
   // from read-only view (Renter), same shape as quotation.manage/.respond.
+  // Maintenance has no Renter-facing side — it's scheduling/servicing the
+  // Rental Company's own fleet, not something tied to a specific rental a
+  // Renter is party to.
   "maintenance.manage": ["rental_company"],
   "transport.manage": ["rental_company"],
+  "transport.respond": ["renter"],
   "logsheet.manage": ["rental_company"],
+  "logsheet.respond": ["renter"],
   "billing.manage": ["rental_company"],
   "billing.respond": ["renter"],
+  // The Product Catalogue is platform-level, not organization-owned — see
+  // docs/platform-admin-architecture-requirements.md for why this permission
+  // is scoped to rental_company (not a real platform-admin tier) as a known,
+  // documented limitation of the current two-org-type authorization model.
+  "catalogue.manage": ["rental_company"],
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;
@@ -94,3 +107,35 @@ export const membershipWithOrganizationSchema = membershipSchema.extend({
   permissions: z.array(permissionCodeSchema),
 });
 export type MembershipWithOrganization = z.infer<typeof membershipWithOrganizationSchema>;
+
+// --- Organization administration: a tenant admin's own org/members/roles ---
+// Scoped deliberately conservatively — see docs/frontend-backend-gap-report.md
+// for what a tenant org-admin screen actually needs. Never exposes
+// password_hash/session tokens or any other authentication internal.
+
+export const organizationMemberSchema = z.object({
+  id: z.string().uuid(), // membership id
+  userId: z.string().uuid(),
+  email: z.string().email(),
+  displayName: z.string(),
+  roleName: roleNameSchema,
+  status: membershipStatusSchema,
+  createdAt: z.string().datetime(),
+});
+export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
+
+// The invited user must already hold a FleetIP account (looked up by email)
+// — there is no email-sending infrastructure in this codebase yet to
+// support inviting someone who doesn't. See
+// docs/frontend-backend-gap-report.md for this documented limitation.
+export const inviteMemberRequestSchema = z.object({
+  email: z.string().email(),
+  roleName: roleNameSchema,
+});
+export type InviteMemberRequest = z.infer<typeof inviteMemberRequestSchema>;
+
+export const roleWithPermissionsSchema = z.object({
+  roleName: roleNameSchema,
+  permissions: z.array(permissionCodeSchema),
+});
+export type RoleWithPermissions = z.infer<typeof roleWithPermissionsSchema>;

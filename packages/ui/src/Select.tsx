@@ -7,16 +7,20 @@ export interface SelectOption {
 
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
+  error?: string;
   options: SelectOption[];
 }
 
-export function Select({ label, options, id, className, ...props }: SelectProps) {
+export function Select({ label, error, options, id, className, ...props }: SelectProps) {
   const select = (
     <select
       id={id}
       className={[
-        "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900",
-        "focus:border-blue-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400",
+        "h-[34px] w-full rounded-control border px-2 text-sm text-ink outline-none",
+        error
+          ? "border-danger-border"
+          : "border-border-strong focus:border-accent focus:ring-[3px] focus:ring-accent/15",
+        "disabled:bg-surface-sunk disabled:text-disabled-text",
         className,
       ]
         .filter(Boolean)
@@ -30,11 +34,16 @@ export function Select({ label, options, id, className, ...props }: SelectProps)
       ))}
     </select>
   );
-  if (!label) return select;
+  if (!label && !error) return select;
   return (
-    <label className="mb-3 flex flex-col gap-1">
-      <span className="text-sm font-medium text-gray-700">{label}</span>
+    <label className="mb-3 flex flex-col gap-1.5">
+      {label && (
+        <span className={["text-xs font-medium", error ? "text-danger" : "text-ink-muted"].join(" ")}>
+          {label}
+        </span>
+      )}
       {select}
+      {error && <span className="text-xs text-danger">{error}</span>}
     </label>
   );
 }

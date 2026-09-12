@@ -1,10 +1,11 @@
 "use client";
 
 import type { Notification, NotificationListResponse } from "@fleetip/contracts/notification";
-import { Badge, Dropdown, DropdownItem } from "@fleetip/ui";
+import { Dropdown, DropdownItem } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiClient } from "../lib/api-client";
+import { formatRelativeTime } from "../lib/format";
 import { useSession } from "../lib/session-context";
 import { useInterval } from "../lib/use-interval";
 
@@ -20,17 +21,6 @@ const ROUTE_BY_RESOURCE_TYPE: Record<string, (id: string) => string> = {
   rental: (id) => `/rentals/${id}`,
   machine: (id) => `/machines/${id}`,
 };
-
-function formatRelativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const minutes = Math.round(diffMs / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
 
 export function NotificationBell() {
   const { currentOrganizationId } = useSession();
@@ -88,26 +78,26 @@ export function NotificationBell() {
     <Dropdown
       align="right"
       trigger={
-        <span className="relative text-xl text-gray-500" aria-label="Notifications">
-          🔔
+        <span
+          className="relative flex h-[30px] w-[30px] items-center justify-center rounded-control border border-border text-meta-light"
+          aria-label="Notifications"
+        >
+          &#9662;
           {data.unreadCount > 0 && (
-            <Badge
-              tone="danger"
-              className="absolute -right-2 -top-2 min-w-[1.1rem] justify-center px-1 py-0 text-[10px]"
-            >
+            <span className="absolute -right-1 -top-1 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-accent px-[3px] text-[9px] font-semibold text-white">
               {data.unreadCount > 9 ? "9+" : data.unreadCount}
-            </Badge>
+            </span>
           )}
         </span>
       }
     >
-      <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
-        <span className="text-xs font-semibold text-gray-700">Notifications</span>
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-xs font-semibold text-ink-strong">Notifications</span>
         {data.unreadCount > 0 && (
           <button
             type="button"
             onClick={() => void handleMarkAllRead()}
-            className="text-xs text-blue-600 hover:underline"
+            className="text-xs text-accent-text hover:underline"
           >
             Mark all read
           </button>
@@ -115,17 +105,17 @@ export function NotificationBell() {
       </div>
       <div className="max-h-96 w-80 overflow-y-auto">
         {data.notifications.length === 0 ? (
-          <p className="px-3 py-4 text-sm text-gray-500">No notifications yet.</p>
+          <p className="px-3 py-4 text-sm text-meta">No notifications yet.</p>
         ) : (
           data.notifications.map((notification) => (
             <DropdownItem
               key={notification.id}
               onClick={() => void handleOpenNotification(notification)}
-              className={notification.readAt ? undefined : "bg-blue-50"}
+              className={notification.readAt ? undefined : "bg-info-bg"}
             >
-              <p className="text-sm font-medium text-gray-900">{notification.title}</p>
-              <p className="text-xs text-gray-600">{notification.message}</p>
-              <p className="mt-0.5 text-[11px] text-gray-400">
+              <p className="text-sm font-medium text-ink">{notification.title}</p>
+              <p className="text-xs text-ink-muted">{notification.message}</p>
+              <p className="mt-0.5 text-[11px] text-meta-light">
                 {formatRelativeTime(notification.createdAt)}
               </p>
             </DropdownItem>

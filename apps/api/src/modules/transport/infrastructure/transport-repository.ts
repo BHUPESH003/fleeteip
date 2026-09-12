@@ -87,6 +87,31 @@ export class TransportRepository implements TransportRepositoryPort {
     return rows.map(toTransportRecord);
   }
 
+  async listByRentalCompanyOrganization(rentalCompanyOrganizationId: string) {
+    const rows = await this.db
+      .selectFrom("transport_records")
+      .innerJoin("rentals", "rentals.id", "transport_records.rental_id")
+      .where("rentals.rental_company_organization_id", "=", rentalCompanyOrganizationId)
+      .select([
+        "transport_records.id as id",
+        "transport_records.rental_id as rental_id",
+        "transport_records.leg as leg",
+        "transport_records.pickup_location as pickup_location",
+        "transport_records.destination as destination",
+        "transport_records.planned_date as planned_date",
+        "transport_records.actual_date as actual_date",
+        "transport_records.status as status",
+        "transport_records.transport_details as transport_details",
+        "transport_records.charges as charges",
+        "transport_records.notes as notes",
+        "transport_records.created_at as created_at",
+        "transport_records.updated_at as updated_at",
+      ])
+      .orderBy("transport_records.created_at", "desc")
+      .execute();
+    return rows.map(toTransportRecord);
+  }
+
   async update(id: string, updates: UpdateTransportInput) {
     const row = await this.db
       .updateTable("transport_records")

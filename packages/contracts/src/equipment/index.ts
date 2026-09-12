@@ -27,4 +27,21 @@ export const updateMachineStatusRequestSchema = z.object({
   status: machineStatusSchema,
 });
 
+// Corrects data-entry mistakes after registration — deliberately excludes
+// organizationId (ownership never changes hands through this endpoint) and
+// productId (the equipment hierarchy is a create-time decision; the business
+// model has no "reclassify an existing machine" concept yet). At least one
+// field must be provided, same discipline as updateRentalTermsRequestSchema.
+export const updateMachineRequestSchema = z
+  .object({
+    assetCode: z.string().min(1).max(50).optional(),
+    chassisNumber: z.string().min(1).max(50).optional(),
+    registrationNumber: z.string().min(1).max(50).optional(),
+    yearOfManufacture: z.number().int().min(1980).max(new Date().getFullYear()).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "Provide at least one field to update",
+  });
+export type UpdateMachineRequest = z.infer<typeof updateMachineRequestSchema>;
+
 export type Machine = z.infer<typeof machineSchema>;

@@ -1,29 +1,33 @@
 import type { HTMLAttributes } from "react";
 
-export type BadgeTone = "success" | "warning" | "neutral" | "danger";
+export type BadgeTone = "success" | "warning" | "neutral" | "danger" | "info";
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
-  success: "bg-green-100 text-green-800",
-  warning: "bg-amber-100 text-amber-800",
-  neutral: "bg-gray-200 text-gray-600",
-  danger: "bg-red-100 text-red-800",
+  success: "bg-success-bg text-success",
+  warning: "bg-warning-bg text-warning",
+  neutral: "bg-neutral-bg text-neutral",
+  danger: "bg-danger-bg text-danger",
+  info: "bg-info-bg text-info",
 };
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone;
 }
 
-export function Badge({ tone = "neutral", className, ...props }: BadgeProps) {
+export function Badge({ tone = "neutral", className, children, ...props }: BadgeProps) {
   return (
     <span
       className={[
-        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1.5 rounded-xs px-2.5 py-1 text-xs font-semibold",
         TONE_CLASSES[tone],
         className,
       ]
         .filter(Boolean)
         .join(" ")}
       {...props}
-    />
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+      {children}
+    </span>
   );
 }

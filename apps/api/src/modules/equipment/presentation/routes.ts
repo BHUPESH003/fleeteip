@@ -1,5 +1,6 @@
 import {
   createMachineRequestSchema,
+  updateMachineRequestSchema,
   updateMachineStatusRequestSchema,
 } from "@fleetip/contracts/equipment";
 import type { FastifyInstance } from "fastify";
@@ -41,6 +42,20 @@ export async function equipmentRoutes(fastify: FastifyInstance): Promise<void> {
         request.params.organizationId,
         request.params.machineId,
         body.status,
+      );
+    },
+  );
+
+  fastify.patch<{ Params: { organizationId: string; machineId: string } }>(
+    "/organizations/:organizationId/machines/:machineId",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(updateMachineRequestSchema, request.body);
+      return container.equipmentService.updateMachine(
+        userId,
+        request.params.organizationId,
+        request.params.machineId,
+        body,
       );
     },
   );

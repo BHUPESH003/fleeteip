@@ -52,6 +52,9 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
       throw new Error("not used in this test");
     },
     listWithOrganizationByUserId: async () => [],
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
   const roleRepository: RoleRepositoryPort = {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
@@ -181,6 +184,12 @@ function fakeRequirementRepository(
       throw new Error("not used in this test");
     },
     updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
+    search: async () => {
       throw new Error("not used in this test");
     },
   };
@@ -336,6 +345,33 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     listBids: async (auctionId) => [...bids.values()].filter((b) => b.auction_id === auctionId),
     findResult: async (auctionId) => results.get(auctionId),
     listEvents: async (auctionId) => events.filter((e) => e.auction_id === auctionId),
+    // requirement_project_name is left null here — the real repository joins
+    // to `requirements` for it; this in-memory fake only needs to exercise
+    // AuctionService's own aggregation/mapping logic, not the SQL join.
+    listByOwnerOrganization: async (organizationId) =>
+      [...auctions.values()]
+        .filter((a) => a.created_by_organization_id === organizationId)
+        .map((a) => {
+          const ownParticipants = [...participants.values()].filter((p) => p.auction_id === a.id);
+          return {
+            ...a,
+            requirement_project_name: null,
+            participant_count: ownParticipants.length,
+            has_selected_participant: ownParticipants.some((p) => p.status === "selected"),
+          };
+        }),
+    listByParticipantOrganization: async (organizationId) =>
+      [...participants.values()]
+        .filter((p) => p.rental_company_organization_id === organizationId)
+        .map((p) => {
+          const auction = auctions.get(p.auction_id);
+          if (!auction) throw new Error("not used in this test");
+          return {
+            ...auction,
+            requirement_project_name: null,
+            own_participant_status: p.status,
+          };
+        }),
   };
 }
 
@@ -576,6 +612,44 @@ describe("AuctionService", () => {
     await expect(service.getAuctionDetail("user-3", OTHER_RC_ORG_ID, auction.id)).rejects.toThrow(
       NotFoundError,
     );
+  });
+
+  describe("listAuctionsForOrganization", () => {
+    it("lists the Renter's own auctions with a needsAttention flag once closed unselected", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      const participant = await approvedParticipant(service, auction.id);
+      await service.closeAuctionEarly("user-1", RENTER_ORG_ID, auction.id);
+
+      const list = await service.listAuctionsForOrganization("user-1", RENTER_ORG_ID);
+      expect(list).toHaveLength(1);
+      expect(list[0]?.participantCount).toBe(1);
+      expect(list[0]?.ownParticipantStatus).toBeNull();
+      expect(list[0]?.needsAttention).toBe(true);
+
+      await service.selectParticipant("user-1", RENTER_ORG_ID, auction.id, participant.id);
+      const listAfterSelection = await service.listAuctionsForOrganization("user-1", RENTER_ORG_ID);
+      expect(listAfterSelection[0]?.needsAttention).toBe(false);
+    });
+
+    it("lists a Rental Company's participated auctions with its own participant status", async () => {
+      const service = buildService();
+      const auction = await createRunningAuction(service);
+      await approvedParticipant(service, auction.id, RC_ORG_ID);
+
+      const list = await service.listAuctionsForOrganization("user-2", RC_ORG_ID);
+      expect(list).toHaveLength(1);
+      expect(list[0]?.ownParticipantStatus).toBe("approved");
+      expect(list[0]?.participantCount).toBeNull();
+      expect(list[0]?.needsAttention).toBe(false);
+    });
+
+    it("excludes an auction from a Rental Company's list until it has joined", async () => {
+      const service = buildService();
+      await createRunningAuction(service);
+      const list = await service.listAuctionsForOrganization("user-2", RC_ORG_ID);
+      expect(list).toHaveLength(0);
+    });
   });
 
   it("rejects cancelling an auction that has already closed", async () => {

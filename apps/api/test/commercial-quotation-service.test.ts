@@ -13,6 +13,10 @@ import type {
 } from "../src/modules/equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
 import type {
+  ProductRecord,
+  ProductRepositoryPort,
+} from "../src/modules/catalogue/domain/ports.js";
+import type {
   RequirementRecord,
   RequirementRepositoryPort,
 } from "../src/modules/marketplace/rfq/domain/ports.js";
@@ -79,6 +83,9 @@ function fakePermissionService(rcOrgType: OrganizationTypeCode = "rental_company
       throw new Error("not used in this test");
     },
     listWithOrganizationByUserId: async () => [],
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
   const roleRepository: RoleRepositoryPort = {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
@@ -119,6 +126,29 @@ function fakeNotificationService(): NotificationService {
     },
   };
   return new NotificationService(throwingRepo, fakePermissionService());
+}
+
+function fakeProductRepository(): ProductRepositoryPort {
+  const product: ProductRecord = {
+    id: "product-1",
+    product_subcategory_id: "subcategory-1",
+    manufacturer: "Caterpillar",
+    name: "320",
+    capacity: 20,
+    capacity_unit: "Ton",
+    specifications: null,
+    created_at: new Date(),
+  };
+  return {
+    listAll: async () => [product],
+    findById: async (id) => (id === product.id ? product : undefined),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+  };
 }
 
 function fakeOrganizationTypeRepository(
@@ -184,10 +214,16 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
       throw new Error("not used in this test");
     },
     findById: async (id) => machines.find((m) => m.id === id),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
     updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    updateDetails: async () => {
       throw new Error("not used in this test");
     },
     assetCodeExists: async () => {
@@ -243,6 +279,12 @@ function fakeRequirementRepository(
       const updated = { ...existing, status, updated_at: new Date() };
       store.set(id, updated);
       return updated;
+    },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
+    search: async () => {
+      throw new Error("not used in this test");
     },
   };
 }
@@ -435,6 +477,12 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     listEvents: async () => {
       throw new Error("not used in this test");
     },
+    listByOwnerOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    listByParticipantOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -508,6 +556,12 @@ function fakeRentalRepository(): RentalRepositoryPort {
         (r) => r.machine_id === machineId && ["confirmed", "active", "off_rent"].includes(r.status),
       );
       return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
+    },
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
     },
   };
 }
@@ -642,6 +696,18 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       }
       return existing;
     },
+    searchByRentalCompany: async (rentalCompanyOrganizationId, query) =>
+      [...quotations.values()].filter(
+        (q) =>
+          q.rental_company_organization_id === rentalCompanyOrganizationId &&
+          (q.reference_number.includes(query) || q.client_snapshot?.name?.includes(query)),
+      ),
+    searchByRenter: async (renterOrganizationId, query) =>
+      [...quotations.values()].filter(
+        (q) =>
+          q.renter_organization_id === renterOrganizationId &&
+          (q.reference_number.includes(query) || q.client_snapshot?.name?.includes(query)),
+      ),
   };
 }
 
@@ -698,6 +764,9 @@ function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
     listByMachine: async () => {
       throw new Error("not used in this test");
     },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
@@ -723,6 +792,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
     fakeCommercialQuotationRepository(),
     fakeQuotationOfferRepository(),
     fakeMachineRepository(machines),
+    fakeProductRepository(),
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
     fakeRequirementRepository(),
     fakeQuotationResponseRepository(),
@@ -902,6 +972,46 @@ describe("CommercialQuotationService", () => {
     expect(accepted.status).toBe("negotiating");
   });
 
+  // Regression: acceptQuotation used to just flag the quotation's own
+  // (possibly stale) rate field as accepted, ignoring a still-pending
+  // counter-offer entirely — a Renter clicking "Accept" while a Rental
+  // Company counter-offer sat unresolved would record acceptance against
+  // the wrong number, and awardQuotation would create the Rental at that
+  // wrong rate. Reported live by the user via a screenshot showing exactly
+  // this mismatch (displayed "countered at X" not matching the pending
+  // offer in the trail).
+  it("acceptQuotation applies a still-pending counter-offer from the Rental Company before recording acceptance", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      rate: 4500,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+
+    // Renter counters, then the Rental Company counters that — leaving the
+    // Rental Company's offer pending, never explicitly accepted via
+    // acceptOffer.
+    await service.makeOffer("user-2", RENTER_ORG_ID, quotation.id, {
+      rate: 4200,
+      rateUnit: "day",
+      startDate: "2026-03-01",
+    });
+    const rentalCompanyOffer = await service.makeOffer("user-1", RC_ORG_ID, quotation.id, {
+      rate: 4350,
+      rateUnit: "day",
+      startDate: "2026-03-01",
+    });
+
+    const accepted = await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
+    expect(accepted.rate).toBe(4350); // the pending offer's rate, not the original 4500
+    expect(accepted.renterAcceptedAt).not.toBeNull();
+
+    const offers = await service.listOffers("user-1", RC_ORG_ID, quotation.id);
+    expect(offers.find((o) => o.id === rentalCompanyOffer.id)?.status).toBe("accepted");
+  });
+
   it("rejects making an offer before the quotation has been sent", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
@@ -929,6 +1039,7 @@ describe("CommercialQuotationService", () => {
       fakeCommercialQuotationRepository(),
       fakeQuotationOfferRepository(),
       fakeMachineRepository(machines),
+      fakeProductRepository(),
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       requirementRepository,
       fakeQuotationResponseRepository(),
@@ -981,7 +1092,13 @@ describe("CommercialQuotationService", () => {
     );
   });
 
-  it("does not require Renter acceptance for a Path C quotation — the auction selection is that consent", async () => {
+  // Regression: a Path C (auction-sourced) quotation used to be exempt from
+  // requiring Renter acceptance, on the reasoning that the earlier auction
+  // participant-selection was already consent to whatever terms followed.
+  // That let a Rental Company send Path C terms and award them unilaterally
+  // with the Renter never seeing an Accept/counter-offer option. Path C now
+  // requires acceptance exactly like Path A/B.
+  it("requires Renter acceptance for a Path C quotation too — auction selection is not consent to the terms", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
       ...pathBInput,
@@ -990,6 +1107,11 @@ describe("CommercialQuotationService", () => {
       sourceAuctionId: WON_AUCTION_ID,
     });
     await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
+      ConflictError,
+    );
+
+    await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
     const awarded = await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
     expect(awarded.status).toBe("awarded");
   });
@@ -1059,6 +1181,36 @@ describe("CommercialQuotationService", () => {
     );
   });
 
+  it("resolves machine asset code/product name for the Renter party, not the Rental Company", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const asRenter = await service.getQuotation("user-2", RENTER_ORG_ID, quotation.id);
+    expect(asRenter.machineAssetCode).toBe("EXC-001");
+    expect(asRenter.productName).toBe("Caterpillar 320");
+
+    const asRentalCompany = await service.getQuotation("user-1", RC_ORG_ID, quotation.id);
+    expect(asRentalCompany.machineAssetCode).toBeNull();
+    expect(asRentalCompany.productName).toBeNull();
+  });
+
+  it("resolves machine info on the Renter's own quotations list", async () => {
+    const service = buildService();
+    await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const list = await service.listQuotationsForRenter("user-2", RENTER_ORG_ID);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.machineAssetCode).toBe("EXC-001");
+  });
+
   it("lazily expires a sent quotation once its validity date has passed", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
@@ -1111,8 +1263,8 @@ describe("CommercialQuotationService", () => {
     expect(rentalCompanies[0]?.id).toBe(RC_ORG_ID);
     expect(rentalCompanies[0]?.organizationTypeCode).toBe("rental_company");
 
-    await expect(
-      service.listRentalCompanyOrganizations("user-1", RC_ORG_ID),
-    ).rejects.toThrow(ForbiddenError);
+    await expect(service.listRentalCompanyOrganizations("user-1", RC_ORG_ID)).rejects.toThrow(
+      ForbiddenError,
+    );
   });
 });

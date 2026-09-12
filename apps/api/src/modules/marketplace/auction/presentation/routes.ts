@@ -9,6 +9,19 @@ import { getAuthenticatedUserId } from "../../../../shared/auth.js";
 import { parseWithSchema } from "../../../../shared/validate.js";
 
 export async function auctionRoutes(fastify: FastifyInstance): Promise<void> {
+  // Org-scoped list for the dashboard/auction-list screens — every auction
+  // this org owns (Renter) or participates in (Rental Company).
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/auctions",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.auctionService.listAuctionsForOrganization(
+        userId,
+        request.params.organizationId,
+      );
+    },
+  );
+
   fastify.post<{ Params: { organizationId: string; requirementId: string } }>(
     "/organizations/:organizationId/requirements/:requirementId/auctions",
     async (request, reply) => {

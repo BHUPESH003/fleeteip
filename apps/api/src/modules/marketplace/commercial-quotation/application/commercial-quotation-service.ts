@@ -12,6 +12,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../../../../shared/errors.js";
+import type { ProductRepositoryPort } from "../../../catalogue/domain/ports.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type {
   OrganizationRepositoryPort,
@@ -31,7 +32,10 @@ import type {
   QuotationOfferRepositoryPort,
 } from "../domain/ports.js";
 
-function toQuotation(record: CommercialQuotationRecord): CommercialQuotation {
+function toQuotation(
+  record: CommercialQuotationRecord,
+  extra?: { machineAssetCode?: string | null; productName?: string | null },
+): CommercialQuotation {
   return {
     id: record.id,
     rentalCompanyOrganizationId: record.rental_company_organization_id,
@@ -64,6 +68,8 @@ function toQuotation(record: CommercialQuotationRecord): CommercialQuotation {
       : null,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
+    machineAssetCode: extra?.machineAssetCode ?? null,
+    productName: extra?.productName ?? null,
   };
 }
 
@@ -99,6 +105,7 @@ export class CommercialQuotationService {
     private readonly quotationRepository: CommercialQuotationRepositoryPort,
     private readonly offerRepository: QuotationOfferRepositoryPort,
     private readonly machineRepository: MachineRepositoryPort,
+    private readonly productRepository: ProductRepositoryPort,
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly requirementRepository: RequirementRepositoryPort,
     private readonly quotationResponseRepository: QuotationResponseRepositoryPort,
@@ -271,6 +278,26 @@ export class CommercialQuotationService {
     return records.map(toOrganization);
   }
 
+  // A Renter has no equipment.manage permission on the Rental Company's org,
+  // so it can never resolve the machine/product itself the way the Rental
+  // Company's own quotation view does — resolve it here instead. Same "look
+  // up server-side, don't grant the underlying permission" shape as
+  // RentalService.listRentals's machineAssetCode/rentalCompanyOrganizationName.
+  // Two lookups per quotation is the same order of cost as that existing
+  // precedent, not a new N+1 pattern — fine at this app's per-Renter
+  // quotation-count scale.
+  private async resolveMachineInfoForRenter(
+    record: CommercialQuotationRecord,
+  ): Promise<{ machineAssetCode: string | null; productName: string | null }> {
+    const machine = await this.machineRepository.findById(record.machine_id);
+    if (!machine) return { machineAssetCode: null, productName: null };
+    const product = await this.productRepository.findById(machine.product_id);
+    return {
+      machineAssetCode: machine.asset_code,
+      productName: product ? `${product.manufacturer} ${product.name}` : null,
+    };
+  }
+
   async getQuotation(
     userId: string,
     organizationId: string,
@@ -278,6 +305,9 @@ export class CommercialQuotationService {
   ): Promise<CommercialQuotation> {
     await this.requireQuotationPermission(userId, organizationId);
     const record = await this.loadAsParty(organizationId, quotationId);
+    if (record.renter_organization_id === organizationId) {
+      return toQuotation(record, await this.resolveMachineInfoForRenter(record));
+    }
     return toQuotation(record);
   }
 
@@ -309,7 +339,7 @@ export class CommercialQuotationService {
       "quotation.manage",
     );
     const records = await this.quotationRepository.listByRentalCompany(rentalCompanyOrganizationId);
-    return records.map(toQuotation);
+    return records.map((record) => toQuotation(record));
   }
 
   async listQuotationsForRenter(
@@ -322,7 +352,11 @@ export class CommercialQuotationService {
       "quotation.respond",
     );
     const records = await this.quotationRepository.listByRenter(renterOrganizationId);
-    return records.map(toQuotation);
+    return Promise.all(
+      records.map(async (record) =>
+        toQuotation(record, await this.resolveMachineInfoForRenter(record)),
+      ),
+    );
   }
 
   async updateTerms(
@@ -367,6 +401,17 @@ export class CommercialQuotationService {
 
   // The Renter's explicit consent gate awardQuotation checks — see the
   // comment above that method.
+  //
+  // "Accept" must accept whatever is actually on the table, not whatever
+  // rate happens to be stored on the quotation row — that field is only
+  // ever updated by applyAcceptedOffer/updateTerms, so while a counter-offer
+  // from the Rental Company is still pending (not yet accepted by anyone),
+  // it's stale. If the Rental Company's own offer is the one still pending,
+  // apply it first so acceptance actually attaches to those terms — don't
+  // rely on the caller to have called acceptOffer first (defense in depth;
+  // the frontend also sequences this correctly, but the server must hold
+  // regardless of which client calls this). A pending offer that is the
+  // *Renter's own* (not yet responded to) is left alone — nothing to apply.
   async acceptQuotation(
     userId: string,
     renterOrganizationId: string,
@@ -383,6 +428,17 @@ export class CommercialQuotationService {
     }
     if (existing.status !== "sent" && existing.status !== "negotiating") {
       throw new ConflictError(`Cannot accept a quotation that is ${existing.status}`);
+    }
+    const offers = await this.offerRepository.listByQuotation(quotationId);
+    const pendingOffer = offers.find((offer) => offer.status === "pending");
+    if (pendingOffer && pendingOffer.offered_by_organization_id !== renterOrganizationId) {
+      await this.offerRepository.updateStatus(pendingOffer.id, "accepted");
+      await this.quotationRepository.applyAcceptedOffer(quotationId, {
+        rate: pendingOffer.rate,
+        rateUnit: pendingOffer.rate_unit,
+        startDate: pendingOffer.start_date,
+        endDate: pendingOffer.end_date,
+      });
     }
     const record = await this.quotationRepository.setRenterAccepted(quotationId, true);
     await this.notify({
@@ -555,9 +611,16 @@ export class CommercialQuotationService {
   // self" gap already closed for the auction path (selectParticipant/
   // assertSelectedParticipant). An external client (clientSnapshot, no
   // renterOrganizationId) has no user account to click Accept, so that
-  // sub-case is unchanged. A Path C (sourceAuctionId) quotation is also
-  // exempt — the Renter's explicit auction selection already is that
-  // consent; requiring a second Accept click would be pure friction.
+  // sub-case is unchanged.
+  //
+  // A Path C (sourceAuctionId) quotation used to be exempt too, on the
+  // reasoning that the Renter's earlier auction participant selection was
+  // already that consent. That was wrong and has been reverted: selecting a
+  // participant only picks WHO gets to quote, not an agreement to whatever
+  // rate/terms that participant later sets in the CommercialQuotation — the
+  // Rental Company could (and did) send Path C terms and award them
+  // unilaterally, with the Renter never seeing an Accept/counter-offer
+  // option at all. Path C is now held to exactly the same rule as Path A/B.
   async awardQuotation(
     userId: string,
     rentalCompanyOrganizationId: string,
@@ -572,11 +635,7 @@ export class CommercialQuotationService {
     if (!canTransition(existing.status, "awarded")) {
       throw new ConflictError(`Cannot award a quotation that is ${existing.status}`);
     }
-    if (
-      existing.renter_organization_id &&
-      !existing.source_auction_id &&
-      !existing.renter_accepted_at
-    ) {
+    if (existing.renter_organization_id && !existing.renter_accepted_at) {
       throw new ConflictError("The Renter has not accepted this quotation yet");
     }
 

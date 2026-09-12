@@ -1,10 +1,18 @@
 import type {
   CapacityUnit,
+  CreateProductCategoryRequest,
+  CreateProductRequest,
+  CreateProductSubcategoryRequest,
   Product,
   ProductCategory,
   ProductSpecifications,
   ProductSubcategory,
+  UpdateProductCategoryRequest,
+  UpdateProductRequest,
+  UpdateProductSubcategoryRequest,
 } from "@fleetip/contracts/catalogue";
+import { ConflictError, NotFoundError } from "../../../shared/errors.js";
+import { PermissionService } from "../../permissions/application/permission-service.js";
 import type {
   ProductCategoryRecord,
   ProductRecord,
@@ -55,8 +63,12 @@ export class CatalogueService {
     private readonly productCategoryRepository: ProductCategoryRepositoryPort,
     private readonly productSubcategoryRepository: ProductSubcategoryRepositoryPort,
     private readonly productRepository: ProductRepositoryPort,
+    private readonly permissionService: PermissionService,
   ) {}
 
+  // Reads stay public/unauthenticated — the Product Catalogue is
+  // platform-level browsable reference data (see catalogue routes), not
+  // organization-scoped, so there is nothing to authorize here.
   async listCategories(): Promise<ProductCategory[]> {
     const records = await this.productCategoryRepository.listAll();
     return records.map(toProductCategory);
@@ -70,5 +82,99 @@ export class CatalogueService {
   async listProducts(subcategoryId?: string): Promise<Product[]> {
     const records = await this.productRepository.listAll(subcategoryId);
     return records.map(toProduct);
+  }
+
+  // --- Writes: gated by catalogue.manage. organizationId identifies the
+  // caller's own membership for the permission check only — it is never
+  // stored anywhere; the Product Catalogue has no organization_id column
+  // (it is shared platform-wide by design). See the migration seeding
+  // catalogue.manage and docs/platform-admin-architecture-requirements.md
+  // for why this is the best fit available today, not a real platform-admin
+  // authorization tier. ---
+
+  async createCategory(
+    userId: string,
+    organizationId: string,
+    input: CreateProductCategoryRequest,
+  ): Promise<ProductCategory> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    const codeExists = await this.productCategoryRepository.codeExists(input.code);
+    if (codeExists) {
+      throw new ConflictError("A product category with this code already exists");
+    }
+    const record = await this.productCategoryRepository.create(input);
+    return toProductCategory(record);
+  }
+
+  async updateCategory(
+    userId: string,
+    organizationId: string,
+    categoryId: string,
+    input: UpdateProductCategoryRequest,
+  ): Promise<ProductCategory> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    const existing = await this.productCategoryRepository.findById(categoryId);
+    if (!existing) throw new NotFoundError("Product category not found");
+    const record = await this.productCategoryRepository.updateName(categoryId, input.name);
+    return toProductCategory(record);
+  }
+
+  async createSubcategory(
+    userId: string,
+    organizationId: string,
+    input: CreateProductSubcategoryRequest,
+  ): Promise<ProductSubcategory> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    const category = await this.productCategoryRepository.findById(input.productCategoryId);
+    if (!category) throw new NotFoundError("Product category not found");
+    const codeExists = await this.productSubcategoryRepository.codeExistsInCategory(
+      input.productCategoryId,
+      input.code,
+    );
+    if (codeExists) {
+      throw new ConflictError("A subcategory with this code already exists in this category");
+    }
+    const record = await this.productSubcategoryRepository.create(input);
+    return toProductSubcategory(record);
+  }
+
+  async updateSubcategory(
+    userId: string,
+    organizationId: string,
+    subcategoryId: string,
+    input: UpdateProductSubcategoryRequest,
+  ): Promise<ProductSubcategory> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    const existing = await this.productSubcategoryRepository.findById(subcategoryId);
+    if (!existing) throw new NotFoundError("Product subcategory not found");
+    const record = await this.productSubcategoryRepository.updateName(subcategoryId, input.name);
+    return toProductSubcategory(record);
+  }
+
+  async createProduct(
+    userId: string,
+    organizationId: string,
+    input: CreateProductRequest,
+  ): Promise<Product> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    const subcategory = await this.productSubcategoryRepository.findById(
+      input.productSubcategoryId,
+    );
+    if (!subcategory) throw new NotFoundError("Product subcategory not found");
+    const record = await this.productRepository.create(input);
+    return toProduct(record);
+  }
+
+  async updateProduct(
+    userId: string,
+    organizationId: string,
+    productId: string,
+    input: UpdateProductRequest,
+  ): Promise<Product> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    const existing = await this.productRepository.findById(productId);
+    if (!existing) throw new NotFoundError("Product not found");
+    const record = await this.productRepository.update(productId, input);
+    return toProduct(record);
   }
 }

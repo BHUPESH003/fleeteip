@@ -48,6 +48,9 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
       throw new Error("not used in this test");
     },
     listWithOrganizationByUserId: async () => [],
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
   const roleRepository: RoleRepositoryPort = {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
@@ -118,10 +121,16 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
       throw new Error("not used in this test");
     },
     findById: async (id) => machines.find((machine) => machine.id === id),
+    search: async () => {
+      throw new Error("not used in this test");
+    },
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
     updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    updateDetails: async () => {
       throw new Error("not used in this test");
     },
     assetCodeExists: async () => {
@@ -225,6 +234,12 @@ function fakeRentalRepository(): RentalRepositoryPort {
       );
       return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
     },
+    searchByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    searchByRenterOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -237,6 +252,9 @@ function fakeMaintenanceRepository(hasConflict = false): MaintenanceRepositoryPo
       throw new Error("not used in this test");
     },
     listByMachine: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
       throw new Error("not used in this test");
     },
     updateStatus: async () => {

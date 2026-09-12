@@ -44,6 +44,9 @@ export interface LogsheetRepositoryPort {
   submit(input: SubmitLogsheetInput): Promise<LogsheetRecord>;
   findByRentalAndDate(rentalId: string, logDate: string): Promise<LogsheetRecord | undefined>;
   listByRental(rentalId: string): Promise<LogsheetRecord[]>;
+  // Standalone Logsheets screen — every logsheet across the Rental Company's
+  // own rentals, not one rental at a time. A single join, not a loop.
+  listByRentalCompanyOrganization(rentalCompanyOrganizationId: string): Promise<LogsheetRecord[]>;
   getRentalTotals(rentalId: string): Promise<UtilizationTotals>;
   getMachineTotals(machineId: string): Promise<UtilizationTotals>;
 }

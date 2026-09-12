@@ -66,6 +66,27 @@ export class MaintenanceRepository implements MaintenanceRepositoryPort {
     return rows.map(toMaintenanceRecord);
   }
 
+  async listByOrganization(rentalCompanyOrganizationId: string) {
+    const rows = await this.db
+      .selectFrom("maintenance_records")
+      .innerJoin("machines", "machines.id", "maintenance_records.machine_id")
+      .where("machines.organization_id", "=", rentalCompanyOrganizationId)
+      .select([
+        "maintenance_records.id as id",
+        "maintenance_records.machine_id as machine_id",
+        "maintenance_records.maintenance_type as maintenance_type",
+        "maintenance_records.start_date as start_date",
+        "maintenance_records.end_date as end_date",
+        "maintenance_records.status as status",
+        "maintenance_records.notes as notes",
+        "maintenance_records.created_at as created_at",
+        "maintenance_records.updated_at as updated_at",
+      ])
+      .orderBy("maintenance_records.start_date", "desc")
+      .execute();
+    return rows.map(toMaintenanceRecord);
+  }
+
   async updateStatus(id: string, status: MaintenanceStatus) {
     const row = await this.db
       .updateTable("maintenance_records")

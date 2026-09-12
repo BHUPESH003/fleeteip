@@ -17,6 +17,7 @@ export interface DropdownProps {
 export function Dropdown({ trigger, children, align = "right" }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -25,23 +26,35 @@ export function Dropdown({ trigger, children, align = "right" }: DropdownProps) 
         setOpen(false);
       }
     }
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKeydown);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKeydown);
+    };
   }, [open]);
 
   return (
     <div ref={containerRef} className="relative inline-block">
       <button
+        ref={triggerRef}
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center"
+        className="flex items-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1"
       >
         {trigger}
       </button>
       {open && (
         <div
           className={[
-            "absolute z-10 mt-2 min-w-[11rem] rounded-md border border-gray-200 bg-white py-1 shadow-lg",
+            "absolute z-10 mt-2 min-w-[11rem] rounded-panel border border-border bg-surface py-1 shadow-[0_4px_12px_rgba(15,23,32,0.1)]",
             align === "right" ? "right-0" : "left-0",
           ].join(" ")}
           onClick={() => setOpen(false)}
@@ -58,7 +71,8 @@ export function DropdownItem({ className, ...props }: ButtonHTMLAttributes<HTMLB
     <button
       type="button"
       className={[
-        "block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50",
+        "block w-full px-3 py-2 text-left text-sm text-ink-strong hover:bg-surface-sunk",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset",
         className,
       ]
         .filter(Boolean)
