@@ -3,8 +3,9 @@
 import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Invoice } from "@fleetip/contracts/billing";
-import type { Rental } from "@fleetip/contracts/rental";
+import type { Rental, RentalStatus } from "@fleetip/contracts/rental";
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
@@ -27,8 +28,24 @@ import { apiClient } from "../../../../lib/api-client";
 import { formatCurrencyINR, formatDate } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
 import { INVOICE_STATUS_MAP } from "../../billing/shared";
+import { MaintenancePanel } from "../../machines/panels";
 import { LogsheetPanel, TransportPanel } from "../panels";
 import { legalNextRentalStatuses, RENTAL_STATUS_MAP } from "../shared";
+
+/** "What happens next" guidance — a hint, not a workflow engine; mirrors
+ * legalNextRentalStatuses purely for copy, not enforcement. */
+function nextStepHint(status: RentalStatus): string | null {
+  switch (status) {
+    case "confirmed":
+      return "Next: plan mobilization (Transport tab), then mark Active once the machine is on site.";
+    case "active":
+      return "Keep logsheets current while the machine is on site. Mark Off-rent once the customer is done with it.";
+    case "off_rent":
+      return "Next: plan demobilization (Transport tab), then mark Completed once billing is settled.";
+    default:
+      return null;
+  }
+}
 
 interface Loaded {
   rental: Rental;
@@ -148,7 +165,10 @@ export default function RentalDetailPage() {
       disabled: isRenter,
       title: isRenter ? renterExplanation : undefined,
     },
+    { key: "maintenance", label: "Maintenance", disabled: isRenter, title: isRenter ? renterExplanation : undefined },
+    { key: "activity", label: "Activity" },
   ];
+  const hint = !isRenter ? nextStepHint(rental.status) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -181,6 +201,8 @@ export default function RentalDetailPage() {
             </Button>
           ))}
       </div>
+
+      {hint && <Alert tone="info">{hint}</Alert>}
 
       <Tabs items={tabs} active={tab} onChange={setTab} />
 
@@ -245,6 +267,23 @@ export default function RentalDetailPage() {
 
       {tab === "transport" && !isRenter && <TransportPanel organizationId={organizationId} rentalId={id} />}
       {tab === "logsheets" && !isRenter && <LogsheetPanel organizationId={organizationId} rentalId={id} />}
+
+      {tab === "maintenance" && !isRenter && machine && (
+        <MaintenancePanel organizationId={organizationId} machineId={machine.id} />
+      )}
+      {tab === "maintenance" && !isRenter && !machine && (
+        <EmptyState title="No machine on this rental" description="Maintenance is tracked per machine." />
+      )}
+
+      {tab === "activity" && (
+        <Card>
+          <p className="text-sm text-meta">
+            There is no per-rental activity/audit log yet — status changes, transport updates,
+            logsheet submissions and invoices don&apos;t write any log entry today. See the
+            frontend/backend gap report.
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

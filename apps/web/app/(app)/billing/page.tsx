@@ -3,6 +3,7 @@
 import type { Invoice, InvoiceDetail, InvoiceStatus } from "@fleetip/contracts/billing";
 import type { Rental } from "@fleetip/contracts/rental";
 import {
+  Badge,
   Button,
   EmptyState,
   ErrorState,
@@ -19,13 +20,28 @@ import {
 } from "@fleetip/ui";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { formatCurrencyINR, formatDate } from "../../../lib/format";
+import { daysUntil, formatCurrencyINR, formatDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
 import { CreateInvoiceDialog } from "./CreateInvoiceDialog";
 import { INVOICE_STATUS_MAP, legalNextInvoiceStatuses } from "./shared";
 
 type Filter = "all" | InvoiceStatus;
 const FILTERS: Filter[] = ["all", "draft", "issued", "overdue", "paid", "cancelled"];
+
+/**
+ * The `overdue` status transition is server-only (see shared.ts) — an
+ * invoice can sit at status "issued" past its due date until whatever job
+ * flips it. This badge is derived client-side straight from the real
+ * dueDate, independent of the stored status, so "due soon"/"overdue" is
+ * immediately visible even before that transition runs.
+ */
+function DueSoonBadge({ invoice }: { invoice: Invoice }) {
+  if (invoice.status !== "issued") return null;
+  const days = daysUntil(invoice.dueDate);
+  if (days < 0) return <Badge tone="danger">{Math.abs(days)}d overdue</Badge>;
+  if (days <= 7) return <Badge tone="warning">Due in {days}d</Badge>;
+  return null;
+}
 
 function InvoiceRow({
   invoice,
@@ -99,7 +115,10 @@ function InvoiceRow({
         <Td className="font-mono">{formatCurrencyINR(invoice.totalAmount)}</Td>
         <Td className="hidden font-mono sm:table-cell">{formatDate(invoice.dueDate)}</Td>
         <Td>
-          <StatusBadge status={invoice.status} map={INVOICE_STATUS_MAP} />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusBadge status={invoice.status} map={INVOICE_STATUS_MAP} />
+            <DueSoonBadge invoice={invoice} />
+          </div>
         </Td>
         <Td>
           <button type="button" onClick={() => void toggle()} className="text-xs font-medium text-accent-text">
