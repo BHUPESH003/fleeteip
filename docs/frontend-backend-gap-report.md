@@ -10,8 +10,13 @@ source, Missing capability, Required backend work, Priority, Reason.
 
 **Status**: Phases 1–10 of `feat/frontend-revamp` are complete (see
 `docs/frontend-revamp-summary.md`). Phases 8–9 (Billing, Responsive/a11y
-polish) didn't surface a new entry. This document remains open for any
-future phase or backend-hardening pass to add to.
+polish) didn't surface a new entry. The `feat/backend-mvp-gaps` pass then
+closed most of the entries below — each resolved entry now carries a
+**Resolved** block recording the endpoint/service, migration, permission,
+and tests added. See that branch's own summary in this document's final
+section for the full list of what shipped and what remains intentionally
+deferred. This document remains open for any future phase or
+backend-hardening pass to add to.
 
 ---
 
@@ -50,6 +55,19 @@ The approved design treats global search as a primary navigation aid for daily
 use ("speed of daily use"). Rendered as a disabled input with a "coming soon"
 tooltip in Phase 1 rather than faked, so it is visibly not yet wired up.
 
+### Resolved (feat/backend-mvp-gaps)
+`GET /organizations/:organizationId/search?q=` — new `SearchService`
+(`apps/api/src/modules/search/application/search-service.ts`), fanning out
+to a new `search()`/`searchBy*()` method on each of
+`MachineRepository`/`RequirementRepository`/`CommercialQuotationRepository`/
+`RentalRepository` (plain PostgreSQL `ILIKE`, no new search index/table).
+Each resource is gated by the exact permission its own domain already
+uses (`equipment.manage`, `rfq.manage`, `quotation.manage`/`.respond`,
+`rental.manage`/`.respond`) — no new permission added. New contract:
+`@fleetip/contracts/search` (`SearchResult`, `searchQuerySchema`). Tests:
+`apps/api/test/search-service.test.ts` (5 cases — per-org-type resource
+visibility, cross-tenant isolation, unknown org).
+
 ---
 
 ### Screen
@@ -87,6 +105,21 @@ Low
 
 ### Reason
 Tracked so "Soon" nav entries don't quietly rot into "later means never."
+
+### Resolved (feat/backend-mvp-gaps) — partial: backend aggregation only
+Added the org-wide standalone-screen aggregation each domain was missing —
+`GET /organizations/:organizationId/transport-records`,
+`GET /organizations/:organizationId/logsheets`,
+`GET /organizations/:organizationId/maintenance-records` — each one new
+`listByRentalCompanyOrganization`/`listByOrganization` repository method
+(a single SQL join, not a loop over the existing per-rental/per-machine
+list), gated by the existing `transport.manage`/`logsheet.manage`/
+`maintenance.manage` permissions. Catalogue's standalone screen needed no
+new read endpoint (`listCategories`/`listSubcategories`/`listProducts`
+were already org-agnostic global reads) but did gain write capability — see
+the new Catalogue administration entry below. Building the actual frontend
+pages for these four standalone screens remains separate, later frontend
+work — this entry only tracked the backend gap, which is now closed.
 
 ---
 
@@ -130,6 +163,19 @@ the Renter dashboard rather than faking a count or N+1-looping — the
 approved design wants "auction closed, awaiting your selection" to be one
 of the most prominent "waiting on you" items, so this is worth building.
 
+### Resolved (feat/backend-mvp-gaps)
+`GET /organizations/:organizationId/auctions` —
+`AuctionService.listAuctionsForOrganization`, branching on caller org type
+exactly like `RentalService.listRentals`
+(`auction.manage` → every auction owned; `auction.participate` → every
+auction joined). New `AuctionSummary` contract
+(`requirementProjectName`/`participantCount`/`ownParticipantStatus`/
+`needsAttention`). New repository methods `listByOwnerOrganization`/
+`listByParticipantOrganization`, each a single joined+aggregated SQL query
+(no N+1). No new permission — reuses `auction.manage`/`.participate`.
+Tests: `apps/api/test/auction-service.test.ts`
+(`listAuctionsForOrganization` describe block, 3 cases).
+
 ---
 
 ## Phase 3 — Machines
@@ -163,6 +209,18 @@ Medium
 Data entry mistakes are inevitable; today the only fix is deleting and
 re-registering, which isn't possible either (no delete endpoint). Rendered
 as a disabled "Edit" button with a tooltip rather than faked.
+
+### Resolved (feat/backend-mvp-gaps)
+`PATCH /organizations/:organizationId/machines/:machineId` —
+`EquipmentService.updateMachine`, gated by the existing `equipment.manage`
+permission. New contract `updateMachineRequestSchema`
+(assetCode/chassisNumber/registrationNumber/yearOfManufacture, at least one
+field required) — `organizationId`/`productId` deliberately not editable
+through this endpoint. `MachineRepositoryPort.assetCodeExists` gained an
+`excludeMachineId` param so a machine keeps its own asset code without
+tripping its own uniqueness check. Tests: `apps/api/test/equipment-service.test.ts`
+(4 new cases — update fields, duplicate asset code, self-reuse, cross-org
+NotFoundError).
 
 ---
 
@@ -263,6 +321,20 @@ Medium
 Same class of gap as Machines' missing edit endpoint — data entry mistakes
 are inevitable and today the only recourse is closing and re-posting.
 Rendered as a disabled "Edit" button with a tooltip rather than faked.
+
+### Resolved (feat/backend-mvp-gaps)
+`PATCH /organizations/:organizationId/requirements/:requirementId` —
+`RequirementService.updateRequirement`, gated by the existing `rfq.manage`
+permission and restricted to `status === "open"`. New contract
+`updateRequirementRequestSchema` (capacity/capacityUnit/quantity/
+projectName/projectLocation/requestedStartDate/expectedDurationValue/
+expectedDurationUnit/shiftRequirement/validityDate/notes) —
+`productSubcategoryId`/`status` deliberately excluded. New repository
+method `updateFields`. Tests: `apps/api/test/requirement-service.test.ts`
+(3 new cases — edit while open, reject once closed, cross-org
+NotFoundError). See `docs/backend-hardening-report.md` for a related
+observation: editing is not yet blocked once a QuotationResponse/Auction
+already exists against the Requirement.
 
 ---
 
@@ -377,6 +449,16 @@ Discovered live while building this phase: a Renter's quotation detail
 page currently shows "—" for machine identity rather than fabricate it by
 calling an endpoint the Renter has no permission for.
 
+### Resolved (feat/backend-mvp-gaps)
+`CommercialQuotation` gained `machineAssetCode`/`productName`, resolved
+server-side only when the caller is the quotation's Renter party (null for
+the Rental Company) — same pattern as `Rental.machineAssetCode`/
+`rentalCompanyOrganizationName`. `CommercialQuotationService` now also
+depends on `ProductRepositoryPort`. No new permission — reuses
+`quotation.respond`. Tests: `apps/api/test/commercial-quotation-service.test.ts`
+(2 new cases — Renter sees resolved fields on both `getQuotation` and
+`listQuotationsForRenter`, Rental Company sees null on the same record).
+
 ---
 
 ## Phase 7 — Rentals / Operations
@@ -421,7 +503,65 @@ utilization tabs are rendered disabled (with a tooltip explaining why) for a
 Renter rather than silently omitted or faked with placeholder data — this is
 the one place the established manage/respond pattern wasn't extended.
 
+### Resolved (feat/backend-mvp-gaps)
+New `transport.respond`/`logsheet.respond` permissions (Renter, read-only),
+seeded via migration `0019_seed_transport_and_logsheet_respond_permissions.ts`
+— exactly the `rental.respond`/`billing.respond` pattern.
+`TransportService.listByRental`/`LogsheetService.listByRental`/
+`UtilizationService.getRentalUtilization` now branch on caller org type,
+same shape as `RentalService.listRentals` — a Renter gets read-only access
+to their own rental's transport/logsheet/utilization records over the
+exact same routes (no new endpoints for the per-rental case).
+`UtilizationService.getMachineUtilization` deliberately NOT extended to
+Renters (it would leak fleet-wide activity across other customers' rental
+periods). create/update on Transport and Logsheet remain Rental-Company-
+only. Tests: `apps/api/test/transport-service.test.ts`,
+`logsheet-service.test.ts`, `utilization-service.test.ts` (2 new cases
+each — Renter reads own rental, Renter denied on a rental they aren't
+party to).
+
 ---
+
+## feat/backend-mvp-gaps — full pass summary
+
+Beyond the entries above (each already carrying its own **Resolved**
+block), this pass also added backend capability the frontend gap report
+had not yet surfaced an entry for — investigated directly against the
+task's own ground-truth requirements:
+
+- **Organization administration** — new `OrganizationService` +
+  `apps/api/src/modules/organizations/presentation/routes.ts` (this module
+  previously had no application/presentation layer at all): own-org profile
+  read, member list, invite-an-existing-user, role/permission listing.
+  Reuses the existing `organization.manage`/`membership.manage` permissions
+  (seeded since migration `0002`, never enforced by any route until now).
+  No org-profile *update* endpoint yet — no UI requirement or new column is
+  known to need one; deferred, not an oversight.
+- **Catalogue administration** — new create/update endpoints for
+  ProductCategory/ProductSubcategory/Product, gated by a new
+  `catalogue.manage` permission. See
+  `docs/backend-hardening-report.md` for the documented scoping limitation
+  (per-Rental-Company, not truly platform-scoped — no platform-admin tier
+  exists yet) and `docs/platform-admin-architecture-requirements.md` for
+  what a real fix requires. No delete endpoints (existing `ON DELETE
+  RESTRICT` foreign keys already prevent deleting a referenced record).
+- **Platform administration** — deliberately NOT implemented. Documented in
+  `docs/platform-admin-architecture-requirements.md` per the task's own
+  "document, don't build" instruction.
+
+### Deferred, unchanged from before this pass
+- Saved views (Machines list) — no UI requirement confirmed yet, low
+  priority, not attempted.
+- Machine detail Activity/audit-log tab — no UI requirement confirmed yet,
+  low priority, not attempted.
+- "N companies notified" on Requirement/Open market — an explicit product
+  decision (targeted broadcast + subscriptions), not a backend gap; not
+  attempted.
+- Quotation PDF export / share link — not in this pass's scope (section 3
+  of the task brief did not list it); not attempted.
+- Organization profile *update* (name/contact/address) — no columns exist
+  for contact/address and none were added (no confirmed UI requirement);
+  read-only profile view was added instead.
 
 ## Template for new entries
 
