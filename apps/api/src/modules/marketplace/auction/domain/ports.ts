@@ -60,12 +60,32 @@ export interface AuctionEventRecord {
   created_at: Date | string;
 }
 
+// One row per auction the calling organization owns, with the requirement's
+// project name and a participant-roster aggregate — a single joined query,
+// not a loop over per-auction lookups. See AuctionRepository.listByOwnerOrganization.
+export interface AuctionSummaryOwnerRow extends AuctionRecord {
+  requirement_project_name: string | null;
+  participant_count: number;
+  has_selected_participant: boolean;
+}
+
+// One row per auction the calling organization participates in, with its own
+// participant status resolved in the same query.
+export interface AuctionSummaryParticipantRow extends AuctionRecord {
+  requirement_project_name: string | null;
+  own_participant_status: ParticipantStatus;
+}
+
 export interface AuctionRepositoryPort {
   create(input: CreateAuctionInput): Promise<AuctionRecord>;
   // Plain read, no side effect — status may be stale by up to one
   // syncStatus() call's worth of lazy transition. Used for simple listings.
   findById(id: string): Promise<AuctionRecord | undefined>;
   listByRequirement(requirementId: string): Promise<AuctionRecord[]>;
+  // Org-scoped dashboard/list views — same "no syncStatus on a list" staleness
+  // tradeoff as listByRequirement (opening the detail page syncs it).
+  listByOwnerOrganization(organizationId: string): Promise<AuctionSummaryOwnerRow[]>;
+  listByParticipantOrganization(organizationId: string): Promise<AuctionSummaryParticipantRow[]>;
 
   // Lazily promotes scheduled -> live -> closed (computing and persisting the
   // winner) based on starts_at/ends_at vs. server time, inside a single

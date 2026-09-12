@@ -459,6 +459,12 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     listEvents: async () => {
       throw new Error("not used in this test");
     },
+    listByOwnerOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    listByParticipantOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

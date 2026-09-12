@@ -1,5 +1,5 @@
 import type { ParticipantStatus } from "@fleetip/contracts/auction";
-import type { Kysely, Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import { ConflictError, ValidationError } from "../../../../shared/errors.js";
 import { isImprovingBid, pickWinningBid } from "../domain/auction-rules.js";
@@ -9,6 +9,8 @@ import type {
   AuctionRecord,
   AuctionRepositoryPort,
   AuctionResultRecord,
+  AuctionSummaryOwnerRow,
+  AuctionSummaryParticipantRow,
   CreateAuctionInput,
 } from "../domain/ports.js";
 
@@ -82,6 +84,51 @@ export class AuctionRepository implements AuctionRepositoryPort {
       .orderBy("created_at", "desc")
       .execute();
     return rows.map(toAuctionRecord);
+  }
+
+  // One query: every auction this org owns, joined to its requirement (for
+  // the project name) and aggregated against auction_participants (count +
+  // whether one has been selected) — avoids looping listParticipants per
+  // auction for a dashboard/list screen.
+  async listByOwnerOrganization(organizationId: string): Promise<AuctionSummaryOwnerRow[]> {
+    const result = await sql<AuctionSummaryOwnerRow>`
+      SELECT
+        a.id, a.requirement_id, a.created_by_organization_id, a.bidding_direction,
+        a.base_price, a.max_bids_per_participant, a.starts_at, a.ends_at, a.status,
+        a.created_at, a.updated_at,
+        r.project_name AS requirement_project_name,
+        COUNT(ap.id)::int AS participant_count,
+        COALESCE(BOOL_OR(ap.status = 'selected'), false) AS has_selected_participant
+      FROM auctions a
+      JOIN requirements r ON r.id = a.requirement_id
+      LEFT JOIN auction_participants ap ON ap.auction_id = a.id
+      WHERE a.created_by_organization_id = ${organizationId}
+      GROUP BY a.id, r.project_name
+      ORDER BY a.created_at DESC
+    `.execute(this.db);
+    return result.rows;
+  }
+
+  // One query: every auction this org is a participant in, joined to its own
+  // participant row (never another organization's) and the requirement's
+  // project name.
+  async listByParticipantOrganization(
+    organizationId: string,
+  ): Promise<AuctionSummaryParticipantRow[]> {
+    const result = await sql<AuctionSummaryParticipantRow>`
+      SELECT
+        a.id, a.requirement_id, a.created_by_organization_id, a.bidding_direction,
+        a.base_price, a.max_bids_per_participant, a.starts_at, a.ends_at, a.status,
+        a.created_at, a.updated_at,
+        r.project_name AS requirement_project_name,
+        ap.status AS own_participant_status
+      FROM auctions a
+      JOIN requirements r ON r.id = a.requirement_id
+      JOIN auction_participants ap
+        ON ap.auction_id = a.id AND ap.rental_company_organization_id = ${organizationId}
+      ORDER BY a.created_at DESC
+    `.execute(this.db);
+    return result.rows;
   }
 
   // Locks the row, promotes scheduled -> live -> closed as needed, and

@@ -512,6 +512,12 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
     findResult: async (auctionId) => results.get(auctionId),
     listEvents: async (auctionId) => events.filter((e) => e.auction_id === auctionId),
+    listByOwnerOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    listByParticipantOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

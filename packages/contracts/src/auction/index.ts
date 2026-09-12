@@ -110,3 +110,24 @@ export const auctionDetailSchema = z.object({
   result: auctionResultSchema.nullable(),
 });
 export type AuctionDetail = z.infer<typeof auctionDetailSchema>;
+
+// Org-scoped list view for the dashboard/auction-list screens — one row per
+// auction the calling organization owns (Renter) or participates in (Rental
+// Company), with enough already-known/derivable information to render a
+// list and a "needs your attention" flag, without looping the per-auction
+// detail endpoint (N+1) over every auction.
+export const auctionSummarySchema = auctionSchema.extend({
+  requirementProjectName: z.string().nullable(),
+  // Owner (Renter) view: total participants across all statuses. Participant
+  // (Rental Company) view: withheld (null) — the roster/competitor count
+  // stays owner-only, same isolation rule as auctionDetailSchema's bids.
+  participantCount: z.number().int().nonnegative().nullable(),
+  // Participant (Rental Company) view: the caller's own participant status.
+  // Owner (Renter) view: null (not a participant).
+  ownParticipantStatus: participantStatusSchema.nullable(),
+  // Owner: true once closed with no participant selected yet — the auction
+  // needs an explicit selection. Participant: true once selected — the
+  // Rental Company may now formalize a CommercialQuotation.
+  needsAttention: z.boolean(),
+});
+export type AuctionSummary = z.infer<typeof auctionSummarySchema>;
