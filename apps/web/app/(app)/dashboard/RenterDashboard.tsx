@@ -1,5 +1,6 @@
 "use client";
 
+import type { AuctionSummary } from "@fleetip/contracts/auction";
 import type { NotificationListResponse } from "@fleetip/contracts/notification";
 import type { Organization } from "@fleetip/contracts/organization";
 import type { CommercialQuotation, QuotationResponse } from "@fleetip/contracts/quotation";
@@ -25,6 +26,7 @@ interface DashboardData {
   invoices: Invoice[];
   invoiceBalances: Map<string, number>;
   rentalCompanyNames: Map<string, string>;
+  auctions: AuctionSummary[];
   activity: ReturnType<typeof notificationsToActivity>;
 }
 
@@ -39,7 +41,7 @@ export function RenterDashboard() {
     let cancelled = false;
     void (async () => {
       try {
-        const [requirements, quotations, rentals, invoices, notifications, rentalCompanyOrgs] =
+        const [requirements, quotations, rentals, invoices, notifications, rentalCompanyOrgs, auctions] =
           await Promise.all([
             apiClient.listRequirements(organizationId) as Promise<Requirement[]>,
             apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
@@ -47,6 +49,7 @@ export function RenterDashboard() {
             apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
             apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
             apiClient.listRentalCompanyOrganizations(organizationId) as Promise<Organization[]>,
+            apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
           ]);
 
         const openRequirements = requirements.filter((r) => r.status === "open");
@@ -94,6 +97,7 @@ export function RenterDashboard() {
           invoices,
           invoiceBalances,
           rentalCompanyNames: new Map(rentalCompanyOrgs.map((org) => [org.id, org.name])),
+          auctions,
           activity: notificationsToActivity(notifications.notifications),
         });
       } catch (err) {
@@ -116,6 +120,7 @@ export function RenterDashboard() {
     invoices,
     invoiceBalances,
     rentalCompanyNames,
+    auctions,
     activity,
   } = data;
 
@@ -131,6 +136,8 @@ export function RenterDashboard() {
   const inPlayQuotations = quotations.filter(
     (q) => q.status === "sent" || q.status === "negotiating",
   );
+
+  const auctionsNeedingSelection = auctions.filter((a) => a.needsAttention);
 
   const unpaidInvoices = invoices.filter(
     (i) => i.status === "issued" || i.status === "overdue",
@@ -171,6 +178,13 @@ export function RenterDashboard() {
       value: formatCurrencyINR(payableTotal),
       note: dueSoonTotal > 0 ? `${formatCurrencyINR(dueSoonTotal)} due within ${INVOICE_DUE_SOON_DAYS}d` : undefined,
       noteTone: "warning",
+    },
+    {
+      label: "Auctions",
+      value: String(auctions.length),
+      note: auctionsNeedingSelection.length > 0 ? `${auctionsNeedingSelection.length} awaiting selection` : undefined,
+      noteTone: "warning",
+      href: "/auctions",
     },
   ];
 
@@ -213,6 +227,17 @@ export function RenterDashboard() {
           href: "/requirements",
         }),
       ),
+    ...auctionsNeedingSelection.map(
+      (a): AttentionItem => ({
+        ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,
+        title: "Auction closed — select a participant",
+        detail: `${a.requirementProjectName ?? "Requirement"} · ${a.participantCount ?? 0} participant${a.participantCount === 1 ? "" : "s"}`,
+        state: "Selection pending",
+        tone: "danger",
+        actionLabel: "Select",
+        href: `/auctions?requirementId=${a.requirementId}&auctionId=${a.id}`,
+      }),
+    ),
   ].slice(0, MAX_ATTENTION_ITEMS);
 
   const maxStage = Math.max(

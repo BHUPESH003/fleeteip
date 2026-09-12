@@ -3,6 +3,7 @@ import type {
   AuctionDetail,
   AuctionEvent,
   AuctionParticipant,
+  AuctionSummary,
   BiddingDirection,
 } from "@fleetip/contracts/auction";
 import type { CreateInvoiceRequest, Invoice, InvoiceDetail } from "@fleetip/contracts/billing";
@@ -318,6 +319,8 @@ export const apiClient = {
     ),
 
   // --- Auction ---
+  listAuctionsForOrganization: (organizationId: string) =>
+    apiRequest<AuctionSummary[]>(`/organizations/${organizationId}/auctions`, { method: "GET" }),
   listAuctionsForRequirement: (organizationId: string, requirementId: string) =>
     apiRequest<Auction[]>(
       `/organizations/${organizationId}/requirements/${requirementId}/auctions`,

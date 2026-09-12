@@ -1,5 +1,6 @@
 "use client";
 
+import type { AuctionSummary } from "@fleetip/contracts/auction";
 import type { Invoice } from "@fleetip/contracts/billing";
 import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
@@ -26,6 +27,7 @@ interface DashboardData {
   invoiceBalances: Map<string, number>;
   renterNames: Map<string, string>;
   productNames: Map<string, string>;
+  auctions: AuctionSummary[];
   activity: ReturnType<typeof notificationsToActivity>;
 }
 
@@ -40,7 +42,7 @@ export function RentalCompanyDashboard() {
     let cancelled = false;
     void (async () => {
       try {
-        const [machines, rentals, quotations, invoices, notifications, renterOrgs, products] =
+        const [machines, rentals, quotations, invoices, notifications, renterOrgs, products, auctions] =
           await Promise.all([
             apiClient.listMachines(organizationId) as Promise<Machine[]>,
             apiClient.listRentals(organizationId) as Promise<Rental[]>,
@@ -49,6 +51,7 @@ export function RentalCompanyDashboard() {
             apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
             apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
             apiClient.listProducts() as Promise<Product[]>,
+            apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
           ]);
 
         const unpaidInvoices = invoices.filter(
@@ -74,6 +77,7 @@ export function RentalCompanyDashboard() {
           invoiceBalances,
           renterNames: new Map(renterOrgs.map((org) => [org.id, org.name])),
           productNames: new Map(products.map((product) => [product.id, product.name])),
+          auctions,
           activity: notificationsToActivity(notifications.notifications),
         });
       } catch (err) {
@@ -96,8 +100,11 @@ export function RentalCompanyDashboard() {
     invoiceBalances,
     renterNames,
     productNames,
+    auctions,
     activity,
   } = data;
+
+  const auctionsSelected = auctions.filter((a) => a.needsAttention);
 
   const activeRentalMachineIds = new Set(
     rentals.filter((r) => r.status === "active" || r.status === "confirmed").map((r) => r.machineId),
@@ -163,6 +170,13 @@ export function RentalCompanyDashboard() {
       note: overdueTotal > 0 ? `${formatCurrencyINR(overdueTotal)} overdue` : undefined,
       noteTone: "danger",
     },
+    {
+      label: "Auctions",
+      value: String(auctions.length),
+      note: auctionsSelected.length > 0 ? `${auctionsSelected.length} selected — proceed` : undefined,
+      noteTone: "success",
+      href: "/auctions",
+    },
   ];
 
   const attention: AttentionItem[] = [
@@ -220,6 +234,17 @@ export function RentalCompanyDashboard() {
           href: "/rentals",
         }),
       ),
+    ...auctionsSelected.map(
+      (a): AttentionItem => ({
+        ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,
+        title: "Selected in auction",
+        detail: `${a.requirementProjectName ?? "Requirement"} · proceed to a commercial quotation`,
+        state: "Selected",
+        tone: "success",
+        actionLabel: "Open",
+        href: `/auctions?requirementId=${a.requirementId}&auctionId=${a.id}`,
+      }),
+    ),
   ].slice(0, MAX_ATTENTION_ITEMS);
 
   const fleetMix = [
