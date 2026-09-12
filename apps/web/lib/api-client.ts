@@ -7,7 +7,7 @@ import type {
 } from "@fleetip/contracts/auction";
 import type { CreateInvoiceRequest, Invoice, InvoiceDetail } from "@fleetip/contracts/billing";
 import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
-import type { Machine, MachineStatus } from "@fleetip/contracts/equipment";
+import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
 import type { Organization } from "@fleetip/contracts/organization";
 import type {
@@ -31,7 +31,11 @@ import type {
   RentalStatus,
   UpdateRentalTermsRequest,
 } from "@fleetip/contracts/rental";
-import type { CreateRequirementRequest, Requirement } from "@fleetip/contracts/rfq";
+import type {
+  CreateRequirementRequest,
+  Requirement,
+  UpdateRequirementRequest,
+} from "@fleetip/contracts/rfq";
 import type {
   CreateTransportRequest,
   TransportLeg,
@@ -136,6 +140,11 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  updateMachine: (organizationId: string, machineId: string, input: UpdateMachineRequest) =>
+    apiRequest<Machine>(`/organizations/${organizationId}/machines/${machineId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
 
   listRentals: (organizationId: string) =>
     apiRequest<Rental[]>(`/organizations/${organizationId}/rentals`, { method: "GET" }),
@@ -196,6 +205,15 @@ export const apiClient = {
       `/organizations/${organizationId}/requirements/${requirementId}/status`,
       { method: "PATCH", body: JSON.stringify({ status }) },
     ),
+  updateRequirement: (
+    organizationId: string,
+    requirementId: string,
+    input: UpdateRequirementRequest,
+  ) =>
+    apiRequest<Requirement>(`/organizations/${organizationId}/requirements/${requirementId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
   discoverRequirements: (organizationId: string) =>
     apiRequest<Requirement[]>(`/organizations/${organizationId}/requirement-discovery`, {
       method: "GET",

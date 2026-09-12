@@ -11,7 +11,6 @@ import {
   Card,
   EmptyState,
   ErrorState,
-  Input,
   LoadingState,
   PageHeader,
   StatusBadge,
@@ -25,10 +24,10 @@ import {
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { NotYetAvailableFormDialog } from "../../../../components/NotYetAvailableDialog";
 import { apiClient } from "../../../../lib/api-client";
 import { formatDate, formatRelativeTime } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
+import { EditRequirementDialog } from "../EditRequirementDialog";
 import { REQUIREMENT_STATUS_MAP, RESPONSE_STATUS_MAP, validityTone } from "../shared";
 
 interface Loaded {
@@ -129,7 +128,16 @@ export default function RequirementDetailPage() {
                 Close requirement
               </Button>
             )}
-            <Button variant="secondary" onClick={() => setEditOpen(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setEditOpen(true)}
+              disabled={requirement.status !== "open"}
+              title={
+                requirement.status !== "open"
+                  ? "Editing is only available while the requirement is open"
+                  : undefined
+              }
+            >
               Edit
             </Button>
             <Button onClick={() => router.push(`/auctions?requirementId=${requirement.id}`)}>
@@ -270,20 +278,17 @@ export default function RequirementDetailPage() {
         </div>
       </div>
 
-      <NotYetAvailableFormDialog
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        title="Edit requirement"
-        submitLabel="Save changes"
-        reason="Requirement editing has no backend endpoint yet — packages/contracts/src/rfq only exposes createRequirement and updateRequirementStatus (close/cancel). This form shows the intended fix for a project name, date or quantity typo while the requirement is still open; nothing entered here is saved. See the frontend/backend gap report."
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Project name" defaultValue={requirement.projectName ?? ""} disabled />
-          <Input label="Project location" defaultValue={requirement.projectLocation ?? ""} disabled />
-          <Input label="Quantity" type="number" defaultValue={requirement.quantity} disabled />
-          <Input label="Requested start date" type="date" defaultValue={requirement.requestedStartDate} disabled />
-        </div>
-      </NotYetAvailableFormDialog>
+      {organizationId && (
+        <EditRequirementDialog
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          organizationId={organizationId}
+          requirement={requirement}
+          onUpdated={(updated) =>
+            setData((prev) => (prev ? { ...prev, requirement: updated } : prev))
+          }
+        />
+      )}
     </div>
   );
 }
