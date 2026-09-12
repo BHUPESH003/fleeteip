@@ -183,6 +183,9 @@ function fakeRequirementRepository(
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

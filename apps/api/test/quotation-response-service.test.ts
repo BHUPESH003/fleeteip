@@ -153,6 +153,9 @@ function fakeRequirementRepository(requirements: RequirementRecord[] = [requirem
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
   };
   return port;
 }

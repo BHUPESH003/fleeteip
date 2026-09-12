@@ -150,6 +150,28 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
       requirements.set(id, updated);
       return updated;
     },
+    updateFields: async (id, updates) => {
+      const existing = requirements.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated: RequirementRecord = {
+        ...existing,
+        ...(updates.capacity !== undefined && { capacity: updates.capacity }),
+        ...(updates.capacityUnit !== undefined && { capacity_unit: updates.capacityUnit }),
+        ...(updates.quantity !== undefined && { quantity: updates.quantity }),
+        ...(updates.projectName !== undefined && { project_name: updates.projectName }),
+        ...(updates.projectLocation !== undefined && {
+          project_location: updates.projectLocation,
+        }),
+        ...(updates.requestedStartDate !== undefined && {
+          requested_start_date: updates.requestedStartDate,
+        }),
+        ...(updates.validityDate !== undefined && { validity_date: updates.validityDate }),
+        ...(updates.notes !== undefined && { notes: updates.notes }),
+        updated_at: new Date(),
+      };
+      requirements.set(id, updated);
+      return updated;
+    },
   };
 }
 
@@ -210,6 +232,34 @@ describe("RequirementService", () => {
     await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
     const list = await service.listRequirements("user-1", RENTER_ORG_ID);
     expect(list).toHaveLength(1);
+  });
+
+  it("allows editing fields while a requirement is open", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    const updated = await service.updateRequirement("user-1", RENTER_ORG_ID, requirement.id, {
+      projectName: "Metro Line 3",
+      quantity: 2,
+    });
+    expect(updated.projectName).toBe("Metro Line 3");
+    expect(updated.quantity).toBe(2);
+  });
+
+  it("rejects editing requirement fields once it is no longer open", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    await service.updateRequirementStatus("user-1", RENTER_ORG_ID, requirement.id, "closed");
+    await expect(
+      service.updateRequirement("user-1", RENTER_ORG_ID, requirement.id, { quantity: 3 }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("hides a requirement edit for a different organization behind NotFoundError", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    await expect(
+      service.updateRequirement("user-2", OTHER_RENTER_ORG_ID, requirement.id, { quantity: 3 }),
+    ).rejects.toThrow(NotFoundError);
   });
 
   it("rejects an illegal requirement status transition", async () => {

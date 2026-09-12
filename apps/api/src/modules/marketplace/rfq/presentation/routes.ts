@@ -1,5 +1,6 @@
 import {
   createRequirementRequestSchema,
+  updateRequirementRequestSchema,
   updateRequirementStatusRequestSchema,
 } from "@fleetip/contracts/rfq";
 import type { FastifyInstance } from "fastify";
@@ -65,6 +66,20 @@ export async function requirementRoutes(fastify: FastifyInstance): Promise<void>
         userId,
         request.params.organizationId,
         request.params.requirementId,
+      );
+    },
+  );
+
+  fastify.patch<{ Params: { organizationId: string; requirementId: string } }>(
+    "/organizations/:organizationId/requirements/:requirementId",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(updateRequirementRequestSchema, request.body);
+      return container.requirementService.updateRequirement(
+        userId,
+        request.params.organizationId,
+        request.params.requirementId,
+        body,
       );
     },
   );

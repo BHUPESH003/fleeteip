@@ -192,6 +192,9 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
       requirements.set(id, updated);
       return updated;
     },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

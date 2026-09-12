@@ -37,6 +37,22 @@ export interface CreateRequirementInput {
   notes?: string;
 }
 
+// Deliberately excludes productSubcategoryId/status — see
+// updateRequirementRequestSchema in packages/contracts/src/rfq/index.ts.
+export interface UpdateRequirementFieldsInput {
+  capacity?: number;
+  capacityUnit?: string;
+  quantity?: number;
+  projectName?: string;
+  projectLocation?: string;
+  requestedStartDate?: string;
+  expectedDurationValue?: number;
+  expectedDurationUnit?: RateUnit;
+  shiftRequirement?: string;
+  validityDate?: string;
+  notes?: string;
+}
+
 export interface RequirementRepositoryPort {
   create(input: CreateRequirementInput): Promise<RequirementRecord>;
   findById(id: string): Promise<RequirementRecord | undefined>;
@@ -45,4 +61,5 @@ export interface RequirementRepositoryPort {
   // See docs/marketplace-core-loop-design.md §4.
   listOpenForDiscovery(): Promise<RequirementRecord[]>;
   updateStatus(id: string, status: RequirementStatus): Promise<RequirementRecord>;
+  updateFields(id: string, updates: UpdateRequirementFieldsInput): Promise<RequirementRecord>;
 }

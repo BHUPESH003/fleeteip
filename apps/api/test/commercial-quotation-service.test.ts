@@ -247,6 +247,9 @@ function fakeRequirementRepository(
       store.set(id, updated);
       return updated;
     },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

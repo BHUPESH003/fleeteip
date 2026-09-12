@@ -53,3 +53,28 @@ export const updateRequirementStatusRequestSchema = z.object({
   status: z.enum(["closed", "cancelled"]),
 });
 export type UpdateRequirementStatusRequest = z.infer<typeof updateRequirementStatusRequestSchema>;
+
+// Corrects a posted Requirement's own fields while the market hasn't yet
+// acted on it — deliberately excludes productSubcategoryId (the equipment
+// type being requested is the Requirement's core identity, same reasoning
+// as Machine's productId staying fixed after registration) and status
+// (that's updateRequirementStatusRequestSchema's job). The service further
+// restricts this to status === "open" — see RequirementService.updateRequirement.
+export const updateRequirementRequestSchema = z
+  .object({
+    capacity: z.number().positive().optional(),
+    capacityUnit: z.string().min(1).max(20).optional(),
+    quantity: z.number().int().positive().optional(),
+    projectName: z.string().min(1).max(200).optional(),
+    projectLocation: z.string().min(1).max(200).optional(),
+    requestedStartDate: z.string().date().optional(),
+    expectedDurationValue: z.number().int().positive().optional(),
+    expectedDurationUnit: rateUnitSchema.optional(),
+    shiftRequirement: z.string().min(1).max(500).optional(),
+    validityDate: z.string().date().optional(),
+    notes: z.string().min(1).max(2000).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "Provide at least one field to update",
+  });
+export type UpdateRequirementRequest = z.infer<typeof updateRequirementRequestSchema>;

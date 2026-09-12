@@ -5,6 +5,7 @@ import type {
   CreateRequirementInput,
   RequirementRecord,
   RequirementRepositoryPort,
+  UpdateRequirementFieldsInput,
 } from "../domain/ports.js";
 
 const REQUIREMENT_COLUMNS = [
@@ -100,6 +101,39 @@ export class RequirementRepository implements RequirementRepositoryPort {
     const row = await this.db
       .updateTable("requirements")
       .set({ status, updated_at: new Date() })
+      .where("id", "=", id)
+      .returning(REQUIREMENT_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toRequirementRecord(row);
+  }
+
+  async updateFields(id: string, updates: UpdateRequirementFieldsInput) {
+    const row = await this.db
+      .updateTable("requirements")
+      .set({
+        ...(updates.capacity !== undefined && { capacity: updates.capacity }),
+        ...(updates.capacityUnit !== undefined && { capacity_unit: updates.capacityUnit }),
+        ...(updates.quantity !== undefined && { quantity: updates.quantity }),
+        ...(updates.projectName !== undefined && { project_name: updates.projectName }),
+        ...(updates.projectLocation !== undefined && {
+          project_location: updates.projectLocation,
+        }),
+        ...(updates.requestedStartDate !== undefined && {
+          requested_start_date: updates.requestedStartDate,
+        }),
+        ...(updates.expectedDurationValue !== undefined && {
+          expected_duration_value: updates.expectedDurationValue,
+        }),
+        ...(updates.expectedDurationUnit !== undefined && {
+          expected_duration_unit: updates.expectedDurationUnit,
+        }),
+        ...(updates.shiftRequirement !== undefined && {
+          shift_requirement: updates.shiftRequirement,
+        }),
+        ...(updates.validityDate !== undefined && { validity_date: updates.validityDate }),
+        ...(updates.notes !== undefined && { notes: updates.notes }),
+        updated_at: new Date(),
+      })
       .where("id", "=", id)
       .returning(REQUIREMENT_COLUMNS)
       .executeTakeFirstOrThrow();

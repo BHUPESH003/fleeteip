@@ -2,6 +2,7 @@ import type {
   CreateRequirementRequest,
   Requirement,
   RequirementStatus,
+  UpdateRequirementRequest,
 } from "@fleetip/contracts/rfq";
 import { ConflictError, NotFoundError } from "../../../../shared/errors.js";
 import type { ProductSubcategoryRepositoryPort } from "../../../catalogue/domain/ports.js";
@@ -87,6 +88,29 @@ export class RequirementService {
     await this.permissionService.requirePermission(userId, renterOrganizationId, "rfq.manage");
     const records = await this.requirementRepository.listByRenter(renterOrganizationId);
     return records.map(toRequirement);
+  }
+
+  // Restricted to status === "open" — once a Rental Company has responded,
+  // an auction has been created, or the Requirement is otherwise closed,
+  // changing its commercial meaning (capacity, quantity, dates, ...) out
+  // from under those in-flight actions is unsafe. Mirrors
+  // RentalService.updateRentalTerms's "only while confirmed" gate.
+  async updateRequirement(
+    userId: string,
+    renterOrganizationId: string,
+    requirementId: string,
+    updates: UpdateRequirementRequest,
+  ): Promise<Requirement> {
+    await this.permissionService.requirePermission(userId, renterOrganizationId, "rfq.manage");
+    const existing = await this.requirementRepository.findById(requirementId);
+    if (!existing || existing.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Requirement not found in this organization");
+    }
+    if (existing.status !== "open") {
+      throw new ConflictError("Requirement fields can only be edited while it is open");
+    }
+    const record = await this.requirementRepository.updateFields(requirementId, updates);
+    return toRequirement(record);
   }
 
   async updateRequirementStatus(
