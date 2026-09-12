@@ -19,7 +19,7 @@ import {
   Tr,
 } from "@fleetip/ui";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { useSession } from "../../../lib/session-context";
 import { CatalogueFormDialog } from "./AdminDialogs";
@@ -35,8 +35,9 @@ interface Loaded {
 type TabKey = "categories" | "subcategories" | "products";
 
 export default function CataloguePage() {
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const canManage = hasPermission("catalogue.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,28 +45,72 @@ export default function CataloguePage() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+
+  async function load(orgId: string) {
+    const [categories, products, machines] = await Promise.all([
+      apiClient.listProductCategories() as Promise<ProductCategory[]>,
+      apiClient.listProducts() as Promise<Product[]>,
+      apiClient.listMachines(orgId) as Promise<Machine[]>,
+    ]);
+    // Bounded fan-out over categories (a handful, platform-wide), same
+    // pattern already used by machines/page.tsx — not a per-machine
+    // N+1 loop.
+    const subcategoryLists = await Promise.all(
+      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+    );
+    setData({ categories, subcategories: subcategoryLists.flat(), products, machines });
+  }
 
   useEffect(() => {
     if (!organizationId) return;
     void (async () => {
       try {
-        const [categories, products, machines] = await Promise.all([
-          apiClient.listProductCategories() as Promise<ProductCategory[]>,
-          apiClient.listProducts() as Promise<Product[]>,
-          apiClient.listMachines(organizationId) as Promise<Machine[]>,
-        ]);
-        // Bounded fan-out over categories (a handful, platform-wide), same
-        // pattern already used by machines/page.tsx — not a per-machine
-        // N+1 loop.
-        const subcategoryLists = await Promise.all(
-          categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
-        );
-        setData({ categories, subcategories: subcategoryLists.flat(), products, machines });
+        await load(organizationId);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load catalogue");
       }
     })();
   }, [organizationId]);
+
+  async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setCreateError(null);
+    const form = new FormData(event.currentTarget);
+    setCreateSubmitting(true);
+    try {
+      if (tab === "categories") {
+        await apiClient.createProductCategory(organizationId, {
+          name: String(form.get("name") ?? ""),
+          code: String(form.get("code") ?? "").toUpperCase(),
+        });
+      } else if (tab === "subcategories") {
+        await apiClient.createProductSubcategory(organizationId, {
+          productCategoryId: String(form.get("productCategoryId") ?? ""),
+          name: String(form.get("name") ?? ""),
+          code: String(form.get("code") ?? "").toUpperCase(),
+        });
+      } else {
+        const capacity = form.get("capacity");
+        const capacityUnit = form.get("capacityUnit");
+        await apiClient.createProduct(organizationId, {
+          productSubcategoryId: String(form.get("productSubcategoryId") ?? ""),
+          name: String(form.get("name") ?? ""),
+          manufacturer: String(form.get("manufacturer") ?? ""),
+          ...(capacity ? { capacity: Number(capacity) } : {}),
+          ...(capacityUnit ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> } : {}),
+        });
+      }
+      setCreateOpen(false);
+      await load(organizationId);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Failed to create");
+    } finally {
+      setCreateSubmitting(false);
+    }
+  }
 
   const categoryById = useMemo(
     () => new Map((data?.categories ?? []).map((c) => [c.id, c])),
@@ -123,7 +168,7 @@ export default function CataloguePage() {
         actions={
           <Button
             onClick={() => setCreateOpen(true)}
-            title="Catalogue administration has no backend endpoint yet"
+            title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
           >
             {createLabel}
           </Button>
@@ -266,30 +311,61 @@ export default function CataloguePage() {
         active/inactive state is shown: the catalogue tables have no such column today.
       </p>
 
-      <CatalogueFormDialog open={createOpen} onClose={() => setCreateOpen(false)} title={createLabel} submitLabel={createLabel}>
+      <CatalogueFormDialog
+        open={createOpen}
+        onClose={() => {
+          setCreateOpen(false);
+          setCreateError(null);
+        }}
+        title={createLabel}
+        submitLabel={createLabel}
+        canManage={canManage}
+        onSubmit={handleCreateSubmit}
+        submitting={createSubmitting}
+        error={createError}
+      >
         {tab === "categories" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Category name" placeholder="e.g. Cranes" disabled />
-            <Input label="Code" placeholder="e.g. CRN" disabled />
+            <Input label="Category name" name="name" placeholder="e.g. Cranes" required />
+            <Input label="Code" name="code" placeholder="e.g. CRN" required />
           </div>
         )}
         {tab === "subcategories" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select label="Category" options={categories.map((c) => ({ value: c.id, label: c.name }))} disabled />
-            <Input label="Subcategory name" placeholder="e.g. Mobile crane" disabled />
-            <Input label="Code" placeholder="e.g. MCR" disabled />
+            <Select
+              label="Category"
+              name="productCategoryId"
+              required
+              options={[
+                { value: "", label: "Select…" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+            <Input label="Subcategory name" name="name" placeholder="e.g. Mobile crane" required />
+            <Input label="Code" name="code" placeholder="e.g. MCR" required />
           </div>
         )}
         {tab === "products" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select label="Subcategory" options={subcategories.map((s) => ({ value: s.id, label: s.name }))} disabled />
-            <Input label="Product name" disabled />
-            <Input label="Manufacturer" disabled />
-            <Input label="Capacity" type="number" disabled />
+            <Select
+              label="Subcategory"
+              name="productSubcategoryId"
+              required
+              options={[
+                { value: "", label: "Select…" },
+                ...subcategories.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+            />
+            <Input label="Product name" name="name" required />
+            <Input label="Manufacturer" name="manufacturer" required />
+            <Input label="Capacity" name="capacity" type="number" />
             <Select
               label="Capacity unit"
-              options={["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u }))}
-              disabled
+              name="capacityUnit"
+              options={[
+                { value: "", label: "—" },
+                ...["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u })),
+              ]}
             />
           </div>
         )}

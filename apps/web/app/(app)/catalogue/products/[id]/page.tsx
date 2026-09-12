@@ -21,7 +21,7 @@ import {
 } from "@fleetip/ui";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../../../lib/api-client";
 import { useSession } from "../../../../../lib/session-context";
 import { flattenSpecifications, MACHINE_STATUS_MAP } from "../../../machines/shared";
@@ -37,40 +37,73 @@ interface Loaded {
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const canSeeOwnFleet = currentMembership?.organization.organizationTypeCode === "rental_company";
+  const canManage = hasPermission("catalogue.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+
+  async function load() {
+    const products = (await apiClient.listProducts()) as Product[];
+    const product = products.find((p) => p.id === id);
+    if (!product) {
+      setError("Product not found");
+      return;
+    }
+    const categories = (await apiClient.listProductCategories()) as ProductCategory[];
+    const subcategoryLists = await Promise.all(
+      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+    );
+    const subcategory = subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null;
+    const category = categories.find((c) => c.id === subcategory?.productCategoryId) ?? null;
+    const ownMachines =
+      canSeeOwnFleet && organizationId
+        ? ((await apiClient.listMachines(organizationId)) as Machine[]).filter((m) => m.productId === id)
+        : [];
+    setData({ product, subcategory, category, ownMachines });
+  }
 
   useEffect(() => {
     void (async () => {
       try {
-        const products = (await apiClient.listProducts()) as Product[];
-        const product = products.find((p) => p.id === id);
-        if (!product) {
-          setError("Product not found");
-          return;
-        }
-        const categories = (await apiClient.listProductCategories()) as ProductCategory[];
-        const subcategoryLists = await Promise.all(
-          categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
-        );
-        const subcategory = subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null;
-        const category = categories.find((c) => c.id === subcategory?.productCategoryId) ?? null;
-        const ownMachines =
-          canSeeOwnFleet && organizationId
-            ? ((await apiClient.listMachines(organizationId)) as Machine[]).filter((m) => m.productId === id)
-            : [];
-        setData({ product, subcategory, category, ownMachines });
+        await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load product");
       }
     })();
   }, [id, organizationId, canSeeOwnFleet]);
+
+  async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setEditError(null);
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") ?? "");
+    const manufacturer = String(form.get("manufacturer") ?? "");
+    const capacity = form.get("capacity");
+    const capacityUnit = form.get("capacityUnit");
+    setEditSubmitting(true);
+    try {
+      await apiClient.updateProduct(organizationId, id, {
+        ...(name ? { name } : {}),
+        ...(manufacturer ? { manufacturer } : {}),
+        ...(capacity ? { capacity: Number(capacity) } : {}),
+        ...(capacityUnit ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> } : {}),
+      });
+      setEditOpen(false);
+      await load();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update product");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
 
   if (error) return <ErrorState message={error} />;
   if (!data) return <LoadingState label="Loading product…" />;
@@ -90,7 +123,11 @@ export default function ProductDetailPage() {
         title={`${product.manufacturer} ${product.name}`}
         description={formatCapacity(product) !== "—" ? `Capacity ${formatCapacity(product)}` : undefined}
         actions={
-          <Button variant="secondary" onClick={() => setEditOpen(true)} title="Catalogue administration has no backend endpoint yet">
+          <Button
+            variant="secondary"
+            onClick={() => setEditOpen(true)}
+            title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+          >
             Edit product
           </Button>
         }
@@ -167,20 +204,38 @@ export default function ProductDetailPage() {
         </button>
       </div>
 
-      <CatalogueFormDialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit product" submitLabel="Save changes">
+      <CatalogueFormDialog
+        open={editOpen}
+        onClose={() => {
+          setEditOpen(false);
+          setEditError(null);
+        }}
+        title="Edit product"
+        submitLabel="Save changes"
+        canManage={canManage}
+        onSubmit={handleEditSubmit}
+        submitting={editSubmitting}
+        error={editError}
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Product name" defaultValue={product.name} disabled />
-          <Input label="Manufacturer" defaultValue={product.manufacturer} disabled />
-          <Input label="Capacity" type="number" defaultValue={product.capacity ?? undefined} disabled />
+          <Input label="Product name" name="name" defaultValue={product.name} required />
+          <Input label="Manufacturer" name="manufacturer" defaultValue={product.manufacturer} required />
+          <Input label="Capacity" name="capacity" type="number" defaultValue={product.capacity ?? undefined} />
           <Select
             label="Capacity unit"
-            options={["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u }))}
+            name="capacityUnit"
+            options={[
+              { value: "", label: "—" },
+              ...["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u })),
+            ]}
             defaultValue={product.capacityUnit ?? ""}
-            disabled
           />
         </div>
         {specRows.length > 0 && (
           <div className="grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2">
+            <p className="col-span-full text-xs text-meta-light">
+              Specifications aren&apos;t editable through this form yet (shown read-only below).
+            </p>
             {specRows.map((row) => (
               <Input key={row.label} label={row.label} defaultValue={row.value} disabled />
             ))}

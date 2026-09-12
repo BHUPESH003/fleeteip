@@ -19,8 +19,9 @@ import {
 } from "@fleetip/ui";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../../../lib/api-client";
+import { useSession } from "../../../../../lib/session-context";
 import { CatalogueConfirmDialog, CatalogueFormDialog } from "../../AdminDialogs";
 import { formatCapacity } from "../../shared";
 
@@ -32,38 +33,94 @@ interface Loaded {
 
 export default function SubcategoryDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { currentMembership, hasPermission } = useSession();
+  const organizationId = currentMembership?.organizationId;
+  const canManage = hasPermission("catalogue.manage");
+
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [addProductOpen, setAddProductOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [addProductError, setAddProductError] = useState<string | null>(null);
+  const [addProductSubmitting, setAddProductSubmitting] = useState(false);
+
+  async function load() {
+    const categories = (await apiClient.listProductCategories()) as ProductCategory[];
+    // No get-subcategory-by-id endpoint — resolve it by fanning out over
+    // categories (a handful, platform-wide), same bounded pattern as
+    // machines/page.tsx and the catalogue overview.
+    const subcategoryLists = await Promise.all(
+      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+    );
+    const subcategory = subcategoryLists.flat().find((s) => s.id === id);
+    if (!subcategory) {
+      setError("Subcategory not found");
+      return;
+    }
+    const products = (await apiClient.listProducts(id)) as Product[];
+    setData({
+      subcategory,
+      category: categories.find((c) => c.id === subcategory.productCategoryId) ?? null,
+      products,
+    });
+  }
 
   useEffect(() => {
     void (async () => {
       try {
-        const categories = (await apiClient.listProductCategories()) as ProductCategory[];
-        // No get-subcategory-by-id endpoint — resolve it by fanning out over
-        // categories (a handful, platform-wide), same bounded pattern as
-        // machines/page.tsx and the catalogue overview.
-        const subcategoryLists = await Promise.all(
-          categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
-        );
-        const subcategory = subcategoryLists.flat().find((s) => s.id === id);
-        if (!subcategory) {
-          setError("Subcategory not found");
-          return;
-        }
-        const products = (await apiClient.listProducts(id)) as Product[];
-        setData({
-          subcategory,
-          category: categories.find((c) => c.id === subcategory.productCategoryId) ?? null,
-          products,
-        });
+        await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load subcategory");
       }
     })();
   }, [id]);
+
+  async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setEditError(null);
+    const form = new FormData(event.currentTarget);
+    setEditSubmitting(true);
+    try {
+      await apiClient.updateProductSubcategory(organizationId, id, {
+        name: String(form.get("name") ?? ""),
+      });
+      setEditOpen(false);
+      await load();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update subcategory");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  async function handleAddProductSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setAddProductError(null);
+    const form = new FormData(event.currentTarget);
+    const capacity = form.get("capacity");
+    const capacityUnit = form.get("capacityUnit");
+    setAddProductSubmitting(true);
+    try {
+      await apiClient.createProduct(organizationId, {
+        productSubcategoryId: id,
+        name: String(form.get("name") ?? ""),
+        manufacturer: String(form.get("manufacturer") ?? ""),
+        ...(capacity ? { capacity: Number(capacity) } : {}),
+        ...(capacityUnit ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> } : {}),
+      });
+      setAddProductOpen(false);
+      await load();
+    } catch (err) {
+      setAddProductError(err instanceof Error ? err.message : "Failed to add product");
+    } finally {
+      setAddProductSubmitting(false);
+    }
+  }
 
   if (error) return <ErrorState message={error} />;
   if (!data) return <LoadingState label="Loading subcategory…" />;
@@ -82,10 +139,17 @@ export default function SubcategoryDetailPage() {
         description={`${products.length} products`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setEditOpen(true)} title="Catalogue administration has no backend endpoint yet">
+            <Button
+              variant="secondary"
+              onClick={() => setEditOpen(true)}
+              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+            >
               Edit subcategory
             </Button>
-            <Button onClick={() => setAddProductOpen(true)} title="Catalogue administration has no backend endpoint yet">
+            <Button
+              onClick={() => setAddProductOpen(true)}
+              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+            >
               Add product
             </Button>
           </div>
@@ -137,22 +201,49 @@ export default function SubcategoryDetailPage() {
         </button>
       </div>
 
-      <CatalogueFormDialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit subcategory" submitLabel="Save changes">
+      <CatalogueFormDialog
+        open={editOpen}
+        onClose={() => {
+          setEditOpen(false);
+          setEditError(null);
+        }}
+        title="Edit subcategory"
+        submitLabel="Save changes"
+        canManage={canManage}
+        onSubmit={handleEditSubmit}
+        submitting={editSubmitting}
+        error={editError}
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Subcategory name" defaultValue={subcategory.name} disabled />
-          <Input label="Code" defaultValue={subcategory.code} disabled />
+          <Input label="Subcategory name" name="name" defaultValue={subcategory.name} required />
+          <Input label="Code" defaultValue={subcategory.code} disabled title="Code is immutable once created" />
         </div>
       </CatalogueFormDialog>
 
-      <CatalogueFormDialog open={addProductOpen} onClose={() => setAddProductOpen(false)} title="Add product" submitLabel="Add product">
+      <CatalogueFormDialog
+        open={addProductOpen}
+        onClose={() => {
+          setAddProductOpen(false);
+          setAddProductError(null);
+        }}
+        title="Add product"
+        submitLabel="Add product"
+        canManage={canManage}
+        onSubmit={handleAddProductSubmit}
+        submitting={addProductSubmitting}
+        error={addProductError}
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Product name" disabled />
-          <Input label="Manufacturer" disabled />
-          <Input label="Capacity" type="number" disabled />
+          <Input label="Product name" name="name" required />
+          <Input label="Manufacturer" name="manufacturer" required />
+          <Input label="Capacity" name="capacity" type="number" />
           <Select
             label="Capacity unit"
-            options={["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u }))}
-            disabled
+            name="capacityUnit"
+            options={[
+              { value: "", label: "—" },
+              ...["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u })),
+            ]}
           />
         </div>
       </CatalogueFormDialog>

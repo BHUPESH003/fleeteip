@@ -18,8 +18,9 @@ import {
 } from "@fleetip/ui";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../../../lib/api-client";
+import { useSession } from "../../../../../lib/session-context";
 import { CatalogueConfirmDialog, CatalogueFormDialog } from "../../AdminDialogs";
 
 interface Loaded {
@@ -30,31 +31,81 @@ interface Loaded {
 
 export default function CategoryDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { currentMembership, hasPermission } = useSession();
+  const organizationId = currentMembership?.organizationId;
+  const canManage = hasPermission("catalogue.manage");
+
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [addSubOpen, setAddSubOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [addSubError, setAddSubError] = useState<string | null>(null);
+  const [addSubSubmitting, setAddSubSubmitting] = useState(false);
+
+  async function load() {
+    const [categories, products] = await Promise.all([
+      apiClient.listProductCategories() as Promise<ProductCategory[]>,
+      apiClient.listProducts() as Promise<Product[]>,
+    ]);
+    const category = categories.find((c) => c.id === id);
+    if (!category) {
+      setError("Category not found");
+      return;
+    }
+    const subcategories = (await apiClient.listProductSubcategories(id)) as ProductSubcategory[];
+    setData({ category, subcategories, products });
+  }
 
   useEffect(() => {
     void (async () => {
       try {
-        const [categories, products] = await Promise.all([
-          apiClient.listProductCategories() as Promise<ProductCategory[]>,
-          apiClient.listProducts() as Promise<Product[]>,
-        ]);
-        const category = categories.find((c) => c.id === id);
-        if (!category) {
-          setError("Category not found");
-          return;
-        }
-        const subcategories = (await apiClient.listProductSubcategories(id)) as ProductSubcategory[];
-        setData({ category, subcategories, products });
+        await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load category");
       }
     })();
   }, [id]);
+
+  async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setEditError(null);
+    const form = new FormData(event.currentTarget);
+    setEditSubmitting(true);
+    try {
+      await apiClient.updateProductCategory(organizationId, id, { name: String(form.get("name") ?? "") });
+      setEditOpen(false);
+      await load();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update category");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  async function handleAddSubSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setAddSubError(null);
+    const form = new FormData(event.currentTarget);
+    setAddSubSubmitting(true);
+    try {
+      await apiClient.createProductSubcategory(organizationId, {
+        productCategoryId: id,
+        name: String(form.get("name") ?? ""),
+        code: String(form.get("code") ?? "").toUpperCase(),
+      });
+      setAddSubOpen(false);
+      await load();
+    } catch (err) {
+      setAddSubError(err instanceof Error ? err.message : "Failed to add subcategory");
+    } finally {
+      setAddSubSubmitting(false);
+    }
+  }
 
   if (error) return <ErrorState message={error} />;
   if (!data) return <LoadingState label="Loading category…" />;
@@ -71,10 +122,17 @@ export default function CategoryDetailPage() {
         description={`${subcategories.length} subcategories · ${productCount} products`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setEditOpen(true)} title="Catalogue administration has no backend endpoint yet">
+            <Button
+              variant="secondary"
+              onClick={() => setEditOpen(true)}
+              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+            >
               Edit category
             </Button>
-            <Button onClick={() => setAddSubOpen(true)} title="Catalogue administration has no backend endpoint yet">
+            <Button
+              onClick={() => setAddSubOpen(true)}
+              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+            >
               Add subcategory
             </Button>
           </div>
@@ -133,17 +191,41 @@ export default function CategoryDetailPage() {
         </button>
       </div>
 
-      <CatalogueFormDialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit category" submitLabel="Save changes">
+      <CatalogueFormDialog
+        open={editOpen}
+        onClose={() => {
+          setEditOpen(false);
+          setEditError(null);
+        }}
+        title="Edit category"
+        submitLabel="Save changes"
+        canManage={canManage}
+        onSubmit={handleEditSubmit}
+        submitting={editSubmitting}
+        error={editError}
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Category name" defaultValue={category.name} disabled />
-          <Input label="Code" defaultValue={category.code} disabled />
+          <Input label="Category name" name="name" defaultValue={category.name} required />
+          <Input label="Code" defaultValue={category.code} disabled title="Code is immutable once created" />
         </div>
       </CatalogueFormDialog>
 
-      <CatalogueFormDialog open={addSubOpen} onClose={() => setAddSubOpen(false)} title="Add subcategory" submitLabel="Add subcategory">
+      <CatalogueFormDialog
+        open={addSubOpen}
+        onClose={() => {
+          setAddSubOpen(false);
+          setAddSubError(null);
+        }}
+        title="Add subcategory"
+        submitLabel="Add subcategory"
+        canManage={canManage}
+        onSubmit={handleAddSubSubmit}
+        submitting={addSubSubmitting}
+        error={addSubError}
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Subcategory name" placeholder="e.g. Mobile crane" disabled />
-          <Input label="Code" placeholder="e.g. MCR" disabled />
+          <Input label="Subcategory name" name="name" placeholder="e.g. Mobile crane" required />
+          <Input label="Code" name="code" placeholder="e.g. MCR" required />
         </div>
       </CatalogueFormDialog>
 

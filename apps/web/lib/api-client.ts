@@ -7,7 +7,17 @@ import type {
   BiddingDirection,
 } from "@fleetip/contracts/auction";
 import type { CreateInvoiceRequest, Invoice, InvoiceDetail } from "@fleetip/contracts/billing";
-import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
+import type {
+  CreateProductCategoryRequest,
+  CreateProductRequest,
+  CreateProductSubcategoryRequest,
+  Product,
+  ProductCategory,
+  ProductSubcategory,
+  UpdateProductCategoryRequest,
+  UpdateProductRequest,
+  UpdateProductSubcategoryRequest,
+} from "@fleetip/contracts/catalogue";
 import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
 import type { Organization } from "@fleetip/contracts/organization";
@@ -128,6 +138,44 @@ export const apiClient = {
   listProducts: (subcategoryId?: string) =>
     apiRequest<Product[]>(`/products${subcategoryId ? `?subcategoryId=${subcategoryId}` : ""}`, {
       method: "GET",
+    }),
+  createProductCategory: (organizationId: string, input: CreateProductCategoryRequest) =>
+    apiRequest<ProductCategory>(`/organizations/${organizationId}/product-categories`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProductCategory: (
+    organizationId: string,
+    categoryId: string,
+    input: UpdateProductCategoryRequest,
+  ) =>
+    apiRequest<ProductCategory>(
+      `/organizations/${organizationId}/product-categories/${categoryId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  createProductSubcategory: (organizationId: string, input: CreateProductSubcategoryRequest) =>
+    apiRequest<ProductSubcategory>(`/organizations/${organizationId}/product-subcategories`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProductSubcategory: (
+    organizationId: string,
+    subcategoryId: string,
+    input: UpdateProductSubcategoryRequest,
+  ) =>
+    apiRequest<ProductSubcategory>(
+      `/organizations/${organizationId}/product-subcategories/${subcategoryId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  createProduct: (organizationId: string, input: CreateProductRequest) =>
+    apiRequest<Product>(`/organizations/${organizationId}/products`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProduct: (organizationId: string, productId: string, input: UpdateProductRequest) =>
+    apiRequest<Product>(`/organizations/${organizationId}/products/${productId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
     }),
   listMachines: (organizationId: string) =>
     apiRequest<Machine[]>(`/organizations/${organizationId}/machines`, { method: "GET" }),
