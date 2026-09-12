@@ -227,6 +227,75 @@ an honest "not available yet" note rather than fabricated events.
 
 ---
 
+## Phase 4 — Marketplace / Requirements
+
+### Screen
+Requirement detail (Renter)
+
+### UI requirement
+An "Edit" action on a posted requirement (correct project name, dates,
+quantity, etc. after posting).
+
+### Current backend support
+None
+
+### Existing source
+`packages/contracts/src/rfq/index.ts` only exposes `createRequirement` and
+`updateRequirementStatus` (status transition only, `closed`/`cancelled`).
+
+### Missing capability
+`PATCH .../requirements/:id` (or similar) to update the requirement's own
+fields while still `open`.
+
+### Required backend work
+Add an update endpoint + service method, renter-scoped like
+`updateRequirementStatus`, presumably restricted to `status === 'open'`.
+
+### Priority
+Medium
+
+### Reason
+Same class of gap as Machines' missing edit endpoint — data entry mistakes
+are inevitable and today the only recourse is closing and re-posting.
+Rendered as a disabled "Edit" button with a tooltip rather than faked.
+
+---
+
+### Screen
+Open market (Rental Company) / Requirement detail (Renter)
+
+### UI requirement
+"N rental companies notified" and "N companies have not responded yet —
+[names]" (which specific companies were asked and haven't replied).
+
+### Current backend support
+None — not a gap so much as a documented design constraint
+
+### Existing source
+`apps/api/src/modules/marketplace/quotation-response/application/
+notification-service.ts`'s own comments: Requirement creation is a
+broadcast to the whole discovery marketplace, "no single well-defined
+recipient" — there is no per-requirement notify-list to persist, so there
+is nothing to query for "who was asked but hasn't answered."
+
+### Missing capability
+A notify-list would require either a subscription/matching feature (rental
+companies opt into categories) or logging every discovery-page view as an
+implicit "notified" event — both are real feature decisions, not small gaps.
+
+### Required backend work
+Out of scope for a gap fix — this is a product decision (would FleetIP
+want targeted broadcast + subscriptions?), not an oversight.
+
+### Priority
+Low
+
+### Reason
+Recorded so a future session doesn't reintroduce the mock's "notified"
+framing without first deciding whether targeted broadcast is in scope.
+
+---
+
 ## Template for new entries
 
 ```
