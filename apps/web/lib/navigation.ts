@@ -26,6 +26,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/", group: "Overview" },
   { label: "Machines", href: "/machines", group: "Fleet", requiredPermissions: ["equipment.manage"] },
+  { label: "Catalogue", href: "/catalogue", group: "Fleet", requiredPermissions: ["equipment.manage"] },
   // Same route, two headings: a Renter sees their own posted requirements
   // ("Requirements"); a Rental Company sees the marketplace-wide discover
   // list ("Open market"). Each is gated by the one permission that only
@@ -81,7 +82,6 @@ export interface PlannedNavItem {
  * design; never linked, so nothing is fabricated.
  */
 export const PLANNED_NAV_ITEMS: PlannedNavItem[] = [
-  { label: "Catalogue", group: "Fleet", requiredPermissions: ["equipment.manage"] },
   { label: "Transport", group: "Operations", requiredPermissions: ["transport.manage"] },
   { label: "Logsheets", group: "Operations", requiredPermissions: ["logsheet.manage"] },
   { label: "Maintenance", group: "Operations", requiredPermissions: ["maintenance.manage"] },
