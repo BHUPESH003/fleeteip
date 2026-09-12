@@ -52,6 +52,7 @@ import type {
   Requirement,
   UpdateRequirementRequest,
 } from "@fleetip/contracts/rfq";
+import type { SearchResult } from "@fleetip/contracts/search";
 import type {
   CreateTransportRequest,
   TransportLeg,
@@ -568,6 +569,13 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  // --- Search ---
+  search: (organizationId: string, q: string) =>
+    apiRequest<SearchResult[]>(
+      `/organizations/${organizationId}/search?q=${encodeURIComponent(q)}`,
+      { method: "GET" },
+    ),
 
   // --- Notifications ---
   listNotifications: (organizationId: string) =>

@@ -1,6 +1,7 @@
 "use client";
 
 import { Dropdown, DropdownItem } from "@fleetip/ui";
+import { GlobalSearch } from "./GlobalSearch";
 import { NotificationBell } from "./NotificationBell";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { useSession } from "../lib/session-context";
@@ -32,19 +33,9 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
       >
         ☰
       </button>
-      <div
-        className="hidden h-8 max-w-[400px] flex-1 cursor-not-allowed items-center gap-1.5 rounded-control border border-border bg-surface-sunk px-2.5 md:flex"
-        title="Global search across machines, requirements, quotations and rentals isn't available yet — see the frontend/backend gap report"
-      >
-        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0 text-meta-light" fill="none" aria-hidden="true">
-          <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-          <path d="M11 11L14.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-        <span className="truncate text-xs text-meta-light">{searchPlaceholder}</span>
-        <span className="ml-auto shrink-0 rounded-xs bg-neutral-bg px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-neutral">
-          Soon
-        </span>
-      </div>
+      {currentMembership && (
+        <GlobalSearch organizationId={currentMembership.organizationId} placeholder={searchPlaceholder} />
+      )}
       <div className="ml-auto flex items-center gap-3">
         <OrganizationSwitcher />
         <NotificationBell />
