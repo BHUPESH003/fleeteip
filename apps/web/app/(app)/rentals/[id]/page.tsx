@@ -6,7 +6,6 @@ import type { Invoice } from "@fleetip/contracts/billing";
 import type { Logsheet, RentalUtilization } from "@fleetip/contracts/logsheet";
 import type { Rental } from "@fleetip/contracts/rental";
 import type { TransportLeg, TransportRecord, TransportStatus } from "@fleetip/contracts/transport";
-import type { StatusMap } from "@fleetip/ui";
 import {
   Button,
   Card,
@@ -30,17 +29,10 @@ import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../../lib/api-client";
 import { formatCurrencyINR, formatDate } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
+import { INVOICE_STATUS_MAP } from "../../billing/shared";
 import { legalNextRentalStatuses, legalNextTransportStatuses, RENTAL_STATUS_MAP, TRANSPORT_STATUS_MAP } from "../shared";
 
 const LEGS: TransportLeg[] = ["mobilization", "demobilization"];
-
-const INVOICE_STATUS_MAP: StatusMap = {
-  draft: { label: "Draft", tone: "neutral" },
-  issued: { label: "Issued", tone: "warning" },
-  paid: { label: "Paid", tone: "success" },
-  overdue: { label: "Overdue", tone: "danger" },
-  cancelled: { label: "Cancelled", tone: "danger" },
-};
 
 interface Loaded {
   rental: Rental;
