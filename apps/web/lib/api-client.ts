@@ -20,7 +20,12 @@ import type {
 } from "@fleetip/contracts/catalogue";
 import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
-import type { Organization } from "@fleetip/contracts/organization";
+import type {
+  InviteMemberRequest,
+  Organization,
+  OrganizationMember,
+  RoleWithPermissions,
+} from "@fleetip/contracts/organization";
 import type {
   CreateMaintenanceRequest,
   MaintenanceRecord,
@@ -128,6 +133,23 @@ export const apiClient = {
     apiRequest("/auth/login", { method: "POST", body: JSON.stringify(input) }),
   logout: () => apiRequest("/auth/logout", { method: "POST" }),
   me: () => apiRequest("/auth/me", { method: "GET" }),
+
+  // --- Organization administration (tenant) ---
+  getOrganizationProfile: (organizationId: string) =>
+    apiRequest<Organization>(`/organizations/${organizationId}`, { method: "GET" }),
+  listOrganizationMembers: (organizationId: string) =>
+    apiRequest<OrganizationMember[]>(`/organizations/${organizationId}/members`, {
+      method: "GET",
+    }),
+  inviteMember: (organizationId: string, input: InviteMemberRequest) =>
+    apiRequest<OrganizationMember>(`/organizations/${organizationId}/members`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  listRolesAndPermissions: (organizationId: string) =>
+    apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/roles`, {
+      method: "GET",
+    }),
 
   listProductCategories: () =>
     apiRequest<ProductCategory[]>("/product-categories", { method: "GET" }),
