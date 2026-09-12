@@ -50,6 +50,7 @@ import type {
   RentalRepositoryPort,
 } from "../src/modules/marketplace/rental/domain/ports.js";
 import type { MachineRecord, MachineRepositoryPort } from "../src/modules/equipment/domain/ports.js";
+import type { ProductRecord, ProductRepositoryPort } from "../src/modules/catalogue/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
 import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import type {
@@ -564,6 +565,23 @@ function fakeMachineRepository(): MachineRepositoryPort {
   };
 }
 
+function fakeProductRepository(): ProductRepositoryPort {
+  const product: ProductRecord = {
+    id: "product-1",
+    product_subcategory_id: "subcategory-1",
+    manufacturer: "Caterpillar",
+    name: "320",
+    capacity: 20,
+    capacity_unit: "Ton",
+    specifications: null,
+    created_at: new Date(),
+  };
+  return {
+    listAll: async () => [product],
+    findById: async (id) => (id === product.id ? product : undefined),
+  };
+}
+
 function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
   return {
     create: async () => {
@@ -729,6 +747,7 @@ function buildHarness() {
     commercialQuotationRepository,
     quotationOfferRepository,
     machineRepository,
+    fakeProductRepository(),
     organizationRepository,
     requirementRepository,
     quotationResponseRepository,

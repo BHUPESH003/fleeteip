@@ -123,6 +123,7 @@ export const container = {
     commercialQuotationRepository,
     quotationOfferRepository,
     machineRepository,
+    productRepository,
     organizationRepository,
     requirementRepository,
     quotationResponseRepository,

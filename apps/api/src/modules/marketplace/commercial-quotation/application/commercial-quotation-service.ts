@@ -12,6 +12,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../../../../shared/errors.js";
+import type { ProductRepositoryPort } from "../../../catalogue/domain/ports.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type {
   OrganizationRepositoryPort,
@@ -31,7 +32,10 @@ import type {
   QuotationOfferRepositoryPort,
 } from "../domain/ports.js";
 
-function toQuotation(record: CommercialQuotationRecord): CommercialQuotation {
+function toQuotation(
+  record: CommercialQuotationRecord,
+  extra?: { machineAssetCode?: string | null; productName?: string | null },
+): CommercialQuotation {
   return {
     id: record.id,
     rentalCompanyOrganizationId: record.rental_company_organization_id,
@@ -64,6 +68,8 @@ function toQuotation(record: CommercialQuotationRecord): CommercialQuotation {
       : null,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
+    machineAssetCode: extra?.machineAssetCode ?? null,
+    productName: extra?.productName ?? null,
   };
 }
 
@@ -99,6 +105,7 @@ export class CommercialQuotationService {
     private readonly quotationRepository: CommercialQuotationRepositoryPort,
     private readonly offerRepository: QuotationOfferRepositoryPort,
     private readonly machineRepository: MachineRepositoryPort,
+    private readonly productRepository: ProductRepositoryPort,
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly requirementRepository: RequirementRepositoryPort,
     private readonly quotationResponseRepository: QuotationResponseRepositoryPort,
@@ -271,6 +278,26 @@ export class CommercialQuotationService {
     return records.map(toOrganization);
   }
 
+  // A Renter has no equipment.manage permission on the Rental Company's org,
+  // so it can never resolve the machine/product itself the way the Rental
+  // Company's own quotation view does — resolve it here instead. Same "look
+  // up server-side, don't grant the underlying permission" shape as
+  // RentalService.listRentals's machineAssetCode/rentalCompanyOrganizationName.
+  // Two lookups per quotation is the same order of cost as that existing
+  // precedent, not a new N+1 pattern — fine at this app's per-Renter
+  // quotation-count scale.
+  private async resolveMachineInfoForRenter(
+    record: CommercialQuotationRecord,
+  ): Promise<{ machineAssetCode: string | null; productName: string | null }> {
+    const machine = await this.machineRepository.findById(record.machine_id);
+    if (!machine) return { machineAssetCode: null, productName: null };
+    const product = await this.productRepository.findById(machine.product_id);
+    return {
+      machineAssetCode: machine.asset_code,
+      productName: product ? `${product.manufacturer} ${product.name}` : null,
+    };
+  }
+
   async getQuotation(
     userId: string,
     organizationId: string,
@@ -278,6 +305,9 @@ export class CommercialQuotationService {
   ): Promise<CommercialQuotation> {
     await this.requireQuotationPermission(userId, organizationId);
     const record = await this.loadAsParty(organizationId, quotationId);
+    if (record.renter_organization_id === organizationId) {
+      return toQuotation(record, await this.resolveMachineInfoForRenter(record));
+    }
     return toQuotation(record);
   }
 
@@ -309,7 +339,7 @@ export class CommercialQuotationService {
       "quotation.manage",
     );
     const records = await this.quotationRepository.listByRentalCompany(rentalCompanyOrganizationId);
-    return records.map(toQuotation);
+    return records.map((record) => toQuotation(record));
   }
 
   async listQuotationsForRenter(
@@ -322,7 +352,11 @@ export class CommercialQuotationService {
       "quotation.respond",
     );
     const records = await this.quotationRepository.listByRenter(renterOrganizationId);
-    return records.map(toQuotation);
+    return Promise.all(
+      records.map(async (record) =>
+        toQuotation(record, await this.resolveMachineInfoForRenter(record)),
+      ),
+    );
   }
 
   async updateTerms(

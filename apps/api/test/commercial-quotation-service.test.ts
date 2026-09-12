@@ -12,6 +12,7 @@ import type {
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
+import type { ProductRecord, ProductRepositoryPort } from "../src/modules/catalogue/domain/ports.js";
 import type {
   RequirementRecord,
   RequirementRepositoryPort,
@@ -119,6 +120,23 @@ function fakeNotificationService(): NotificationService {
     },
   };
   return new NotificationService(throwingRepo, fakePermissionService());
+}
+
+function fakeProductRepository(): ProductRepositoryPort {
+  const product: ProductRecord = {
+    id: "product-1",
+    product_subcategory_id: "subcategory-1",
+    manufacturer: "Caterpillar",
+    name: "320",
+    capacity: 20,
+    capacity_unit: "Ton",
+    specifications: null,
+    created_at: new Date(),
+  };
+  return {
+    listAll: async () => [product],
+    findById: async (id) => (id === product.id ? product : undefined),
+  };
 }
 
 function fakeOrganizationTypeRepository(
@@ -729,6 +747,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
     fakeCommercialQuotationRepository(),
     fakeQuotationOfferRepository(),
     fakeMachineRepository(machines),
+    fakeProductRepository(),
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
     fakeRequirementRepository(),
     fakeQuotationResponseRepository(),
@@ -935,6 +954,7 @@ describe("CommercialQuotationService", () => {
       fakeCommercialQuotationRepository(),
       fakeQuotationOfferRepository(),
       fakeMachineRepository(machines),
+      fakeProductRepository(),
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       requirementRepository,
       fakeQuotationResponseRepository(),
@@ -1063,6 +1083,36 @@ describe("CommercialQuotationService", () => {
     await expect(service.getQuotation("user-3", OTHER_RC_ORG_ID, quotation.id)).rejects.toThrow(
       NotFoundError,
     );
+  });
+
+  it("resolves machine asset code/product name for the Renter party, not the Rental Company", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const asRenter = await service.getQuotation("user-2", RENTER_ORG_ID, quotation.id);
+    expect(asRenter.machineAssetCode).toBe("EXC-001");
+    expect(asRenter.productName).toBe("Caterpillar 320");
+
+    const asRentalCompany = await service.getQuotation("user-1", RC_ORG_ID, quotation.id);
+    expect(asRentalCompany.machineAssetCode).toBeNull();
+    expect(asRentalCompany.productName).toBeNull();
+  });
+
+  it("resolves machine info on the Renter's own quotations list", async () => {
+    const service = buildService();
+    await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const list = await service.listQuotationsForRenter("user-2", RENTER_ORG_ID);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.machineAssetCode).toBe("EXC-001");
   });
 
   it("lazily expires a sent quotation once its validity date has passed", async () => {
