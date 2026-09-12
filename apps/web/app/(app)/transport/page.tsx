@@ -1,6 +1,7 @@
 "use client";
 
 import type { Rental } from "@fleetip/contracts/rental";
+import type { TransportRecord, TransportStatus } from "@fleetip/contracts/transport";
 import {
   Alert,
   Card,
@@ -10,6 +11,7 @@ import {
   LoadingState,
   PageHeader,
   Select,
+  StatusBadge,
   Table,
   Tbody,
   Td,
@@ -18,41 +20,77 @@ import {
   Tr,
 } from "@fleetip/ui";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { formatDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
+import { TRANSPORT_STATUS_MAP } from "../rentals/shared";
 import { TransportPanel } from "../rentals/panels";
 
+const STATUS_OPTIONS: { value: TransportStatus | ""; label: string }[] = [
+  { value: "", label: "All statuses" },
+  { value: "planned", label: "Planned" },
+  { value: "dispatched", label: "Dispatched" },
+  { value: "delivered", label: "Delivered" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
 /**
- * Standalone Transport workspace. There is no org-wide transport list
- * endpoint in this branch — apps/api's transport module only exposes
- * listTransportForRental (per-rental). Looping listTransportForRental
- * across every rental would be an N+1 client-side fetch faking an
- * aggregate that doesn't exist, so the list below stays an honest
- * not-yet-available state (real columns, no rows) and the real, working
- * path is the per-rental drill-down beneath it, which reuses the exact
- * TransportPanel already wired up on Rental detail.
+ * Standalone Transport workspace. `GET .../transport-records` now serves a
+ * real org-wide list (single joined query, gated by transport.manage) — the
+ * table below is the primary, real view. The per-rental picker underneath
+ * stays too: it's still the only place to plan a leg or mark it
+ * dispatched/delivered, since the standalone list is read-only.
  */
 export default function TransportPage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const canView = hasPermission("transport.manage");
 
+  const [records, setRecords] = useState<TransportRecord[] | null>(null);
   const [rentals, setRentals] = useState<Rental[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedRentalId, setSelectedRentalId] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TransportStatus | "">("");
 
   useEffect(() => {
     if (!organizationId || !canView) return;
     void (async () => {
       try {
-        setRentals((await apiClient.listRentals(organizationId)) as Rental[]);
+        const [recordList, rentalList] = await Promise.all([
+          apiClient.listTransportRecords(organizationId) as Promise<TransportRecord[]>,
+          apiClient.listRentals(organizationId) as Promise<Rental[]>,
+        ]);
+        setRecords(recordList);
+        setRentals(rentalList);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load rentals");
+        setError(err instanceof Error ? err.message : "Failed to load transport records");
       }
     })();
   }, [organizationId, canView]);
+
+  const rentalsById = useMemo(() => new Map((rentals ?? []).map((r) => [r.id, r])), [rentals]);
+
+  const filteredRecords = useMemo(() => {
+    if (!records) return [];
+    const q = search.trim().toLowerCase();
+    return records.filter((record) => {
+      if (statusFilter && record.status !== statusFilter) return false;
+      if (!q) return true;
+      const rental = rentalsById.get(record.rentalId);
+      const haystack = [
+        rental?.machineAssetCode,
+        rental?.clientSnapshot?.name,
+        record.pickupLocation,
+        record.destination,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [records, rentalsById, search, statusFilter]);
 
   if (!organizationId) return <LoadingState label="Loading…" />;
 
@@ -69,7 +107,7 @@ export default function TransportPage() {
   }
 
   if (error) return <ErrorState message={error} />;
-  if (!rentals) return <LoadingState label="Loading transport…" />;
+  if (!records || !rentals) return <LoadingState label="Loading transport…" />;
 
   const selectedRental = rentals.find((r) => r.id === selectedRentalId) ?? null;
 
@@ -81,8 +119,18 @@ export default function TransportPage() {
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Input placeholder="Machine, rental, route…" className="w-64" disabled title="Not available yet — see below" />
-        <Select className="w-40" disabled options={[{ value: "", label: "All statuses" }]} />
+        <Input
+          placeholder="Machine, rental, route…"
+          className="w-64"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <Select
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as TransportStatus | "")}
+          options={STATUS_OPTIONS}
+        />
       </div>
 
       <Table>
@@ -97,19 +145,50 @@ export default function TransportPage() {
           </Tr>
         </Thead>
         <Tbody>
-          <Tr>
-            <Td colSpan={6} className="bg-surface-sunk py-8">
-              <EmptyState
-                title="Fleet-wide transport list isn't available yet"
-                description="apps/api has no org-wide transport endpoint today (only per-rental). Recorded in the frontend/backend gap report. Pick a rental below to view or update its transport records now."
-              />
-            </Td>
-          </Tr>
+          {filteredRecords.length === 0 ? (
+            <Tr>
+              <Td colSpan={6} className="bg-surface-sunk py-8">
+                <EmptyState
+                  title="No transport records"
+                  description={
+                    records.length === 0
+                      ? "No transport legs have been planned yet across the fleet."
+                      : "No records match this filter."
+                  }
+                />
+              </Td>
+            </Tr>
+          ) : (
+            filteredRecords.map((record) => {
+              const rental = rentalsById.get(record.rentalId);
+              return (
+                <Tr key={record.id}>
+                  <Td>
+                    <Link
+                      href={`/transport/${record.id}?rentalId=${record.rentalId}`}
+                      className="font-mono text-xs font-medium text-accent-text"
+                    >
+                      {record.leg}
+                    </Link>
+                  </Td>
+                  <Td className="font-mono">{rental?.machineAssetCode ?? "—"}</Td>
+                  <Td>{rental?.clientSnapshot?.name ?? "—"}</Td>
+                  <Td className="text-meta">
+                    {record.pickupLocation ?? "—"} → {record.destination ?? "—"}
+                  </Td>
+                  <Td className="font-mono">{record.plannedDate ? formatDate(record.plannedDate) : "—"}</Td>
+                  <Td>
+                    <StatusBadge status={record.status} map={TRANSPORT_STATUS_MAP} />
+                  </Td>
+                </Tr>
+              );
+            })
+          )}
         </Tbody>
       </Table>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-ink">Open a rental&apos;s transport</h2>
+        <h2 className="mb-3 text-sm font-semibold text-ink">Plan or update a rental&apos;s transport</h2>
         <Select
           className="max-w-sm"
           value={selectedRentalId}

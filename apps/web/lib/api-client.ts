@@ -389,6 +389,10 @@ export const apiClient = {
     }),
 
   // --- Maintenance ---
+  listMaintenanceRecords: (organizationId: string) =>
+    apiRequest<MaintenanceRecord[]>(`/organizations/${organizationId}/maintenance-records`, {
+      method: "GET",
+    }),
   listMaintenanceForMachine: (organizationId: string, machineId: string) =>
     apiRequest<MaintenanceRecord[]>(
       `/organizations/${organizationId}/machines/${machineId}/maintenance-records`,
@@ -410,6 +414,10 @@ export const apiClient = {
     ),
 
   // --- Transport ---
+  listTransportRecords: (organizationId: string) =>
+    apiRequest<TransportRecord[]>(`/organizations/${organizationId}/transport-records`, {
+      method: "GET",
+    }),
   listTransportForRental: (organizationId: string, rentalId: string) =>
     apiRequest<TransportRecord[]>(
       `/organizations/${organizationId}/rentals/${rentalId}/transport`,
@@ -434,6 +442,8 @@ export const apiClient = {
     ),
 
   // --- Logsheets + Utilization ---
+  listLogsheets: (organizationId: string) =>
+    apiRequest<Logsheet[]>(`/organizations/${organizationId}/logsheets`, { method: "GET" }),
   listLogsheetsForRental: (organizationId: string, rentalId: string) =>
     apiRequest<Logsheet[]>(`/organizations/${organizationId}/rentals/${rentalId}/logsheets`, {
       method: "GET",
