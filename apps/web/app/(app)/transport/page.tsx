@@ -176,7 +176,9 @@ export default function TransportPage() {
                   <Td className="text-meta">
                     {record.pickupLocation ?? "—"} → {record.destination ?? "—"}
                   </Td>
-                  <Td className="font-mono">{record.plannedDate ? formatDate(record.plannedDate) : "—"}</Td>
+                  <Td className="font-mono">
+                    {record.plannedDate ? formatDate(record.plannedDate) : "—"}
+                  </Td>
                   <Td>
                     <StatusBadge status={record.status} map={TRANSPORT_STATUS_MAP} />
                   </Td>
@@ -188,7 +190,9 @@ export default function TransportPage() {
       </Table>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-ink">Plan or update a rental&apos;s transport</h2>
+        <h2 className="mb-3 text-sm font-semibold text-ink">
+          Plan or update a rental&apos;s transport
+        </h2>
         <Select
           className="max-w-sm"
           value={selectedRentalId}
@@ -207,7 +211,10 @@ export default function TransportPage() {
         <div className="flex flex-col gap-3">
           <Alert tone="info">
             Showing transport for{" "}
-            <Link href={`/rentals/${selectedRental.id}?tab=transport`} className="font-medium underline">
+            <Link
+              href={`/rentals/${selectedRental.id}?tab=transport`}
+              className="font-medium underline"
+            >
               {selectedRental.machineAssetCode ?? selectedRental.machineId.slice(0, 8)}
             </Link>{" "}
             — open the full rental for billing, logsheets and more.

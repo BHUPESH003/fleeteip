@@ -1,6 +1,10 @@
 "use client";
 
-import type { OrganizationMember, PermissionCode, RoleWithPermissions } from "@fleetip/contracts/organization";
+import type {
+  OrganizationMember,
+  PermissionCode,
+  RoleWithPermissions,
+} from "@fleetip/contracts/organization";
 import {
   Badge,
   Button,
@@ -96,7 +100,8 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    if (!organizationId || tab !== "members" || !canManageMembers || members || membersError) return;
+    if (!organizationId || tab !== "members" || !canManageMembers || members || membersError)
+      return;
     void loadMembers(organizationId);
   }, [organizationId, tab, canManageMembers, members, membersError]);
 
@@ -104,7 +109,9 @@ export default function SettingsPage() {
     if (!organizationId || tab !== "roles" || !canManageOrganization || roles || rolesError) return;
     void (async () => {
       try {
-        setRoles((await apiClient.listRolesAndPermissions(organizationId)) as RoleWithPermissions[]);
+        setRoles(
+          (await apiClient.listRolesAndPermissions(organizationId)) as RoleWithPermissions[],
+        );
       } catch (err) {
         setRolesError(err instanceof Error ? err.message : "Failed to load roles");
       }
@@ -158,7 +165,11 @@ export default function SettingsPage() {
               <Field label="Code" value={organization.code} mono />
               <Field
                 label="Type"
-                value={organization.organizationTypeCode === "rental_company" ? "Rental company" : "Renter"}
+                value={
+                  organization.organizationTypeCode === "rental_company"
+                    ? "Rental company"
+                    : "Renter"
+                }
               />
               <Field label="Created" value={formatDate(organization.createdAt)} mono />
             </div>
@@ -225,9 +236,9 @@ export default function SettingsPage() {
           </Card>
           {canManageMembers && (
             <p className="text-xs text-meta-light">
-              Inviting requires the invitee to already have a FleetIP account (looked up by
-              email) — there is no email-delivery/signup-invite flow yet. See the frontend/backend
-              gap report.
+              Inviting requires the invitee to already have a FleetIP account (looked up by email) —
+              there is no email-delivery/signup-invite flow yet. See the frontend/backend gap
+              report.
             </p>
           )}
         </div>
@@ -246,9 +257,13 @@ export default function SettingsPage() {
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-ink">Your permissions</h2>
             <div className="flex flex-col gap-3">
-              {PERMISSION_GROUPS.filter((group) => group.codes.some((c) => permissions.includes(c))).map((group) => (
+              {PERMISSION_GROUPS.filter((group) =>
+                group.codes.some((c) => permissions.includes(c)),
+              ).map((group) => (
                 <div key={group.label}>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-meta">{group.label}</p>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-meta">
+                    {group.label}
+                  </p>
                   <div className="flex flex-wrap gap-1.5">
                     {group.codes
                       .filter((code) => permissions.includes(code))
@@ -322,8 +337,8 @@ export default function SettingsPage() {
         <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4 text-left">
           {inviteError && <p className="text-sm text-danger">{inviteError}</p>}
           <p className="text-xs text-meta">
-            The invitee must already have a FleetIP account — invites aren&apos;t sent by email
-            yet, this adds an existing user to your organization directly.
+            The invitee must already have a FleetIP account — invites aren&apos;t sent by email yet,
+            this adds an existing user to your organization directly.
           </p>
           <Input label="Email" name="email" type="email" required />
           <Select label="Role" name="roleName" options={ROLE_OPTIONS} defaultValue="member" />
@@ -345,7 +360,9 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex flex-col gap-0.5 border-b border-border pb-2">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
+        {value}
+      </span>
     </div>
   );
 }

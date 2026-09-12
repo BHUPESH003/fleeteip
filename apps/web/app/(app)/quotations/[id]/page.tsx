@@ -74,7 +74,9 @@ export default function QuotationDetailPage() {
       ]);
       const foundMachine = machines.find((m) => m.id === quotation.machineId) ?? null;
       machine = foundMachine;
-      product = foundMachine ? products.find((p) => p.id === foundMachine.productId) ?? null : null;
+      product = foundMachine
+        ? (products.find((p) => p.id === foundMachine.productId) ?? null)
+        : null;
       if (quotation.renterOrganizationId) {
         counterpartyName =
           renterOrgs.find((o) => o.id === quotation.renterOrganizationId)?.name ?? counterpartyName;
@@ -153,14 +155,16 @@ export default function QuotationDetailPage() {
   }
 
   if (error) return <ErrorState message={error} />;
-  if (!data || !organizationId || !organizationType) return <LoadingState label="Loading quotation…" />;
+  if (!data || !organizationId || !organizationType)
+    return <LoadingState label="Loading quotation…" />;
 
   const { quotation, offers, machine, product, counterpartyName } = data;
   // Rental Company side resolves machine/product via listMachines/listProducts
   // (equipment.manage); the Renter side has no such permission, so
   // CommercialQuotation carries these server-resolved just for them
   // (null for the Rental Company) — prefer whichever is populated.
-  const machineLabel = quotation.productName ?? (product ? `${product.manufacturer} ${product.name}` : null);
+  const machineLabel =
+    quotation.productName ?? (product ? `${product.manufacturer} ${product.name}` : null);
   const machineAssetCode = quotation.machineAssetCode ?? machine?.assetCode ?? null;
   const isOwner = quotation.rentalCompanyOrganizationId === organizationId;
   const canNegotiate = quotation.status === "sent" || quotation.status === "negotiating";
@@ -180,7 +184,9 @@ export default function QuotationDetailPage() {
         ["End date", quotation.endDate ? formatDate(quotation.endDate) : "Open-ended"],
         [
           "Against requirement",
-          quotation.requirementId ? `RFQ-${quotation.requirementId.slice(0, 8).toUpperCase()}` : "Direct",
+          quotation.requirementId
+            ? `RFQ-${quotation.requirementId.slice(0, 8).toUpperCase()}`
+            : "Direct",
         ],
       ],
     },
@@ -188,9 +194,22 @@ export default function QuotationDetailPage() {
       title: "Commercial terms",
       rows: [
         ["Rate", `${quotation.rate} / ${quotation.rateUnit}`],
-        ["Mobilization", quotation.mobilizationCharge != null ? formatCurrencyINR(quotation.mobilizationCharge) : "—"],
-        ["Demobilization", quotation.demobilizationCharge != null ? formatCurrencyINR(quotation.demobilizationCharge) : "—"],
-        ["Overtime rate", quotation.overtimeRate != null ? formatCurrencyINR(quotation.overtimeRate) : "—"],
+        [
+          "Mobilization",
+          quotation.mobilizationCharge != null
+            ? formatCurrencyINR(quotation.mobilizationCharge)
+            : "—",
+        ],
+        [
+          "Demobilization",
+          quotation.demobilizationCharge != null
+            ? formatCurrencyINR(quotation.demobilizationCharge)
+            : "—",
+        ],
+        [
+          "Overtime rate",
+          quotation.overtimeRate != null ? formatCurrencyINR(quotation.overtimeRate) : "—",
+        ],
         ["Payment terms", quotation.paymentTerms ?? "—"],
         ["Validity", formatDate(quotation.validityDate)],
       ],
@@ -202,7 +221,10 @@ export default function QuotationDetailPage() {
         ["Shift structure", quotation.shiftStructure ?? "—"],
         ["Sunday condition", quotation.sundayCondition ?? "—"],
         ["Fuel norms", quotation.fuelNorms ?? "—"],
-        ["Notice period", quotation.noticePeriodDays != null ? `${quotation.noticePeriodDays} days` : "—"],
+        [
+          "Notice period",
+          quotation.noticePeriodDays != null ? `${quotation.noticePeriodDays} days` : "—",
+        ],
         ["De-hire terms", quotation.dehireTerms ?? "—"],
       ],
     },
@@ -211,7 +233,10 @@ export default function QuotationDetailPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        breadcrumbs={[{ label: "Quotations", href: "/quotations" }, { label: quotation.referenceNumber }]}
+        breadcrumbs={[
+          { label: "Quotations", href: "/quotations" },
+          { label: quotation.referenceNumber },
+        ]}
         title={`Quotation ${quotation.referenceNumber}`}
         actions={
           <div className="flex flex-wrap gap-2">
@@ -238,7 +263,9 @@ export default function QuotationDetailPage() {
             <>
               {" "}
               · against requirement{" "}
-              <span className="font-mono">RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}</span>
+              <span className="font-mono">
+                RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}
+              </span>
             </>
           )}{" "}
           · validity {formatDate(quotation.validityDate)}
@@ -247,28 +274,53 @@ export default function QuotationDetailPage() {
 
       <div className="grid grid-cols-2 gap-3 rounded-panel border border-border bg-surface-sunk p-3.5 sm:grid-cols-4">
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">Current rate</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+            Current rate
+          </span>
           <span className="font-mono text-xl font-medium text-ink">{quotation.rate}</span>
           {delta && (
-            <span className={["text-[11px]", delta.tone === "success" ? "text-success" : delta.tone === "warning" ? "text-warning" : "text-meta"].join(" ")}>
-              {delta.amount === 0 ? "unchanged from the opening offer" : `${delta.amount < 0 ? "down" : "up"} ${Math.abs(delta.amount)} from the opening offer`}
+            <span
+              className={[
+                "text-[11px]",
+                delta.tone === "success"
+                  ? "text-success"
+                  : delta.tone === "warning"
+                    ? "text-warning"
+                    : "text-meta",
+              ].join(" ")}
+            >
+              {delta.amount === 0
+                ? "unchanged from the opening offer"
+                : `${delta.amount < 0 ? "down" : "up"} ${Math.abs(delta.amount)} from the opening offer`}
             </span>
           )}
         </div>
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">Rate unit</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+            Rate unit
+          </span>
           <span className="text-lg font-medium text-ink">per {quotation.rateUnit}</span>
-          {quotation.shiftStructure && <span className="text-[11px] text-meta-light">{quotation.shiftStructure}</span>}
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">Contract value</span>
-          <span className="font-mono text-lg font-medium text-ink">{value != null ? formatCurrencyINR(value) : "—"}</span>
-          {quotation.mobilizationCharge != null && (
-            <span className="text-[11px] text-meta-light">+ {formatCurrencyINR(quotation.mobilizationCharge)} mobilization</span>
+          {quotation.shiftStructure && (
+            <span className="text-[11px] text-meta-light">{quotation.shiftStructure}</span>
           )}
         </div>
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">Machine</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+            Contract value
+          </span>
+          <span className="font-mono text-lg font-medium text-ink">
+            {value != null ? formatCurrencyINR(value) : "—"}
+          </span>
+          {quotation.mobilizationCharge != null && (
+            <span className="text-[11px] text-meta-light">
+              + {formatCurrencyINR(quotation.mobilizationCharge)} mobilization
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+            Machine
+          </span>
           <span className="text-sm font-medium text-ink">{machineLabel ?? "—"}</span>
           <span className="font-mono text-[11px] text-meta-light">{machineAssetCode ?? "—"}</span>
         </div>
@@ -282,7 +334,9 @@ export default function QuotationDetailPage() {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {section.rows.map(([label, value]) => (
                   <div key={label} className="flex flex-col gap-0.5 border-b border-border pb-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+                      {label}
+                    </span>
                     <span className="text-sm text-ink">{value}</span>
                   </div>
                 ))}
@@ -298,8 +352,9 @@ export default function QuotationDetailPage() {
                 <div>
                   <h2 className="text-sm font-semibold text-ink">Your decision</h2>
                   <p className="mt-1 text-xs text-meta">
-                    {counterpartyName} {offers.length > 0 ? "countered at" : "sent"} {quotation.rate}/{quotation.rateUnit}.
-                    Accepting records your acceptance; the rental company then awards it and the rental is created.
+                    {counterpartyName} {offers.length > 0 ? "countered at" : "sent"}{" "}
+                    {quotation.rate}/{quotation.rateUnit}. Accepting records your acceptance; the
+                    rental company then awards it and the rental is created.
                   </p>
                 </div>
                 {!showCounterForm ? (
@@ -308,18 +363,31 @@ export default function QuotationDetailPage() {
                     <Button variant="secondary" onClick={() => setShowCounterForm(true)}>
                       Send counter offer
                     </Button>
-                    <Button variant="tertiary" className="text-danger" onClick={() => void handleAction("reject")}>
+                    <Button
+                      variant="tertiary"
+                      className="text-danger"
+                      onClick={() => void handleAction("reject")}
+                    >
                       Decline quotation
                     </Button>
                   </div>
                 ) : (
                   <form onSubmit={handleOffer} className="flex flex-col gap-3">
                     <Input label="Rate" name="rate" type="number" step="0.01" required />
-                    <Select label="Unit" name="rateUnit" options={RATE_UNIT_OPTIONS} defaultValue={quotation.rateUnit} />
+                    <Select
+                      label="Unit"
+                      name="rateUnit"
+                      options={RATE_UNIT_OPTIONS}
+                      defaultValue={quotation.rateUnit}
+                    />
                     <Input label="Notes" name="notes" />
                     <div className="flex gap-2">
                       <Button type="submit">Send counter offer</Button>
-                      <Button type="button" variant="secondary" onClick={() => setShowCounterForm(false)}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setShowCounterForm(false)}
+                      >
                         Cancel
                       </Button>
                     </div>
@@ -328,20 +396,25 @@ export default function QuotationDetailPage() {
                 <div className="flex gap-2 rounded-control bg-warning-bg px-3 py-2.5">
                   <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
                   <span className="text-[11px] text-warning">
-                    Any change to the terms after you accept clears your acceptance and it must be given again.
+                    Any change to the terms after you accept clears your acceptance and it must be
+                    given again.
                   </span>
                 </div>
               </div>
             ) : isOwner ? (
               <div className="flex flex-col gap-2">
                 <h2 className="mb-1 text-sm font-semibold text-ink">Actions</h2>
-                {quotation.status === "draft" && <Button onClick={() => void handleAction("send")}>Send</Button>}
+                {quotation.status === "draft" && (
+                  <Button onClick={() => void handleAction("send")}>Send</Button>
+                )}
                 {(quotation.status === "draft" || quotation.status === "sent") && (
                   <Button variant="secondary" onClick={() => void handleAction("withdraw")}>
                     Withdraw
                   </Button>
                 )}
-                {canNegotiate && !needsAcceptance && <Button onClick={() => void handleAction("award")}>Award</Button>}
+                {canNegotiate && !needsAcceptance && (
+                  <Button onClick={() => void handleAction("award")}>Award</Button>
+                )}
                 {canNegotiate && needsAcceptance && (
                   <p className="text-xs text-meta">Awaiting the Renter&rsquo;s acceptance.</p>
                 )}
@@ -359,11 +432,18 @@ export default function QuotationDetailPage() {
                     ? "You accepted — awaiting award."
                     : `This quotation is ${quotation.status}.`}
                 </p>
-                {!isOwner && organizationType === "renter" && canNegotiate && !quotation.renterAcceptedAt && (
-                  <Button variant="tertiary" className="mt-2 text-danger" onClick={() => void handleAction("reject")}>
-                    Decline quotation
-                  </Button>
-                )}
+                {!isOwner &&
+                  organizationType === "renter" &&
+                  canNegotiate &&
+                  !quotation.renterAcceptedAt && (
+                    <Button
+                      variant="tertiary"
+                      className="mt-2 text-danger"
+                      onClick={() => void handleAction("reject")}
+                    >
+                      Decline quotation
+                    </Button>
+                  )}
               </div>
             )}
           </Card>
@@ -383,21 +463,36 @@ export default function QuotationDetailPage() {
                     <div className="flex flex-1 flex-col gap-1 pb-3.5">
                       <div className="flex items-baseline gap-2">
                         <span className="text-xs font-semibold text-ink">
-                          {offer.offeredByOrganizationId === organizationId ? "You" : counterpartyName}
+                          {offer.offeredByOrganizationId === organizationId
+                            ? "You"
+                            : counterpartyName}
                         </span>
-                        <span className="ml-auto text-[11px] text-meta-light">{formatRelativeTime(offer.createdAt)}</span>
+                        <span className="ml-auto text-[11px] text-meta-light">
+                          {formatRelativeTime(offer.createdAt)}
+                        </span>
                       </div>
                       <div className="flex items-baseline gap-2">
-                        <span className="font-mono text-base font-medium text-ink">{offer.rate}</span>
+                        <span className="font-mono text-base font-medium text-ink">
+                          {offer.rate}
+                        </span>
                         <span className="text-[11px] text-meta-light">/ {offer.rateUnit}</span>
-                        <StatusBadge status={offer.status} map={OFFER_STATUS_MAP} className="ml-auto" />
+                        <StatusBadge
+                          status={offer.status}
+                          map={OFFER_STATUS_MAP}
+                          className="ml-auto"
+                        />
                       </div>
                       {offer.notes && <span className="text-[11px] text-meta">{offer.notes}</span>}
-                      {offer.status === "pending" && offer.offeredByOrganizationId !== organizationId && (
-                        <Button size="sm" className="mt-1 w-fit" onClick={() => void handleAcceptOffer(offer.id)}>
-                          Accept this offer
-                        </Button>
-                      )}
+                      {offer.status === "pending" &&
+                        offer.offeredByOrganizationId !== organizationId && (
+                          <Button
+                            size="sm"
+                            className="mt-1 w-fit"
+                            onClick={() => void handleAcceptOffer(offer.id)}
+                          >
+                            Accept this offer
+                          </Button>
+                        )}
                     </div>
                   </div>
                 ))}

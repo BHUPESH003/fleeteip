@@ -38,9 +38,7 @@ export function EditRequirementDialog({
         ...(projectName !== (requirement.projectName ?? "") ? { projectName } : {}),
         ...(projectLocation !== (requirement.projectLocation ?? "") ? { projectLocation } : {}),
         ...(quantity && quantity !== requirement.quantity ? { quantity } : {}),
-        ...(requestedStartDate !== requirement.requestedStartDate
-          ? { requestedStartDate }
-          : {}),
+        ...(requestedStartDate !== requirement.requestedStartDate ? { requestedStartDate } : {}),
       });
       if (updated) onUpdated(updated as Requirement);
       onClose();

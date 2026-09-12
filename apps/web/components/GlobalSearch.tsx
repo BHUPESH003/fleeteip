@@ -76,9 +76,19 @@ export function GlobalSearch({
   return (
     <div className="relative hidden max-w-[400px] flex-1 md:block">
       <div className="flex h-8 items-center gap-1.5 rounded-control border border-border bg-surface-sunk px-2.5 focus-within:border-accent">
-        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0 text-meta-light" fill="none" aria-hidden="true">
+        <svg
+          viewBox="0 0 16 16"
+          className="h-3.5 w-3.5 shrink-0 text-meta-light"
+          fill="none"
+          aria-hidden="true"
+        >
           <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-          <path d="M11 11L14.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path
+            d="M11 11L14.5 14.5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
         <input
           type="text"
@@ -101,7 +111,9 @@ export function GlobalSearch({
           {loading ? (
             <p className="px-3 py-3 text-xs text-meta">Searching…</p>
           ) : grouped.length === 0 ? (
-            <p className="px-3 py-3 text-xs text-meta">No results for &quot;{query.trim()}&quot;.</p>
+            <p className="px-3 py-3 text-xs text-meta">
+              No results for &quot;{query.trim()}&quot;.
+            </p>
           ) : (
             grouped.map((group) => (
               <div key={group.type} className="border-b border-border py-1.5 last:border-0">

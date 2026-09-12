@@ -189,7 +189,9 @@ export default function MaintenancePage() {
       </Table>
 
       <Card>
-        <h2 className="mb-3 text-sm font-semibold text-ink">Schedule a machine&apos;s maintenance</h2>
+        <h2 className="mb-3 text-sm font-semibold text-ink">
+          Schedule a machine&apos;s maintenance
+        </h2>
         <Select
           className="max-w-sm"
           value={selectedMachineId}
@@ -205,7 +207,10 @@ export default function MaintenancePage() {
         <div className="flex flex-col gap-3">
           <Alert tone="info">
             Showing maintenance for{" "}
-            <Link href={`/machines/${selectedMachine.id}?tab=maintenance`} className="font-medium underline">
+            <Link
+              href={`/machines/${selectedMachine.id}?tab=maintenance`}
+              className="font-medium underline"
+            >
               {selectedMachine.assetCode}
             </Link>{" "}
             — open the full machine for rentals, logsheets and identity.

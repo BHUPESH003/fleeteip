@@ -58,13 +58,18 @@ export default function ProductDetailPage() {
     }
     const categories = (await apiClient.listProductCategories()) as ProductCategory[];
     const subcategoryLists = await Promise.all(
-      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+      categories.map(
+        (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
+      ),
     );
-    const subcategory = subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null;
+    const subcategory =
+      subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null;
     const category = categories.find((c) => c.id === subcategory?.productCategoryId) ?? null;
     const ownMachines =
       canSeeOwnFleet && organizationId
-        ? ((await apiClient.listMachines(organizationId)) as Machine[]).filter((m) => m.productId === id)
+        ? ((await apiClient.listMachines(organizationId)) as Machine[]).filter(
+            (m) => m.productId === id,
+          )
         : [];
     setData({ product, subcategory, category, ownMachines });
   }
@@ -94,7 +99,9 @@ export default function ProductDetailPage() {
         ...(name ? { name } : {}),
         ...(manufacturer ? { manufacturer } : {}),
         ...(capacity ? { capacity: Number(capacity) } : {}),
-        ...(capacityUnit ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> } : {}),
+        ...(capacityUnit
+          ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> }
+          : {}),
       });
       setEditOpen(false);
       await load();
@@ -116,17 +123,27 @@ export default function ProductDetailPage() {
       <PageHeader
         breadcrumbs={[
           { label: "Catalogue", href: "/catalogue" },
-          ...(category ? [{ label: category.name, href: `/catalogue/categories/${category.id}` }] : []),
-          ...(subcategory ? [{ label: subcategory.name, href: `/catalogue/subcategories/${subcategory.id}` }] : []),
+          ...(category
+            ? [{ label: category.name, href: `/catalogue/categories/${category.id}` }]
+            : []),
+          ...(subcategory
+            ? [{ label: subcategory.name, href: `/catalogue/subcategories/${subcategory.id}` }]
+            : []),
           { label: product.name },
         ]}
         title={`${product.manufacturer} ${product.name}`}
-        description={formatCapacity(product) !== "—" ? `Capacity ${formatCapacity(product)}` : undefined}
+        description={
+          formatCapacity(product) !== "—" ? `Capacity ${formatCapacity(product)}` : undefined
+        }
         actions={
           <Button
             variant="secondary"
             onClick={() => setEditOpen(true)}
-            title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+            title={
+              canManage
+                ? undefined
+                : "Requires catalogue.manage (Rental Company organizations only)"
+            }
           >
             Edit product
           </Button>
@@ -166,7 +183,10 @@ export default function ProductDetailPage() {
           {!canSeeOwnFleet ? (
             <p className="text-sm text-meta">Only visible to a Rental Company&apos;s own fleet.</p>
           ) : ownMachines.length === 0 ? (
-            <EmptyState title="No machines yet" description="No machine in your fleet uses this product." />
+            <EmptyState
+              title="No machines yet"
+              description="No machine in your fleet uses this product."
+            />
           ) : (
             <Table>
               <Thead>
@@ -199,7 +219,11 @@ export default function ProductDetailPage() {
       </div>
 
       <div>
-        <button type="button" onClick={() => setDisableOpen(true)} className="text-xs font-medium text-danger">
+        <button
+          type="button"
+          onClick={() => setDisableOpen(true)}
+          className="text-xs font-medium text-danger"
+        >
           Disable product…
         </button>
       </div>
@@ -219,8 +243,18 @@ export default function ProductDetailPage() {
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input label="Product name" name="name" defaultValue={product.name} required />
-          <Input label="Manufacturer" name="manufacturer" defaultValue={product.manufacturer} required />
-          <Input label="Capacity" name="capacity" type="number" defaultValue={product.capacity ?? undefined} />
+          <Input
+            label="Manufacturer"
+            name="manufacturer"
+            defaultValue={product.manufacturer}
+            required
+          />
+          <Input
+            label="Capacity"
+            name="capacity"
+            type="number"
+            defaultValue={product.capacity ?? undefined}
+          />
           <Select
             label="Capacity unit"
             name="capacityUnit"
@@ -262,7 +296,9 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex flex-col gap-0.5 border-b border-border pb-2">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
+        {value}
+      </span>
     </div>
   );
 }

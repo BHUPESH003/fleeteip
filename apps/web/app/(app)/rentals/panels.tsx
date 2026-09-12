@@ -46,7 +46,9 @@ export function TransportPanel({
 
   async function refresh() {
     try {
-      setRecords((await apiClient.listTransportForRental(organizationId, rentalId)) as TransportRecord[]);
+      setRecords(
+        (await apiClient.listTransportForRental(organizationId, rentalId)) as TransportRecord[],
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load transport records");
     }
@@ -105,7 +107,12 @@ export function TransportPanel({
                     <StatusBadge status={record.status} map={TRANSPORT_STATUS_MAP} />
                     {!readOnly &&
                       legalNextTransportStatuses(record.status).map((next) => (
-                        <Button key={next} size="sm" variant="secondary" onClick={() => void handleStatus(leg, next)}>
+                        <Button
+                          key={next}
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void handleStatus(leg, next)}
+                        >
                           Mark {next}
                         </Button>
                       ))}
@@ -202,7 +209,9 @@ export function LogsheetPanel({
               ["Logged days", utilization.loggedDayCount],
             ].map(([label, value]) => (
               <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+                  {label}
+                </span>
                 <span className="font-mono text-lg font-medium text-ink">{value}</span>
               </div>
             ))}
@@ -249,7 +258,10 @@ export function LogsheetPanel({
                     </Badge>
                   </Td>
                   <Td>
-                    <Link href={`/logsheets/${log.id}?rentalId=${rentalId}`} className="text-xs font-medium text-accent-text">
+                    <Link
+                      href={`/logsheets/${log.id}?rentalId=${rentalId}`}
+                      className="text-xs font-medium text-accent-text"
+                    >
                       Detail →
                     </Link>
                   </Td>

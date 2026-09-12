@@ -23,18 +23,18 @@ backend changes stay out of scope for a frontend branch.
 
 ## Phases and commits
 
-| # | Phase | Commit(s) |
-|---|---|---|
-| 1 | Design system + application shell | `1788f3e`, `eea859d` |
-| 2 | Dashboards (Rental Company / Renter) | `3dbfc73` |
-| 3 | Machines (list + detail) | `04fb38d` |
-| 4 | Requirements / Open Market | `470b186` |
-| 5 | Quotations / negotiation | `7fff35b` |
-| 6 | Auctions (bidder + owner) | `bb7407b` |
-| 7 | Rentals / operations | `5df2a0a` |
-| 8 | Billing | `1514056` |
-| 9 | Responsive + accessibility polish | `f76e2c7` |
-| 10 | Final cleanup + this summary | (this commit) |
+| #   | Phase                                | Commit(s)            |
+| --- | ------------------------------------ | -------------------- |
+| 1   | Design system + application shell    | `1788f3e`, `eea859d` |
+| 2   | Dashboards (Rental Company / Renter) | `3dbfc73`            |
+| 3   | Machines (list + detail)             | `04fb38d`            |
+| 4   | Requirements / Open Market           | `470b186`            |
+| 5   | Quotations / negotiation             | `7fff35b`            |
+| 6   | Auctions (bidder + owner)            | `bb7407b`            |
+| 7   | Rentals / operations                 | `5df2a0a`            |
+| 8   | Billing                              | `1514056`            |
+| 9   | Responsive + accessibility polish    | `f76e2c7`            |
+| 10  | Final cleanup + this summary         | (this commit)        |
 
 Each commit message carries that phase's own detail (what changed, real
 bugs found and fixed, verification performed) — this document doesn't
@@ -51,15 +51,15 @@ the backend doesn't support today renders the correct target UI behind a
 disabled control, an honest empty state, or (Platform Admin) a whole
 gated mock section — never faked.
 
-| # | Phase | Commit(s) |
-|---|---|---|
-| 11 | Catalogue (list/detail/admin dialogs) | `e3143bd` |
-| 12 | Standalone Transport, Logsheets, Maintenance | `cd4a9e7` |
-| 13 | Rentals + Billing final polish | `fcfba21` |
-| 14 | Organization admin (tenant Settings) | `2db9dc3` |
-| 15 | Platform Admin shell (target-UI-plus-gap) | `732dd4d` |
-| 16 | Edit flows (Machines/Requirements) + search polish | `05fb7ff` |
-| — | Gap/hardening report updates for the above | `416c3d1` |
+| #   | Phase                                              | Commit(s) |
+| --- | -------------------------------------------------- | --------- |
+| 11  | Catalogue (list/detail/admin dialogs)              | `e3143bd` |
+| 12  | Standalone Transport, Logsheets, Maintenance       | `cd4a9e7` |
+| 13  | Rentals + Billing final polish                     | `fcfba21` |
+| 14  | Organization admin (tenant Settings)               | `2db9dc3` |
+| 15  | Platform Admin shell (target-UI-plus-gap)          | `732dd4d` |
+| 16  | Edit flows (Machines/Requirements) + search polish | `05fb7ff` |
+| —   | Gap/hardening report updates for the above         | `416c3d1` |
 
 Highlights:
 
@@ -79,10 +79,10 @@ Highlights:
   the per-parent endpoint across every rental/machine would fake an
   aggregate) with a real rental/machine picker underneath; each
   workspace's detail page is genuinely real (`?rentalId=`/`?machineId=`
-  + find-by-id against the real scoped endpoint, zero N+1). Maintenance
-  gained a correctly-derived "availability impact" indicator (mirrors
-  the real `hasOverlappingMaintenance` SQL, not a fabricated stored
-  flag).
+  - find-by-id against the real scoped endpoint, zero N+1). Maintenance
+    gained a correctly-derived "availability impact" indicator (mirrors
+    the real `hasOverlappingMaintenance` SQL, not a fabricated stored
+    flag).
 - **Rentals/Billing polish**: Rental detail gained Maintenance and
   Activity tabs and a "what happens next" status hint; Billing gained a
   due-soon/overdue badge derived client-side from the real due date
@@ -128,11 +128,11 @@ Confirmed against the actual route/contract code before wiring each one
 per-phase granularity:
 
 1. **Machine edit** — `apiClient.updateMachine` → `PATCH
-   .../machines/:machineId`. Machine detail's disabled edit dialog is now
+.../machines/:machineId`. Machine detail's disabled edit dialog is now
    a real `EditMachineDialog` (own submit/error/loading state, refreshes
    the machine in place).
 2. **Requirement edit** — `apiClient.updateRequirement` → `PATCH
-   .../requirements/:requirementId`. Requirement detail's disabled edit
+.../requirements/:requirementId`. Requirement detail's disabled edit
    dialog is now a real `EditRequirementDialog`; the Edit button disables
    once the requirement is no longer `open` (server-enforced, respected
    client-side too).
@@ -149,7 +149,7 @@ per-phase granularity:
    and a `needsAttention`-driven attention row (previously omitted
    entirely, not just disabled — no org-scoped auction list existed).
 6. **Standalone Transport/Logsheets/Maintenance** — `apiClient.
-   listTransportRecords`/`listLogsheets`/`listMaintenanceRecords` → the
+listTransportRecords`/`listLogsheets`/`listMaintenanceRecords` → the
    new org-wide list routes. `/transport`, `/logsheets`, `/maintenance`
    now render the real fleet-wide table as the primary view, with
    working search/status filters; the per-rental/per-machine picker +

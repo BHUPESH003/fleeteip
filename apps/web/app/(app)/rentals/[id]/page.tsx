@@ -92,7 +92,12 @@ export default function RentalDetailPage() {
       product = machine ? (products.find((p) => p.id === machine!.productId) ?? null) : null;
     }
 
-    setData({ rental, product, machine, invoices: invoices.filter((inv) => inv.rentalId === rental.id) });
+    setData({
+      rental,
+      product,
+      machine,
+      invoices: invoices.filter((inv) => inv.rentalId === rental.id),
+    });
   }
 
   useEffect(() => {
@@ -129,7 +134,10 @@ export default function RentalDetailPage() {
     {
       title: "Equipment & period",
       rows: [
-        ["Machine", product ? `${product.manufacturer} ${product.name}` : (rental.machineAssetCode ?? "—")],
+        [
+          "Machine",
+          product ? `${product.manufacturer} ${product.name}` : (rental.machineAssetCode ?? "—"),
+        ],
         ["Asset code", machine?.assetCode ?? rental.machineAssetCode ?? "—"],
         ["Project", rental.projectName ?? "—"],
         ["Location", rental.projectLocation ?? "—"],
@@ -141,10 +149,21 @@ export default function RentalDetailPage() {
       title: "Commercial terms",
       rows: [
         ["Rate", `${rental.rate} / ${rental.rateUnit}`],
-        ["Mobilization", rental.mobilizationCharge != null ? formatCurrencyINR(rental.mobilizationCharge) : "—"],
-        ["Demobilization", rental.demobilizationCharge != null ? formatCurrencyINR(rental.demobilizationCharge) : "—"],
+        [
+          "Mobilization",
+          rental.mobilizationCharge != null ? formatCurrencyINR(rental.mobilizationCharge) : "—",
+        ],
+        [
+          "Demobilization",
+          rental.demobilizationCharge != null
+            ? formatCurrencyINR(rental.demobilizationCharge)
+            : "—",
+        ],
         ["Payment terms", rental.paymentTerms ?? "—"],
-        ["Notice period", rental.noticePeriodDays != null ? `${rental.noticePeriodDays} days` : "—"],
+        [
+          "Notice period",
+          rental.noticePeriodDays != null ? `${rental.noticePeriodDays} days` : "—",
+        ],
         ["De-hire terms", rental.dehireTerms ?? "—"],
       ],
     },
@@ -153,7 +172,10 @@ export default function RentalDetailPage() {
       rows: [
         ["Operator scope", rental.operatorScope?.replace(/_/g, " ") ?? "—"],
         ["Shift structure", rental.shiftStructure ?? "—"],
-        ["Overtime rate", rental.overtimeRate != null ? formatCurrencyINR(rental.overtimeRate) : "—"],
+        [
+          "Overtime rate",
+          rental.overtimeRate != null ? formatCurrencyINR(rental.overtimeRate) : "—",
+        ],
         ["Sunday condition", rental.sundayCondition ?? "—"],
         ["Fuel norms", rental.fuelNorms ?? "—"],
       ],
@@ -161,7 +183,8 @@ export default function RentalDetailPage() {
   ];
 
   const renterExplanation = "Managed by the rental company — not visible to Renters yet.";
-  const noAccessExplanation = "Your membership doesn't have read access to this yet — ask an organization owner.";
+  const noAccessExplanation =
+    "Your membership doesn't have read access to this yet — ask an organization owner.";
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "billing", label: "Billing" },
@@ -177,7 +200,12 @@ export default function RentalDetailPage() {
       disabled: !canReadLogsheets,
       title: !canReadLogsheets ? noAccessExplanation : undefined,
     },
-    { key: "maintenance", label: "Maintenance", disabled: isRenter, title: isRenter ? renterExplanation : undefined },
+    {
+      key: "maintenance",
+      label: "Maintenance",
+      disabled: isRenter,
+      title: isRenter ? renterExplanation : undefined,
+    },
     { key: "activity", label: "Activity" },
   ];
   const hint = !isRenter ? nextStepHint(rental.status) : null;
@@ -208,7 +236,12 @@ export default function RentalDetailPage() {
         </span>
         {!isRenter &&
           legalNextRentalStatuses(rental.status).map((next) => (
-            <Button key={next} size="sm" variant="secondary" onClick={() => void handleStatus(next)}>
+            <Button
+              key={next}
+              size="sm"
+              variant="secondary"
+              onClick={() => void handleStatus(next)}
+            >
               Mark {next.replace("_", " ")}
             </Button>
           ))}
@@ -226,7 +259,9 @@ export default function RentalDetailPage() {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {section.rows.map(([label, value]) => (
                   <div key={label} className="flex flex-col gap-0.5 border-b border-border pb-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">
+                      {label}
+                    </span>
                     <span className="text-sm text-ink">{value}</span>
                   </div>
                 ))}
@@ -245,7 +280,10 @@ export default function RentalDetailPage() {
             </Link>
           </div>
           {invoices.length === 0 ? (
-            <EmptyState title="No invoices yet" description="Invoices raised against this rental will show up here." />
+            <EmptyState
+              title="No invoices yet"
+              description="Invoices raised against this rental will show up here."
+            />
           ) : (
             <Table>
               <Thead>
@@ -262,7 +300,8 @@ export default function RentalDetailPage() {
                   <Tr key={invoice.id}>
                     <Td className="font-mono">{invoice.invoiceNumber}</Td>
                     <Td className="font-mono">
-                      {formatDate(invoice.billingPeriodStart)} → {formatDate(invoice.billingPeriodEnd)}
+                      {formatDate(invoice.billingPeriodStart)} →{" "}
+                      {formatDate(invoice.billingPeriodEnd)}
                     </Td>
                     <Td className="font-mono">{formatCurrencyINR(invoice.totalAmount)}</Td>
                     <Td className="font-mono">{formatDate(invoice.dueDate)}</Td>
@@ -288,7 +327,10 @@ export default function RentalDetailPage() {
         <MaintenancePanel organizationId={organizationId} machineId={machine.id} />
       )}
       {tab === "maintenance" && !isRenter && !machine && (
-        <EmptyState title="No machine on this rental" description="Maintenance is tracked per machine." />
+        <EmptyState
+          title="No machine on this rental"
+          description="Maintenance is tracked per machine."
+        />
       )}
 
       {tab === "activity" && (

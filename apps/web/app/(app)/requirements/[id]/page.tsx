@@ -51,15 +51,19 @@ export default function RequirementDetailPage() {
 
   async function load(orgId: string) {
     const requirement = (await apiClient.getRequirement(orgId, id)) as Requirement;
-    const [categories, responses, rentalCompanyOrgs, quotations, notifications] = await Promise.all([
-      apiClient.listProductCategories() as Promise<ProductCategory[]>,
-      apiClient.listResponsesForRequirement(orgId, id) as Promise<QuotationResponse[]>,
-      apiClient.listRentalCompanyOrganizations(orgId) as Promise<Organization[]>,
-      apiClient.listQuotations(orgId) as Promise<CommercialQuotation[]>,
-      apiClient.listNotifications(orgId) as Promise<NotificationListResponse>,
-    ]);
+    const [categories, responses, rentalCompanyOrgs, quotations, notifications] = await Promise.all(
+      [
+        apiClient.listProductCategories() as Promise<ProductCategory[]>,
+        apiClient.listResponsesForRequirement(orgId, id) as Promise<QuotationResponse[]>,
+        apiClient.listRentalCompanyOrganizations(orgId) as Promise<Organization[]>,
+        apiClient.listQuotations(orgId) as Promise<CommercialQuotation[]>,
+        apiClient.listNotifications(orgId) as Promise<NotificationListResponse>,
+      ],
+    );
     const subcategoryLists = await Promise.all(
-      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+      categories.map(
+        (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
+      ),
     );
     const subcategory = subcategoryLists
       .flat()
@@ -71,7 +75,9 @@ export default function RequirementDetailPage() {
       responses,
       rentalCompanyNames: new Map(rentalCompanyOrgs.map((o) => [o.id, o.name])),
       quotationByResponseId: new Map(
-        quotations.filter((q) => q.quotationResponseId).map((q) => [q.quotationResponseId as string, q]),
+        quotations
+          .filter((q) => q.quotationResponseId)
+          .map((q) => [q.quotationResponseId as string, q]),
       ),
       activity: notifications.notifications
         .filter((n) => n.relatedResourceType === "requirement" && n.relatedResourceId === id)
@@ -99,12 +105,21 @@ export default function RequirementDetailPage() {
   if (error) return <ErrorState message={error} />;
   if (!data) return <LoadingState label="Loading requirement…" />;
 
-  const { requirement, subcategoryName, responses, rentalCompanyNames, quotationByResponseId, activity } = data;
+  const {
+    requirement,
+    subcategoryName,
+    responses,
+    rentalCompanyNames,
+    quotationByResponseId,
+    activity,
+  } = data;
   const interested = responses.filter((r) => r.status === "interested");
   const rates = interested.map((r) => r.indicativeRate).filter((r): r is number => r != null);
   const lowestRate = rates.length ? Math.min(...rates) : null;
   const rateSpreadPct =
-    rates.length > 1 ? Math.round(((Math.max(...rates) - Math.min(...rates)) / Math.min(...rates)) * 100) : null;
+    rates.length > 1
+      ? Math.round(((Math.max(...rates) - Math.min(...rates)) / Math.min(...rates)) * 100)
+      : null;
 
   const title = [
     requirement.capacity ? `${requirement.capacity}${requirement.capacityUnit ?? ""}` : null,
@@ -169,7 +184,11 @@ export default function RequirementDetailPage() {
               <Field label="Quantity" value={String(requirement.quantity)} mono />
               <Field label="Project" value={requirement.projectName ?? "—"} />
               <Field label="Location" value={requirement.projectLocation ?? "—"} />
-              <Field label="Requested start" value={formatDate(requirement.requestedStartDate)} mono />
+              <Field
+                label="Requested start"
+                value={formatDate(requirement.requestedStartDate)}
+                mono
+              />
               <Field
                 label="Expected duration"
                 value={
@@ -214,7 +233,10 @@ export default function RequirementDetailPage() {
 
           <Card padding={responses.length === 0 ? "md" : "none"}>
             {responses.length === 0 ? (
-              <EmptyState title="No responses yet" description="Check back once a Rental Company responds." />
+              <EmptyState
+                title="No responses yet"
+                description="Check back once a Rental Company responds."
+              />
             ) : (
               <Table>
                 <Thead>
@@ -238,13 +260,16 @@ export default function RequirementDetailPage() {
                         <Td>
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-ink">
-                              {rentalCompanyNames.get(response.rentalCompanyOrganizationId) ?? "Rental company"}
+                              {rentalCompanyNames.get(response.rentalCompanyOrganizationId) ??
+                                "Rental company"}
                             </span>
                             {isLowest && <Badge tone="success">Lowest</Badge>}
                           </div>
                         </Td>
                         <Td className="font-mono">
-                          {response.indicativeRate ? `${response.indicativeRate} / ${response.indicativeRateUnit}` : "—"}
+                          {response.indicativeRate
+                            ? `${response.indicativeRate} / ${response.indicativeRateUnit}`
+                            : "—"}
                         </Td>
                         <Td className="text-meta">{response.notes ?? "—"}</Td>
                         <Td>
@@ -297,7 +322,9 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex flex-col gap-0.5 border-b border-border pb-2 last:border-0">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
+        {value}
+      </span>
     </div>
   );
 }

@@ -42,17 +42,25 @@ export function RentalCompanyDashboard() {
     let cancelled = false;
     void (async () => {
       try {
-        const [machines, rentals, quotations, invoices, notifications, renterOrgs, products, auctions] =
-          await Promise.all([
-            apiClient.listMachines(organizationId) as Promise<Machine[]>,
-            apiClient.listRentals(organizationId) as Promise<Rental[]>,
-            apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
-            apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
-            apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
-            apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
-            apiClient.listProducts() as Promise<Product[]>,
-            apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
-          ]);
+        const [
+          machines,
+          rentals,
+          quotations,
+          invoices,
+          notifications,
+          renterOrgs,
+          products,
+          auctions,
+        ] = await Promise.all([
+          apiClient.listMachines(organizationId) as Promise<Machine[]>,
+          apiClient.listRentals(organizationId) as Promise<Rental[]>,
+          apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
+          apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
+          apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
+          apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
+          apiClient.listProducts() as Promise<Product[]>,
+          apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
+        ]);
 
         const unpaidInvoices = invoices.filter(
           (invoice) => invoice.status === "issued" || invoice.status === "overdue",
@@ -107,7 +115,9 @@ export function RentalCompanyDashboard() {
   const auctionsSelected = auctions.filter((a) => a.needsAttention);
 
   const activeRentalMachineIds = new Set(
-    rentals.filter((r) => r.status === "active" || r.status === "confirmed").map((r) => r.machineId),
+    rentals
+      .filter((r) => r.status === "active" || r.status === "confirmed")
+      .map((r) => r.machineId),
   );
   const availableMachines = machines.filter(
     (m) => m.status === "active" && !activeRentalMachineIds.has(m.id),
@@ -117,9 +127,7 @@ export function RentalCompanyDashboard() {
   const retiredMachines = machines.filter((m) => m.status === "retired");
   const totalMachines = machines.length || 1;
 
-  const awaitingAcceptance = quotations.filter(
-    (q) => q.status === "sent" && !q.renterAcceptedAt,
-  );
+  const awaitingAcceptance = quotations.filter((q) => q.status === "sent" && !q.renterAcceptedAt);
   const quotationsOpen = quotations.filter(
     (q) => q.status === "sent" || q.status === "negotiating",
   );
@@ -140,7 +148,11 @@ export function RentalCompanyDashboard() {
     "Renter";
 
   const kpis: KpiTileData[] = [
-    { label: "Machines", value: String(machines.length), note: `${retiredMachines.length} retired` },
+    {
+      label: "Machines",
+      value: String(machines.length),
+      note: `${retiredMachines.length} retired`,
+    },
     {
       label: "Available",
       value: String(availableMachines.length),
@@ -173,7 +185,8 @@ export function RentalCompanyDashboard() {
     {
       label: "Auctions",
       value: String(auctions.length),
-      note: auctionsSelected.length > 0 ? `${auctionsSelected.length} selected — proceed` : undefined,
+      note:
+        auctionsSelected.length > 0 ? `${auctionsSelected.length} selected — proceed` : undefined,
       noteTone: "success",
       href: "/auctions",
     },
@@ -193,28 +206,24 @@ export function RentalCompanyDashboard() {
         href: "/billing",
       };
     }),
-    ...awaitingAcceptance.map(
-      (q): AttentionItem => ({
-        ref: q.referenceNumber,
-        title: "Awaiting renter acceptance",
-        detail: `${counterpartyName(q)} · validity ends ${q.validityDate}`,
-        state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
-        tone: "warning",
-        actionLabel: "Follow up",
-        href: "/quotations",
-      }),
-    ),
-    ...maintenanceMachines.map(
-      (m): AttentionItem => ({
-        ref: m.assetCode,
-        title: "Blocked by maintenance",
-        detail: `${productNames.get(m.productId) ?? "Machine"} · reg ${m.registrationNumber}`,
-        state: "Blocking",
-        tone: "danger",
-        actionLabel: "Update",
-        href: "/machines",
-      }),
-    ),
+    ...awaitingAcceptance.map((q): AttentionItem => ({
+      ref: q.referenceNumber,
+      title: "Awaiting renter acceptance",
+      detail: `${counterpartyName(q)} · validity ends ${q.validityDate}`,
+      state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
+      tone: "warning",
+      actionLabel: "Follow up",
+      href: "/quotations",
+    })),
+    ...maintenanceMachines.map((m): AttentionItem => ({
+      ref: m.assetCode,
+      title: "Blocked by maintenance",
+      detail: `${productNames.get(m.productId) ?? "Machine"} · reg ${m.registrationNumber}`,
+      state: "Blocking",
+      tone: "danger",
+      actionLabel: "Update",
+      href: "/machines",
+    })),
     ...rentals
       .filter(
         (r) =>
@@ -223,32 +232,33 @@ export function RentalCompanyDashboard() {
           daysUntil(r.endDate) >= 0 &&
           daysUntil(r.endDate) <= RENTAL_ENDING_WINDOW_DAYS,
       )
-      .map(
-        (r): AttentionItem => ({
-          ref: `RN-${r.id.slice(0, 8).toUpperCase()}`,
-          title: "Rental ends soon",
-          detail: `${counterpartyName(r)} · notice ${r.noticePeriodDays ?? "—"} days`,
-          state: `${daysUntil(r.endDate as string)}d`,
-          tone: "warning",
-          actionLabel: "Plan",
-          href: "/rentals",
-        }),
-      ),
-    ...auctionsSelected.map(
-      (a): AttentionItem => ({
-        ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,
-        title: "Selected in auction",
-        detail: `${a.requirementProjectName ?? "Requirement"} · proceed to a commercial quotation`,
-        state: "Selected",
-        tone: "success",
-        actionLabel: "Open",
-        href: `/auctions?requirementId=${a.requirementId}&auctionId=${a.id}`,
-      }),
-    ),
+      .map((r): AttentionItem => ({
+        ref: `RN-${r.id.slice(0, 8).toUpperCase()}`,
+        title: "Rental ends soon",
+        detail: `${counterpartyName(r)} · notice ${r.noticePeriodDays ?? "—"} days`,
+        state: `${daysUntil(r.endDate as string)}d`,
+        tone: "warning",
+        actionLabel: "Plan",
+        href: "/rentals",
+      })),
+    ...auctionsSelected.map((a): AttentionItem => ({
+      ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,
+      title: "Selected in auction",
+      detail: `${a.requirementProjectName ?? "Requirement"} · proceed to a commercial quotation`,
+      state: "Selected",
+      tone: "success",
+      actionLabel: "Open",
+      href: `/auctions?requirementId=${a.requirementId}&auctionId=${a.id}`,
+    })),
   ].slice(0, MAX_ATTENTION_ITEMS);
 
   const fleetMix = [
-    { label: "On rent", count: onRentCount, pct: (onRentCount / totalMachines) * 100, tone: "info" as const },
+    {
+      label: "On rent",
+      count: onRentCount,
+      pct: (onRentCount / totalMachines) * 100,
+      tone: "info" as const,
+    },
     {
       label: "Available",
       count: availableMachines.length,
@@ -282,7 +292,9 @@ export function RentalCompanyDashboard() {
           <Card>
             <div className="mb-3 flex items-baseline gap-2">
               <h2 className="text-sm font-semibold text-ink">Fleet availability</h2>
-              <span className="text-xs text-meta-light">derived from machine status + active rentals</span>
+              <span className="text-xs text-meta-light">
+                derived from machine status + active rentals
+              </span>
             </div>
             <Meter segments={fleetMix} />
           </Card>

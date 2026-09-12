@@ -34,7 +34,10 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
         ☰
       </button>
       {currentMembership && (
-        <GlobalSearch organizationId={currentMembership.organizationId} placeholder={searchPlaceholder} />
+        <GlobalSearch
+          organizationId={currentMembership.organizationId}
+          placeholder={searchPlaceholder}
+        />
       )}
       <div className="ml-auto flex items-center gap-3">
         <OrganizationSwitcher />

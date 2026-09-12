@@ -195,7 +195,10 @@ export default function LogsheetsPage() {
         <div className="flex flex-col gap-3">
           <Alert tone="info">
             Fast entry for{" "}
-            <Link href={`/rentals/${selectedRental.id}?tab=logsheets`} className="font-medium underline">
+            <Link
+              href={`/rentals/${selectedRental.id}?tab=logsheets`}
+              className="font-medium underline"
+            >
               {selectedRental.machineAssetCode ?? selectedRental.machineId.slice(0, 8)}
             </Link>{" "}
             — open the full rental for billing, transport and more.

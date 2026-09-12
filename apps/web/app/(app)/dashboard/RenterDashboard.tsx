@@ -41,16 +41,23 @@ export function RenterDashboard() {
     let cancelled = false;
     void (async () => {
       try {
-        const [requirements, quotations, rentals, invoices, notifications, rentalCompanyOrgs, auctions] =
-          await Promise.all([
-            apiClient.listRequirements(organizationId) as Promise<Requirement[]>,
-            apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
-            apiClient.listRentals(organizationId) as Promise<Rental[]>,
-            apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
-            apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
-            apiClient.listRentalCompanyOrganizations(organizationId) as Promise<Organization[]>,
-            apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
-          ]);
+        const [
+          requirements,
+          quotations,
+          rentals,
+          invoices,
+          notifications,
+          rentalCompanyOrgs,
+          auctions,
+        ] = await Promise.all([
+          apiClient.listRequirements(organizationId) as Promise<Requirement[]>,
+          apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
+          apiClient.listRentals(organizationId) as Promise<Rental[]>,
+          apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
+          apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
+          apiClient.listRentalCompanyOrganizations(organizationId) as Promise<Organization[]>,
+          apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
+        ]);
 
         const openRequirements = requirements.filter((r) => r.status === "open");
         const responseLists = await Promise.all(
@@ -139,9 +146,7 @@ export function RenterDashboard() {
 
   const auctionsNeedingSelection = auctions.filter((a) => a.needsAttention);
 
-  const unpaidInvoices = invoices.filter(
-    (i) => i.status === "issued" || i.status === "overdue",
-  );
+  const unpaidInvoices = invoices.filter((i) => i.status === "issued" || i.status === "overdue");
   const payableTotal = [...invoiceBalances.values()].reduce((sum, v) => sum + v, 0);
   const dueSoonTotal = unpaidInvoices
     .filter((i) => i.status === "overdue" || daysUntil(i.dueDate) <= INVOICE_DUE_SOON_DAYS)
@@ -176,30 +181,34 @@ export function RenterDashboard() {
     {
       label: "Payable",
       value: formatCurrencyINR(payableTotal),
-      note: dueSoonTotal > 0 ? `${formatCurrencyINR(dueSoonTotal)} due within ${INVOICE_DUE_SOON_DAYS}d` : undefined,
+      note:
+        dueSoonTotal > 0
+          ? `${formatCurrencyINR(dueSoonTotal)} due within ${INVOICE_DUE_SOON_DAYS}d`
+          : undefined,
       noteTone: "warning",
     },
     {
       label: "Auctions",
       value: String(auctions.length),
-      note: auctionsNeedingSelection.length > 0 ? `${auctionsNeedingSelection.length} awaiting selection` : undefined,
+      note:
+        auctionsNeedingSelection.length > 0
+          ? `${auctionsNeedingSelection.length} awaiting selection`
+          : undefined,
       noteTone: "warning",
       href: "/auctions",
     },
   ];
 
   const attention: AttentionItem[] = [
-    ...toReview.map(
-      (q): AttentionItem => ({
-        ref: q.referenceNumber,
-        title: "Quotation awaiting your acceptance",
-        detail: `${rentalCompanyNames.get(q.rentalCompanyOrganizationId) ?? "Rental company"} · ${formatCurrencyINR(q.rate)}/${q.rateUnit} · validity ${q.validityDate}`,
-        state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
-        tone: "warning",
-        actionLabel: "Open",
-        href: "/quotations",
-      }),
-    ),
+    ...toReview.map((q): AttentionItem => ({
+      ref: q.referenceNumber,
+      title: "Quotation awaiting your acceptance",
+      detail: `${rentalCompanyNames.get(q.rentalCompanyOrganizationId) ?? "Rental company"} · ${formatCurrencyINR(q.rate)}/${q.rateUnit} · validity ${q.validityDate}`,
+      state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
+      tone: "warning",
+      actionLabel: "Open",
+      href: "/quotations",
+    })),
     ...unpaidInvoices
       .filter((i) => i.status === "overdue" || daysUntil(i.dueDate) <= INVOICE_DUE_SOON_DAYS)
       .map((invoice): AttentionItem => {
@@ -208,7 +217,9 @@ export function RenterDashboard() {
           ref: invoice.invoiceNumber,
           title: overdue ? "Payment overdue" : "Invoice due soon",
           detail: `${rentalCompanyNames.get(invoice.rentalCompanyOrganizationId) ?? "Rental company"} · ${formatCurrencyINR(invoiceBalances.get(invoice.id) ?? invoice.totalAmount)} · due ${invoice.dueDate}`,
-          state: overdue ? `Overdue ${Math.abs(daysUntil(invoice.dueDate))}d` : `${daysUntil(invoice.dueDate)}d`,
+          state: overdue
+            ? `Overdue ${Math.abs(daysUntil(invoice.dueDate))}d`
+            : `${daysUntil(invoice.dueDate)}d`,
           tone: overdue ? "danger" : "warning",
           actionLabel: overdue ? "Pay" : "Review",
           href: "/billing",
@@ -216,28 +227,24 @@ export function RenterDashboard() {
       }),
     ...openRequirements
       .filter((r) => (responseCounts.get(r.id)?.total ?? 0) > 0)
-      .map(
-        (r): AttentionItem => ({
-          ref: `REQ-${r.id.slice(0, 8).toUpperCase()}`,
-          title: "Responses received",
-          detail: `${r.projectName ?? "Requirement"} · ${responseCounts.get(r.id)?.total ?? 0} responses`,
-          state: "Review",
-          tone: "info",
-          actionLabel: "Compare",
-          href: "/requirements",
-        }),
-      ),
-    ...auctionsNeedingSelection.map(
-      (a): AttentionItem => ({
-        ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,
-        title: "Auction closed — select a participant",
-        detail: `${a.requirementProjectName ?? "Requirement"} · ${a.participantCount ?? 0} participant${a.participantCount === 1 ? "" : "s"}`,
-        state: "Selection pending",
-        tone: "danger",
-        actionLabel: "Select",
-        href: `/auctions?requirementId=${a.requirementId}&auctionId=${a.id}`,
-      }),
-    ),
+      .map((r): AttentionItem => ({
+        ref: `REQ-${r.id.slice(0, 8).toUpperCase()}`,
+        title: "Responses received",
+        detail: `${r.projectName ?? "Requirement"} · ${responseCounts.get(r.id)?.total ?? 0} responses`,
+        state: "Review",
+        tone: "info",
+        actionLabel: "Compare",
+        href: "/requirements",
+      })),
+    ...auctionsNeedingSelection.map((a): AttentionItem => ({
+      ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,
+      title: "Auction closed — select a participant",
+      detail: `${a.requirementProjectName ?? "Requirement"} · ${a.participantCount ?? 0} participant${a.participantCount === 1 ? "" : "s"}`,
+      state: "Selection pending",
+      tone: "danger",
+      actionLabel: "Select",
+      href: `/auctions?requirementId=${a.requirementId}&auctionId=${a.id}`,
+    })),
   ].slice(0, MAX_ATTENTION_ITEMS);
 
   const maxStage = Math.max(

@@ -76,7 +76,9 @@ export default function CategoryDetailPage() {
     const form = new FormData(event.currentTarget);
     setEditSubmitting(true);
     try {
-      await apiClient.updateProductCategory(organizationId, id, { name: String(form.get("name") ?? "") });
+      await apiClient.updateProductCategory(organizationId, id, {
+        name: String(form.get("name") ?? ""),
+      });
       setEditOpen(false);
       await load();
     } catch (err) {
@@ -125,13 +127,21 @@ export default function CategoryDetailPage() {
             <Button
               variant="secondary"
               onClick={() => setEditOpen(true)}
-              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+              title={
+                canManage
+                  ? undefined
+                  : "Requires catalogue.manage (Rental Company organizations only)"
+              }
             >
               Edit category
             </Button>
             <Button
               onClick={() => setAddSubOpen(true)}
-              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+              title={
+                canManage
+                  ? undefined
+                  : "Requires catalogue.manage (Rental Company organizations only)"
+              }
             >
               Add subcategory
             </Button>
@@ -165,7 +175,9 @@ export default function CategoryDetailPage() {
                 <Tr key={subcategory.id}>
                   <Td className="font-medium text-ink">{subcategory.name}</Td>
                   <Td className="font-mono">{subcategory.code}</Td>
-                  <Td>{products.filter((p) => p.productSubcategoryId === subcategory.id).length}</Td>
+                  <Td>
+                    {products.filter((p) => p.productSubcategoryId === subcategory.id).length}
+                  </Td>
                   <Td>
                     <Link
                       href={`/catalogue/subcategories/${subcategory.id}`}
@@ -206,7 +218,12 @@ export default function CategoryDetailPage() {
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input label="Category name" name="name" defaultValue={category.name} required />
-          <Input label="Code" defaultValue={category.code} disabled title="Code is immutable once created" />
+          <Input
+            label="Code"
+            defaultValue={category.code}
+            disabled
+            title="Code is immutable once created"
+          />
         </div>
       </CatalogueFormDialog>
 
@@ -244,7 +261,9 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex flex-col gap-0.5 border-b border-border pb-2">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
+        {value}
+      </span>
     </div>
   );
 }

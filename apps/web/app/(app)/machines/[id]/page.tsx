@@ -170,7 +170,9 @@ export default function MachineDetailPage() {
               <Card className="border-l-[3px] border-l-info">
                 <div className="mb-3 flex items-center gap-2">
                   <h2 className="text-sm font-semibold text-ink">Currently on rent</h2>
-                  <span className="font-mono text-xs text-info">RN-{rental.id.slice(0, 8).toUpperCase()}</span>
+                  <span className="font-mono text-xs text-info">
+                    RN-{rental.id.slice(0, 8).toUpperCase()}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Field label="Renter" value={rentalName ?? "—"} />
@@ -179,7 +181,11 @@ export default function MachineDetailPage() {
                     value={`${formatDate(rental.startDate)} → ${rental.endDate ? formatDate(rental.endDate) : "open"}`}
                     mono
                   />
-                  <Field label="Rate" value={`₹${rental.rate.toLocaleString("en-IN")} / ${rental.rateUnit}`} mono />
+                  <Field
+                    label="Rate"
+                    value={`₹${rental.rate.toLocaleString("en-IN")} / ${rental.rateUnit}`}
+                    mono
+                  />
                   <Field label="Site" value={rental.projectLocation ?? rental.projectName ?? "—"} />
                 </div>
               </Card>
@@ -193,7 +199,11 @@ export default function MachineDetailPage() {
                 <Field label="Chassis number" value={machine.chassisNumber ?? "—"} mono />
                 <Field label="Manufacturer" value={product?.manufacturer ?? "—"} />
                 <Field label="Product" value={product?.name ?? "—"} />
-                <Field label="Year of manufacture" value={String(machine.yearOfManufacture ?? "—")} mono />
+                <Field
+                  label="Year of manufacture"
+                  value={String(machine.yearOfManufacture ?? "—")}
+                  mono
+                />
                 {specRows.map((row) => (
                   <Field key={row.label} label={row.label} value={row.value} mono />
                 ))}
@@ -232,7 +242,9 @@ export default function MachineDetailPage() {
       )}
 
       {tab === "rentals" && (
-        <Card padding={rentals.filter((r) => r.machineId === machine.id).length === 0 ? "md" : "none"}>
+        <Card
+          padding={rentals.filter((r) => r.machineId === machine.id).length === 0 ? "md" : "none"}
+        >
           {rentals.filter((r) => r.machineId === machine.id).length === 0 ? (
             <EmptyState title="No rental history" />
           ) : (
@@ -264,7 +276,15 @@ export default function MachineDetailPage() {
                         ₹{r.rate.toLocaleString("en-IN")}/{r.rateUnit}
                       </Td>
                       <Td>
-                        <Badge tone={r.status === "active" ? "info" : r.status === "cancelled" ? "danger" : "neutral"}>
+                        <Badge
+                          tone={
+                            r.status === "active"
+                              ? "info"
+                              : r.status === "cancelled"
+                                ? "danger"
+                                : "neutral"
+                          }
+                        >
                           {r.status}
                         </Badge>
                       </Td>
@@ -276,7 +296,9 @@ export default function MachineDetailPage() {
         </Card>
       )}
 
-      {tab === "maintenance" && organizationId && <MaintenancePanel organizationId={organizationId} machineId={machine.id} />}
+      {tab === "maintenance" && organizationId && (
+        <MaintenancePanel organizationId={organizationId} machineId={machine.id} />
+      )}
 
       {tab === "logsheets" && (
         <Card padding={!rental || logsheets.length === 0 ? "md" : "none"}>
@@ -340,7 +362,9 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex flex-col gap-0.5 border-b border-border pb-2">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
+        {value}
+      </span>
     </div>
   );
 }

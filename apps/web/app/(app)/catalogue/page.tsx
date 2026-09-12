@@ -58,7 +58,9 @@ export default function CataloguePage() {
     // pattern already used by machines/page.tsx — not a per-machine
     // N+1 loop.
     const subcategoryLists = await Promise.all(
-      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+      categories.map(
+        (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
+      ),
     );
     setData({ categories, subcategories: subcategoryLists.flat(), products, machines });
   }
@@ -100,7 +102,9 @@ export default function CataloguePage() {
           name: String(form.get("name") ?? ""),
           manufacturer: String(form.get("manufacturer") ?? ""),
           ...(capacity ? { capacity: Number(capacity) } : {}),
-          ...(capacityUnit ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> } : {}),
+          ...(capacityUnit
+            ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> }
+            : {}),
         });
       }
       setCreateOpen(false);
@@ -158,7 +162,11 @@ export default function CataloguePage() {
   ];
 
   const createLabel =
-    tab === "categories" ? "New category" : tab === "subcategories" ? "New subcategory" : "New product";
+    tab === "categories"
+      ? "New category"
+      : tab === "subcategories"
+        ? "New subcategory"
+        : "New product";
 
   return (
     <div className="flex flex-col gap-4">
@@ -168,7 +176,11 @@ export default function CataloguePage() {
         actions={
           <Button
             onClick={() => setCreateOpen(true)}
-            title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+            title={
+              canManage
+                ? undefined
+                : "Requires catalogue.manage (Rental Company organizations only)"
+            }
           >
             {createLabel}
           </Button>
@@ -179,7 +191,13 @@ export default function CataloguePage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          placeholder={tab === "categories" ? "Search categories…" : tab === "subcategories" ? "Search subcategories…" : "Product name, manufacturer…"}
+          placeholder={
+            tab === "categories"
+              ? "Search categories…"
+              : tab === "subcategories"
+                ? "Search subcategories…"
+                : "Product name, manufacturer…"
+          }
           className="w-64"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -189,7 +207,10 @@ export default function CataloguePage() {
             className="w-48"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            options={[{ value: "", label: "All categories" }, ...categories.map((c) => ({ value: c.id, label: c.name }))]}
+            options={[
+              { value: "", label: "All categories" },
+              ...categories.map((c) => ({ value: c.id, label: c.name })),
+            ]}
           />
         )}
       </div>
@@ -221,7 +242,10 @@ export default function CataloguePage() {
                     <Td>{subs.length}</Td>
                     <Td>{productCount}</Td>
                     <Td>
-                      <Link href={`/catalogue/categories/${category.id}`} className="text-xs font-medium text-accent-text">
+                      <Link
+                        href={`/catalogue/categories/${category.id}`}
+                        className="text-xs font-medium text-accent-text"
+                      >
                         Open
                       </Link>
                     </Td>
@@ -252,7 +276,9 @@ export default function CataloguePage() {
                   <Td className="font-medium text-ink">{subcategory.name}</Td>
                   <Td className="font-mono">{subcategory.code}</Td>
                   <Td>{categoryById.get(subcategory.productCategoryId)?.name ?? "—"}</Td>
-                  <Td>{products.filter((p) => p.productSubcategoryId === subcategory.id).length}</Td>
+                  <Td>
+                    {products.filter((p) => p.productSubcategoryId === subcategory.id).length}
+                  </Td>
                   <Td>
                     <Link
                       href={`/catalogue/subcategories/${subcategory.id}`}
@@ -294,7 +320,10 @@ export default function CataloguePage() {
                     <Td className="font-mono">{formatCapacity(product)}</Td>
                     <Td className="font-mono">{ownCount}</Td>
                     <Td>
-                      <Link href={`/catalogue/products/${product.id}`} className="text-xs font-medium text-accent-text">
+                      <Link
+                        href={`/catalogue/products/${product.id}`}
+                        className="text-xs font-medium text-accent-text"
+                      >
                         Open
                       </Link>
                     </Td>
@@ -306,8 +335,8 @@ export default function CataloguePage() {
         ))}
 
       <p className="text-xs text-meta-light">
-        Machine counts above are your organization&apos;s own registered machines only — there is
-        no platform-wide product→machine lookup yet (see the frontend/backend gap report). No
+        Machine counts above are your organization&apos;s own registered machines only — there is no
+        platform-wide product→machine lookup yet (see the frontend/backend gap report). No
         active/inactive state is shown: the catalogue tables have no such column today.
       </p>
 

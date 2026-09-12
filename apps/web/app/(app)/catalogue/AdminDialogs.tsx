@@ -2,7 +2,10 @@
 
 import { Button, Dialog } from "@fleetip/ui";
 import type { FormEvent, ReactNode } from "react";
-import { NotYetAvailableConfirmDialog, NotYetAvailableFormDialog } from "../../../components/NotYetAvailableDialog";
+import {
+  NotYetAvailableConfirmDialog,
+  NotYetAvailableFormDialog,
+} from "../../../components/NotYetAvailableDialog";
 
 // catalogue.manage is seeded rental_company-only (see
 // docs/backend-hardening-report.md's "Backend MVP Gaps pass" entry) — a

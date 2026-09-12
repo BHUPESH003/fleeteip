@@ -53,7 +53,9 @@ export default function SubcategoryDetailPage() {
     // categories (a handful, platform-wide), same bounded pattern as
     // machines/page.tsx and the catalogue overview.
     const subcategoryLists = await Promise.all(
-      categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
+      categories.map(
+        (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
+      ),
     );
     const subcategory = subcategoryLists.flat().find((s) => s.id === id);
     if (!subcategory) {
@@ -111,7 +113,9 @@ export default function SubcategoryDetailPage() {
         name: String(form.get("name") ?? ""),
         manufacturer: String(form.get("manufacturer") ?? ""),
         ...(capacity ? { capacity: Number(capacity) } : {}),
-        ...(capacityUnit ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> } : {}),
+        ...(capacityUnit
+          ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> }
+          : {}),
       });
       setAddProductOpen(false);
       await load();
@@ -132,7 +136,9 @@ export default function SubcategoryDetailPage() {
       <PageHeader
         breadcrumbs={[
           { label: "Catalogue", href: "/catalogue" },
-          ...(category ? [{ label: category.name, href: `/catalogue/categories/${category.id}` }] : []),
+          ...(category
+            ? [{ label: category.name, href: `/catalogue/categories/${category.id}` }]
+            : []),
           { label: subcategory.name },
         ]}
         title={subcategory.name}
@@ -142,13 +148,21 @@ export default function SubcategoryDetailPage() {
             <Button
               variant="secondary"
               onClick={() => setEditOpen(true)}
-              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+              title={
+                canManage
+                  ? undefined
+                  : "Requires catalogue.manage (Rental Company organizations only)"
+              }
             >
               Edit subcategory
             </Button>
             <Button
               onClick={() => setAddProductOpen(true)}
-              title={canManage ? undefined : "Requires catalogue.manage (Rental Company organizations only)"}
+              title={
+                canManage
+                  ? undefined
+                  : "Requires catalogue.manage (Rental Company organizations only)"
+              }
             >
               Add product
             </Button>
@@ -184,7 +198,10 @@ export default function SubcategoryDetailPage() {
                   <Td>{product.manufacturer}</Td>
                   <Td className="font-mono">{formatCapacity(product)}</Td>
                   <Td>
-                    <Link href={`/catalogue/products/${product.id}`} className="text-xs font-medium text-accent-text">
+                    <Link
+                      href={`/catalogue/products/${product.id}`}
+                      className="text-xs font-medium text-accent-text"
+                    >
                       Open
                     </Link>
                   </Td>
@@ -196,7 +213,11 @@ export default function SubcategoryDetailPage() {
       </Card>
 
       <div>
-        <button type="button" onClick={() => setDisableOpen(true)} className="text-xs font-medium text-danger">
+        <button
+          type="button"
+          onClick={() => setDisableOpen(true)}
+          className="text-xs font-medium text-danger"
+        >
           Disable subcategory…
         </button>
       </div>
@@ -216,7 +237,12 @@ export default function SubcategoryDetailPage() {
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input label="Subcategory name" name="name" defaultValue={subcategory.name} required />
-          <Input label="Code" defaultValue={subcategory.code} disabled title="Code is immutable once created" />
+          <Input
+            label="Code"
+            defaultValue={subcategory.code}
+            disabled
+            title="Code is immutable once created"
+          />
         </div>
       </CatalogueFormDialog>
 
@@ -263,7 +289,9 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex flex-col gap-0.5 border-b border-border pb-2">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
+        {value}
+      </span>
     </div>
   );
 }
