@@ -2,6 +2,7 @@ export interface TabItem {
   key: string;
   label: string;
   disabled?: boolean;
+  title?: string;
 }
 
 export interface TabsProps {
@@ -22,6 +23,7 @@ export function Tabs({ items, active, onChange, className }: TabsProps) {
             key={item.key}
             type="button"
             disabled={item.disabled}
+            title={item.title}
             onClick={() => !item.disabled && onChange(item.key)}
             className={[
               "shrink-0 border-b-2 px-3 py-2 text-sm",

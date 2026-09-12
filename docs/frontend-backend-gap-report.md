@@ -374,6 +374,50 @@ calling an endpoint the Renter has no permission for.
 
 ---
 
+## Phase 7 — Rentals / Operations
+
+### Screen
+Rental detail — Transport / Logsheets & utilization tabs
+
+### UI requirement
+A Renter viewing their own rental should at least be able to see delivery
+status (mobilization/demobilization) and equipment utilization (operating
+hours, idle hours) for equipment they are paying for — read-only.
+
+### Current backend support
+None
+
+### Existing source
+`apps/api/src/modules/.../transport-service.ts` and the logsheet/utilization
+service both gate `listByRental`/`list`/`get` on `transport.manage` /
+`logsheet.manage` (Rental-Company-only, confirmed by reading the actual
+`requirePermission` calls, not assumed) — this is a read-gate, not just a
+write-gate, unlike every other Rental-Company/Renter split in this codebase
+(`rental.manage`/`rental.respond`, `quotation.manage`/`quotation.respond`,
+`billing.manage`/`billing.respond`), which all give the Renter a read-only
+`.respond` permission.
+
+### Missing capability
+`transport.respond` and `logsheet.respond` (read-only) permissions, plus
+service methods that branch on caller org type the same way
+`RentalService.listRentals` already does for `rental.respond`.
+
+### Required backend work
+New permission codes + a migration to seed them to the renter role, and a
+Renter-scoped branch in `TransportService`/`LogsheetService` (list by rental,
+scoped to rentals the Renter is actually the counterparty on).
+
+### Priority
+Medium
+
+### Reason
+Discovered live while building this phase: the Transport and Logsheets &
+utilization tabs are rendered disabled (with a tooltip explaining why) for a
+Renter rather than silently omitted or faked with placeholder data — this is
+the one place the established manage/respond pattern wasn't extended.
+
+---
+
 ## Template for new entries
 
 ```
