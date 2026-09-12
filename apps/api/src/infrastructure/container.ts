@@ -20,6 +20,7 @@ import { RequirementService } from "../modules/marketplace/rfq/application/requi
 import { RequirementRepository } from "../modules/marketplace/rfq/infrastructure/requirement-repository.js";
 import { MaintenanceService } from "../modules/maintenance/application/maintenance-service.js";
 import { MaintenanceRepository } from "../modules/maintenance/infrastructure/maintenance-repository.js";
+import { OrganizationService } from "../modules/organizations/application/organization-service.js";
 import { MembershipRepository } from "../modules/organizations/infrastructure/membership-repository.js";
 import { OrganizationRepository } from "../modules/organizations/infrastructure/organization-repository.js";
 import { PermissionService } from "../modules/permissions/application/permission-service.js";
@@ -87,6 +88,14 @@ export const container = {
     roleRepository,
   ),
   permissionService,
+
+  organizationService: new OrganizationService(
+    organizationRepository,
+    membershipRepository,
+    roleRepository,
+    userRepository,
+    permissionService,
+  ),
 
   catalogueService: new CatalogueService(
     productCategoryRepository,

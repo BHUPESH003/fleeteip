@@ -39,6 +39,9 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
       throw new Error("not used in this test");
     },
     listWithOrganizationByUserId: async () => [],
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
   };
   const roleRepository: RoleRepositoryPort = {
     findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),

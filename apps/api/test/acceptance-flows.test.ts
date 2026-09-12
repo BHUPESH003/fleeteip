@@ -117,6 +117,9 @@ function fakeMembershipRepository(): MembershipRepositoryPort {
       throw new Error("not used in this test");
     },
     listWithOrganizationByUserId: async () => [],
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",

@@ -107,3 +107,35 @@ export const membershipWithOrganizationSchema = membershipSchema.extend({
   permissions: z.array(permissionCodeSchema),
 });
 export type MembershipWithOrganization = z.infer<typeof membershipWithOrganizationSchema>;
+
+// --- Organization administration: a tenant admin's own org/members/roles ---
+// Scoped deliberately conservatively — see docs/frontend-backend-gap-report.md
+// for what a tenant org-admin screen actually needs. Never exposes
+// password_hash/session tokens or any other authentication internal.
+
+export const organizationMemberSchema = z.object({
+  id: z.string().uuid(), // membership id
+  userId: z.string().uuid(),
+  email: z.string().email(),
+  displayName: z.string(),
+  roleName: roleNameSchema,
+  status: membershipStatusSchema,
+  createdAt: z.string().datetime(),
+});
+export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
+
+// The invited user must already hold a FleetIP account (looked up by email)
+// — there is no email-sending infrastructure in this codebase yet to
+// support inviting someone who doesn't. See
+// docs/frontend-backend-gap-report.md for this documented limitation.
+export const inviteMemberRequestSchema = z.object({
+  email: z.string().email(),
+  roleName: roleNameSchema,
+});
+export type InviteMemberRequest = z.infer<typeof inviteMemberRequestSchema>;
+
+export const roleWithPermissionsSchema = z.object({
+  roleName: roleNameSchema,
+  permissions: z.array(permissionCodeSchema),
+});
+export type RoleWithPermissions = z.infer<typeof roleWithPermissionsSchema>;

@@ -65,4 +65,24 @@ export class MembershipRepository implements MembershipRepositoryPort {
       .where("memberships.status", "=", "active")
       .executeTakeFirst();
   }
+
+  /** Every member of one organization, joined with the user's public identity and role name — never selects password_hash. */
+  listByOrganization(organizationId: string) {
+    return this.db
+      .selectFrom("memberships")
+      .innerJoin("users", "users.id", "memberships.user_id")
+      .innerJoin("roles", "roles.id", "memberships.role_id")
+      .select([
+        "memberships.id as id",
+        "memberships.user_id as user_id",
+        "users.email as email",
+        "users.display_name as display_name",
+        "roles.name as role_name",
+        "memberships.status as status",
+        "memberships.created_at as created_at",
+      ])
+      .where("memberships.organization_id", "=", organizationId)
+      .orderBy("memberships.created_at", "asc")
+      .execute();
+  }
 }

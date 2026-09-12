@@ -17,6 +17,7 @@ import { quotationResponseRoutes } from "./modules/marketplace/quotation-respons
 import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { requirementRoutes } from "./modules/marketplace/rfq/presentation/routes.js";
 import { notificationRoutes } from "./modules/notification/presentation/routes.js";
+import { organizationRoutes } from "./modules/organizations/presentation/routes.js";
 import { transportRoutes } from "./modules/transport/presentation/routes.js";
 import { AppError } from "./shared/errors.js";
 
@@ -53,6 +54,7 @@ export async function buildApp() {
   app.get("/health", async () => ({ status: "ok" }));
 
   await app.register(identityRoutes);
+  await app.register(organizationRoutes);
   await app.register(catalogueRoutes);
   await app.register(equipmentRoutes);
   await app.register(rentalRoutes);

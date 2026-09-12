@@ -62,6 +62,21 @@ export interface ActiveMembershipRecord {
   role_id: string;
 }
 
+// One row per member of an organization, joined with the user's public
+// identity and the role's name — feeds the org admin "Members" screen.
+// Deliberately never carries password_hash (see identity/domain/ports.ts'
+// UserRecord vs. PublicUserRecord split) — this query joins users but never
+// selects that column.
+export interface OrganizationMemberRow {
+  id: string;
+  user_id: string;
+  email: string;
+  display_name: string;
+  role_name: string;
+  status: string;
+  created_at: Date | string;
+}
+
 export interface MembershipRepositoryPort {
   create(input: {
     userId: string;
@@ -74,4 +89,5 @@ export interface MembershipRepositoryPort {
     userId: string,
     organizationId: string,
   ): Promise<ActiveMembershipRecord | undefined>;
+  listByOrganization(organizationId: string): Promise<OrganizationMemberRow[]>;
 }
