@@ -402,27 +402,58 @@ export default function QuotationDetailPage() {
                 </div>
               </div>
             ) : isOwner ? (
-              <div className="flex flex-col gap-2">
-                <h2 className="mb-1 text-sm font-semibold text-ink">Actions</h2>
-                {quotation.status === "draft" && (
-                  <Button onClick={() => void handleAction("send")}>Send</Button>
-                )}
-                {(quotation.status === "draft" || quotation.status === "sent") && (
-                  <Button variant="secondary" onClick={() => void handleAction("withdraw")}>
-                    Withdraw
-                  </Button>
-                )}
-                {canNegotiate && !needsAcceptance && (
-                  <Button onClick={() => void handleAction("award")}>Award</Button>
-                )}
-                {canNegotiate && needsAcceptance && (
-                  <p className="text-xs text-meta">Awaiting the Renter&rsquo;s acceptance.</p>
-                )}
-                {!canNegotiate && quotation.status !== "draft" && (
-                  <p className="text-xs text-meta">
-                    This quotation is {quotation.status} — no further action needed here.
-                  </p>
-                )}
+              <div className="flex flex-col gap-3">
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-ink">Actions</h2>
+                  <div className="flex flex-col gap-2">
+                    {quotation.status === "draft" && (
+                      <Button onClick={() => void handleAction("send")}>Send</Button>
+                    )}
+                    {(quotation.status === "draft" || quotation.status === "sent") && (
+                      <Button variant="secondary" onClick={() => void handleAction("withdraw")}>
+                        Withdraw
+                      </Button>
+                    )}
+                    {canNegotiate && !needsAcceptance && (
+                      <Button onClick={() => void handleAction("award")}>Award</Button>
+                    )}
+                    {canNegotiate && needsAcceptance && (
+                      <p className="text-xs text-meta">Awaiting the Renter&rsquo;s acceptance.</p>
+                    )}
+                    {!canNegotiate && quotation.status !== "draft" && (
+                      <p className="text-xs text-meta">
+                        This quotation is {quotation.status} — no further action needed here.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {canNegotiate &&
+                  (!showCounterForm ? (
+                    <Button variant="secondary" onClick={() => setShowCounterForm(true)}>
+                      Send counter offer
+                    </Button>
+                  ) : (
+                    <form onSubmit={handleOffer} className="flex flex-col gap-3">
+                      <Input label="Rate" name="rate" type="number" step="0.01" required />
+                      <Select
+                        label="Unit"
+                        name="rateUnit"
+                        options={RATE_UNIT_OPTIONS}
+                        defaultValue={quotation.rateUnit}
+                      />
+                      <Input label="Notes" name="notes" />
+                      <div className="flex gap-2">
+                        <Button type="submit">Send counter offer</Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => setShowCounterForm(false)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  ))}
               </div>
             ) : (
               <div>

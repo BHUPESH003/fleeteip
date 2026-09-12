@@ -300,9 +300,10 @@ edit.
 ## Commercial quotation negotiation is one-directional per round
 
 Found while fixing the Path C award-without-acceptance bug above (not
-itself a security/isolation hole — noted for the later audit).
+itself a security/isolation hole). **Resolved (2026-09-12):** the user
+asked for this fixed directly rather than left deferred — see below.
 
-### Current behavior
+### Current behavior (as originally found)
 
 `CommercialQuotationService.makeOffer` lets either party create a new
 counter-offer whenever the quotation is `sent`/`negotiating`, and
@@ -339,9 +340,14 @@ on either side of the quotation.
 
 ### Recommended backend enforcement
 
-None needed. Add a "Send counter offer" trigger to the Rental Company's
-own action panel, reusing the exact form already built for the Renter's
-`canAccept` panel.
+None needed — the fix was purely additive UI, no backend/contract change.
+The Rental Company's `isOwner` action panel now has its own "Send counter
+offer" trigger (same `handleOffer`/`makeOffer` call the Renter's panel
+already used, just wired to a second render site), available whenever
+`canNegotiate` is true, alongside Send/Withdraw/Award. It coexists with
+Award rather than replacing it — a Rental Company that already has the
+Renter's acceptance can still choose to award immediately, or propose a
+further counter first.
 
 ### Validation location
 
