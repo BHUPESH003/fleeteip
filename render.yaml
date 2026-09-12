@@ -26,10 +26,11 @@ services:
     # @fleetip/contracts correctly, then the build runs scoped to this
     # package (esbuild output lands back in apps/api/dist).
     buildCommand: cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @fleetip/api run build
-    # Runs after buildCommand, before startCommand, on every deploy — keeps
-    # the schema current without a manual step to remember.
-    preDeployCommand: pnpm run migrate
-    startCommand: pnpm run start
+    # preDeployCommand isn't available on the free plan, so migrations run
+    # as part of startCommand instead — Kysely tracks applied migrations in
+    # kysely_migration, so this is a safe no-op on restarts where nothing's
+    # new, not just on real deploys.
+    startCommand: pnpm run migrate && pnpm run start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
