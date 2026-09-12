@@ -31,7 +31,16 @@ const LEGS: TransportLeg[] = ["mobilization", "demobilization"];
  * only real Transport data source in this branch is
  * listTransportForRental (per-rental), there is no org-wide list endpoint.
  */
-export function TransportPanel({ organizationId, rentalId }: { organizationId: string; rentalId: string }) {
+export function TransportPanel({
+  organizationId,
+  rentalId,
+  readOnly = false,
+}: {
+  organizationId: string;
+  rentalId: string;
+  /** Renter callers get transport.respond (read-only) — hide the plan/mark-status actions. */
+  readOnly?: boolean;
+}) {
   const [records, setRecords] = useState<TransportRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,11 +103,12 @@ export function TransportPanel({ organizationId, rentalId }: { organizationId: s
                 {record ? (
                   <>
                     <StatusBadge status={record.status} map={TRANSPORT_STATUS_MAP} />
-                    {legalNextTransportStatuses(record.status).map((next) => (
-                      <Button key={next} size="sm" variant="secondary" onClick={() => void handleStatus(leg, next)}>
-                        Mark {next}
-                      </Button>
-                    ))}
+                    {!readOnly &&
+                      legalNextTransportStatuses(record.status).map((next) => (
+                        <Button key={next} size="sm" variant="secondary" onClick={() => void handleStatus(leg, next)}>
+                          Mark {next}
+                        </Button>
+                      ))}
                     <Link
                       href={`/transport/${record.id}?rentalId=${rentalId}`}
                       className="text-xs font-medium text-accent-text"
@@ -107,9 +117,11 @@ export function TransportPanel({ organizationId, rentalId }: { organizationId: s
                     </Link>
                   </>
                 ) : (
-                  <Button size="sm" variant="secondary" onClick={() => void handleCreate(leg)}>
-                    Plan
-                  </Button>
+                  !readOnly && (
+                    <Button size="sm" variant="secondary" onClick={() => void handleCreate(leg)}>
+                      Plan
+                    </Button>
+                  )
                 )}
               </div>
             </div>
@@ -125,7 +137,16 @@ export function TransportPanel({ organizationId, rentalId }: { organizationId: s
  * Logsheets workspace's per-rental drill-down — see TransportPanel above
  * for why this stays rental-scoped (no org-wide logsheet endpoint exists).
  */
-export function LogsheetPanel({ organizationId, rentalId }: { organizationId: string; rentalId: string }) {
+export function LogsheetPanel({
+  organizationId,
+  rentalId,
+  readOnly = false,
+}: {
+  organizationId: string;
+  rentalId: string;
+  /** Renter callers get logsheet.respond (read-only) — hide the submit form. */
+  readOnly?: boolean;
+}) {
   const [logsheets, setLogsheets] = useState<Logsheet[]>([]);
   const [utilization, setUtilization] = useState<RentalUtilization | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -189,15 +210,20 @@ export function LogsheetPanel({ organizationId, rentalId }: { organizationId: st
         </Card>
       )}
       <Card>
-        <form onSubmit={handleSubmit} className="mb-4 flex flex-wrap items-end gap-3">
-          <Input label="Date" name="logDate" type="date" required />
-          <Input label="Operating hrs" name="operatingHours" type="number" step="0.5" />
-          <Input label="Idle hrs" name="idleHours" type="number" step="0.5" />
-          <Input label="Overtime hrs" name="overtimeHours" type="number" step="0.5" />
-          <Button type="submit">Submit logsheet</Button>
-        </form>
+        {!readOnly && (
+          <form onSubmit={handleSubmit} className="mb-4 flex flex-wrap items-end gap-3">
+            <Input label="Date" name="logDate" type="date" required />
+            <Input label="Operating hrs" name="operatingHours" type="number" step="0.5" />
+            <Input label="Idle hrs" name="idleHours" type="number" step="0.5" />
+            <Input label="Overtime hrs" name="overtimeHours" type="number" step="0.5" />
+            <Button type="submit">Submit logsheet</Button>
+          </form>
+        )}
         {logsheets.length === 0 ? (
-          <EmptyState title="No logsheets yet" description="Submit one above." />
+          <EmptyState
+            title="No logsheets yet"
+            description={readOnly ? "None submitted yet." : "Submit one above."}
+          />
         ) : (
           <Table>
             <Thead>

@@ -57,10 +57,16 @@ interface Loaded {
 export default function RentalDetailPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
   const isRenter = organizationType === "renter";
+  // Renters get read-only transport.respond/logsheet.respond (seeded to the
+  // owner role only, per migration 0019) — a Renter member without it stays
+  // correctly disabled, same as the Rental Company side already is without
+  // transport.manage/logsheet.manage.
+  const canReadTransport = !isRenter || hasPermission("transport.respond");
+  const canReadLogsheets = !isRenter || hasPermission("logsheet.respond");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -155,15 +161,21 @@ export default function RentalDetailPage() {
   ];
 
   const renterExplanation = "Managed by the rental company — not visible to Renters yet.";
+  const noAccessExplanation = "Your membership doesn't have read access to this yet — ask an organization owner.";
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "billing", label: "Billing" },
-    { key: "transport", label: "Transport", disabled: isRenter, title: isRenter ? renterExplanation : undefined },
+    {
+      key: "transport",
+      label: "Transport",
+      disabled: !canReadTransport,
+      title: !canReadTransport ? noAccessExplanation : undefined,
+    },
     {
       key: "logsheets",
       label: "Logsheets & utilization",
-      disabled: isRenter,
-      title: isRenter ? renterExplanation : undefined,
+      disabled: !canReadLogsheets,
+      title: !canReadLogsheets ? noAccessExplanation : undefined,
     },
     { key: "maintenance", label: "Maintenance", disabled: isRenter, title: isRenter ? renterExplanation : undefined },
     { key: "activity", label: "Activity" },
@@ -265,8 +277,12 @@ export default function RentalDetailPage() {
         </Card>
       )}
 
-      {tab === "transport" && !isRenter && <TransportPanel organizationId={organizationId} rentalId={id} />}
-      {tab === "logsheets" && !isRenter && <LogsheetPanel organizationId={organizationId} rentalId={id} />}
+      {tab === "transport" && canReadTransport && (
+        <TransportPanel organizationId={organizationId} rentalId={id} readOnly={isRenter} />
+      )}
+      {tab === "logsheets" && canReadLogsheets && (
+        <LogsheetPanel organizationId={organizationId} rentalId={id} readOnly={isRenter} />
+      )}
 
       {tab === "maintenance" && !isRenter && machine && (
         <MaintenancePanel organizationId={organizationId} machineId={machine.id} />
