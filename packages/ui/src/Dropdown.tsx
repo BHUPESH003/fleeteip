@@ -41,7 +41,7 @@ export function Dropdown({ trigger, children, align = "right" }: DropdownProps) 
       {open && (
         <div
           className={[
-            "absolute z-10 mt-2 min-w-[11rem] rounded-md border border-gray-200 bg-white py-1 shadow-lg",
+            "absolute z-10 mt-2 min-w-[11rem] rounded-panel border border-border bg-surface py-1 shadow-[0_4px_12px_rgba(15,23,32,0.1)]",
             align === "right" ? "right-0" : "left-0",
           ].join(" ")}
           onClick={() => setOpen(false)}
@@ -58,7 +58,7 @@ export function DropdownItem({ className, ...props }: ButtonHTMLAttributes<HTMLB
     <button
       type="button"
       className={[
-        "block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50",
+        "block w-full px-3 py-2 text-left text-sm text-ink-strong hover:bg-surface-sunk",
         className,
       ]
         .filter(Boolean)

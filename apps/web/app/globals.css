@@ -12,14 +12,59 @@
 @source "../../../packages/ui/src";
 
 /*
- * Design-system convention (no custom Tailwind theme tokens — the default
- * palette already covers what FleetIP needs):
- *   - blue-600/700   primary action (buttons, links, active nav)
- *   - gray-*         neutral surfaces, borders, body text
- *   - green/amber/red (100 bg + 800 text) status semantics: success/warning/danger
- * Every component in @fleetip/ui and every page should draw from this set
- * rather than introducing new colors ad hoc.
+ * FleetIP design tokens — sourced from the approved Claude Design canvas
+ * ("FleetIP Redesign", pass 01). Every component in @fleetip/ui and every
+ * page should draw from these tokens rather than raw Tailwind grays/blues,
+ * so a future palette change happens in one place.
  */
+@theme {
+  --color-ink: #0f1720; /* primary text */
+  --color-ink-muted: #47525e; /* secondary text */
+  --color-meta: #5c6875; /* tertiary text, labels */
+  --color-meta-light: #6e7a87; /* placeholders, faint meta */
+  --color-border: #e2e5e9; /* default hairline border */
+  --color-border-strong: #cdd3da; /* control borders */
+  --color-border-stronger: #aeb7c0;
+  --color-surface: #ffffff;
+  --color-surface-sunk: #f4f5f7; /* recessed fields, search box */
+  --color-surface-hover: #f0f2f4; /* ghost-button hover, disabled bg */
+  --color-surface-page: #ebedf0; /* page background behind the shell */
+  --color-ink-strong: #1b2530; /* secondary/ghost button text, avatar chip */
+  --color-disabled-text: #a9b2bb;
+
+  --color-rail: #131a22; /* sidebar background */
+  --color-rail-border: #212c39;
+  --color-rail-active: #1f2b38; /* active nav item background */
+  --color-rail-muted: #97a3b1; /* inactive nav text */
+  --color-rail-planned: #5c6978; /* dimmed "soon" nav text */
+  --color-rail-group: #596573; /* nav group label */
+  --color-rail-tag: #4c5867; /* nav trailing tag text */
+
+  --color-accent: #e07a12; /* primary action */
+  --color-accent-press: #c2620a; /* primary action hover/border */
+  --color-accent-text: #b4650d; /* accent-colored links/text */
+
+  --color-success-bg: #e7f4ec;
+  --color-success: #0e7c4a;
+  --color-warning-bg: #fbf0df;
+  --color-warning: #8f5107;
+  --color-danger-bg: #fbe9e8;
+  --color-danger: #a81f1b;
+  --color-danger-border: #e4b9b7;
+  --color-info-bg: #e6eef7;
+  --color-info: #14558c;
+  --color-neutral-bg: #edeff2;
+  --color-neutral: #55606c;
+
+  --radius-xs: 4px; /* row actions, badges */
+  --radius-control: 5px; /* buttons, inputs, selects, chips */
+  --radius-panel: 6px; /* cards, list panels */
+  --radius-shell: 8px; /* app shell corners */
+
+  --font-sans:
+    var(--font-archivo), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+}
 
 :root {
   color-scheme: light;
@@ -27,9 +72,6 @@
 
 body {
   margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
 }
