@@ -33,3 +33,5 @@ export { Drawer } from "./Drawer";
 export type { DrawerProps } from "./Drawer";
 export { Alert } from "./Alert";
 export type { AlertProps, AlertTone } from "./Alert";
+export { Meter } from "./Meter";
+export type { MeterProps, MeterSegment } from "./Meter";

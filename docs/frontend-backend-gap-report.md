@@ -85,6 +85,48 @@ Tracked so "Soon" nav entries don't quietly rot into "later means never."
 
 ---
 
+## Phase 2 — Dashboards
+
+### Screen
+Renter dashboard
+
+### UI requirement
+An "Auctions" KPI tile (open/closed-awaiting-selection count) and a
+"closed — select a participant" attention row, org-wide.
+
+### Current backend support
+None
+
+### Existing source
+`apiClient.listAuctionsForRequirement`/`getActiveAuctionForRequirement` are
+per-requirement only — there is no org-scoped auction list. Computing this
+honestly would mean looping `getActiveAuctionForRequirement` over every one
+of the Renter's requirements (N+1), which doesn't scale and isn't a real
+"existing implementation" to build on.
+
+### Missing capability
+`GET /organizations/:id/auctions` — every auction the calling org owns
+(Renter, via `auction.manage`) or participates in (Rental Company, via
+`auction.participate`), with enough fields to show status and a
+"needs a decision" flag (e.g. `status: 'closed'` with no participant
+selected yet).
+
+### Required backend work
+Add the org-scoped list endpoint/service method, mirroring the shape of
+`listRentals`'s org-type branch (`rental.manage` vs `rental.respond`) but
+for `auction.manage`/`auction.participate`.
+
+### Priority
+Medium
+
+### Reason
+Without it, Phase 2 omits the Auctions KPI and attention row entirely on
+the Renter dashboard rather than faking a count or N+1-looping — the
+approved design wants "auction closed, awaiting your selection" to be one
+of the most prominent "waiting on you" items, so this is worth building.
+
+---
+
 ## Template for new entries
 
 ```
