@@ -193,6 +193,9 @@ function fakeLogsheetRepository(totals: UtilizationTotals): LogsheetRepositoryPo
     listByRental: async () => {
       throw new Error("not used in this test");
     },
+    listByRentalCompanyOrganization: async () => {
+      throw new Error("not used in this test");
+    },
     getRentalTotals: async () => totals,
     getMachineTotals: async () => totals,
   };

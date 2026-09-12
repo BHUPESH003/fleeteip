@@ -145,7 +145,7 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
   };
 }
 
-function fakeLogsheetRepository(): LogsheetRepositoryPort {
+function fakeLogsheetRepository(rentals: RentalRecord[] = []): LogsheetRepositoryPort {
   const records = new Map<string, LogsheetRecord>();
   let nextId = 1;
   return {
@@ -176,6 +176,14 @@ function fakeLogsheetRepository(): LogsheetRepositoryPort {
     },
     findByRentalAndDate: async (rentalId, logDate) => records.get(`${rentalId}:${logDate}`),
     listByRental: async (rentalId) => [...records.values()].filter((r) => r.rental_id === rentalId),
+    listByRentalCompanyOrganization: async (rentalCompanyOrganizationId) => {
+      const orgRentalIds = new Set(
+        rentals
+          .filter((r) => r.rental_company_organization_id === rentalCompanyOrganizationId)
+          .map((r) => r.id),
+      );
+      return [...records.values()].filter((r) => orgRentalIds.has(r.rental_id));
+    },
     getRentalTotals: async (rentalId): Promise<UtilizationTotals> => {
       const rows = [...records.values()].filter((r) => r.rental_id === rentalId);
       return {
@@ -199,7 +207,7 @@ function fakeLogsheetRepository(): LogsheetRepositoryPort {
 
 function buildService(rentals: RentalRecord[] = [rental()]) {
   return new LogsheetService(
-    fakeLogsheetRepository(),
+    fakeLogsheetRepository(rentals),
     fakeRentalRepository(rentals),
     fakeOrganizationTypeRepository({
       [RC_ORG_ID]: "rental_company",
@@ -284,5 +292,15 @@ describe("LogsheetService", () => {
     await expect(
       service.listByRental("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  it("lists logsheets across the whole organization's fleet on the standalone screen", async () => {
+    const secondRental = rental({ id: "rental-2" });
+    const service = buildService([rental(), secondRental]);
+    await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" });
+    await service.submitLogsheet("user-1", RC_ORG_ID, "rental-2", { logDate: "2026-03-02" });
+
+    const list = await service.listByOrganization("user-1", RC_ORG_ID);
+    expect(list).toHaveLength(2);
   });
 });

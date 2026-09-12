@@ -144,7 +144,7 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
   };
 }
 
-function fakeTransportRepository(): TransportRepositoryPort {
+function fakeTransportRepository(rentals: RentalRecord[] = []): TransportRepositoryPort {
   const records = new Map<string, TransportRecord>();
   let nextId = 1;
   return {
@@ -170,6 +170,14 @@ function fakeTransportRepository(): TransportRepositoryPort {
     findByRentalAndLeg: async (rentalId, leg) =>
       [...records.values()].find((r) => r.rental_id === rentalId && r.leg === leg),
     listByRental: async (rentalId) => [...records.values()].filter((r) => r.rental_id === rentalId),
+    listByRentalCompanyOrganization: async (rentalCompanyOrganizationId) => {
+      const orgRentalIds = new Set(
+        rentals
+          .filter((r) => r.rental_company_organization_id === rentalCompanyOrganizationId)
+          .map((r) => r.id),
+      );
+      return [...records.values()].filter((r) => orgRentalIds.has(r.rental_id));
+    },
     update: async (id: string, updates: UpdateTransportInput) => {
       const existing = records.get(id);
       if (!existing) throw new Error("not used in this test");
@@ -188,7 +196,7 @@ function fakeTransportRepository(): TransportRepositoryPort {
 
 function buildService(rentals: RentalRecord[] = [rental()]) {
   return new TransportService(
-    fakeTransportRepository(),
+    fakeTransportRepository(rentals),
     fakeRentalRepository(rentals),
     fakeOrganizationTypeRepository({
       [RC_ORG_ID]: "rental_company",
@@ -290,5 +298,15 @@ describe("TransportService", () => {
     await expect(
       service.listByRental("user-2", OTHER_RENTER_ORG_ID, RENTAL_ID),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  it("lists transport across the whole organization's fleet on the standalone screen", async () => {
+    const secondRental = rental({ id: "rental-2" });
+    const service = buildService([rental(), secondRental]);
+    await service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, { leg: "mobilization" });
+    await service.createTransport("user-1", RC_ORG_ID, "rental-2", { leg: "mobilization" });
+
+    const list = await service.listByOrganization("user-1", RC_ORG_ID);
+    expect(list).toHaveLength(2);
   });
 });

@@ -8,6 +8,16 @@ import { getAuthenticatedUserId } from "../../../shared/auth.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
 export async function transportRoutes(fastify: FastifyInstance): Promise<void> {
+  // Standalone Transport screen — every transport record across the org's
+  // own fleet of rentals (Rental Company only).
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/transport-records",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.transportService.listByOrganization(userId, request.params.organizationId);
+    },
+  );
+
   fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
     "/organizations/:organizationId/rentals/:rentalId/transport",
     async (request, reply) => {

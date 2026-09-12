@@ -599,6 +599,9 @@ function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
     listByMachine: async () => {
       throw new Error("not used in this test");
     },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
     updateStatus: async () => {
       throw new Error("not used in this test");
     },

@@ -97,6 +97,23 @@ export class TransportService {
     return records.map(toTransport);
   }
 
+  // Standalone Transport screen — every transport record across the Rental
+  // Company's own fleet of rentals.
+  async listByOrganization(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<TransportContract[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "transport.manage",
+    );
+    const records = await this.transportRepository.listByRentalCompanyOrganization(
+      rentalCompanyOrganizationId,
+    );
+    return records.map(toTransport);
+  }
+
   async updateTransport(
     userId: string,
     rentalCompanyOrganizationId: string,

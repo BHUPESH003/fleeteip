@@ -143,7 +143,7 @@ function fakeRentalRepository(machineIsAvailable: boolean): RentalRepositoryPort
   };
 }
 
-function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
+function fakeMaintenanceRepository(machines: MachineRecord[] = []): MaintenanceRepositoryPort {
   const records = new Map<string, MaintenanceRecord>();
   let nextId = 1;
   return {
@@ -165,6 +165,12 @@ function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
     findById: async (id) => records.get(id),
     listByMachine: async (machineId) =>
       [...records.values()].filter((r) => r.machine_id === machineId),
+    listByOrganization: async (organizationId) => {
+      const orgMachineIds = new Set(
+        machines.filter((m) => m.organization_id === organizationId).map((m) => m.id),
+      );
+      return [...records.values()].filter((r) => orgMachineIds.has(r.machine_id));
+    },
     updateStatus: async (id, status) => {
       const existing = records.get(id);
       if (!existing) throw new Error("not used in this test");
@@ -180,7 +186,7 @@ function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
 
 function buildService(machines: MachineRecord[] = [machine()], machineIsAvailable = true) {
   return new MaintenanceService(
-    fakeMaintenanceRepository(),
+    fakeMaintenanceRepository(machines),
     fakeMachineRepository(machines),
     fakeRentalRepository(machineIsAvailable),
     fakePermissionService(),
@@ -255,5 +261,15 @@ describe("MaintenanceService", () => {
     await service.createMaintenance("user-1", RC_ORG_ID, baseInput);
     const list = await service.listByMachine("user-1", RC_ORG_ID, MACHINE_ID);
     expect(list).toHaveLength(1);
+  });
+
+  it("lists maintenance across the whole organization's fleet on the standalone screen", async () => {
+    const secondMachine = machine({ id: "machine-2" });
+    const service = buildService([machine(), secondMachine]);
+    await service.createMaintenance("user-1", RC_ORG_ID, baseInput);
+    await service.createMaintenance("user-1", RC_ORG_ID, { ...baseInput, machineId: "machine-2" });
+
+    const list = await service.listByOrganization("user-1", RC_ORG_ID);
+    expect(list).toHaveLength(2);
   });
 });

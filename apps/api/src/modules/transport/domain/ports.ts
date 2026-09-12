@@ -42,5 +42,9 @@ export interface TransportRepositoryPort {
   create(input: CreateTransportInput): Promise<TransportRecord>;
   findByRentalAndLeg(rentalId: string, leg: TransportLeg): Promise<TransportRecord | undefined>;
   listByRental(rentalId: string): Promise<TransportRecord[]>;
+  // Standalone Transport screen — every transport record across the Rental
+  // Company's own rentals, not one rental at a time. A single join, not a
+  // loop over listByRental per rental.
+  listByRentalCompanyOrganization(rentalCompanyOrganizationId: string): Promise<TransportRecord[]>;
   update(id: string, updates: UpdateTransportInput): Promise<TransportRecord>;
 }

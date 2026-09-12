@@ -93,4 +93,21 @@ export class LogsheetService {
     const records = await this.logsheetRepository.listByRental(rentalId);
     return records.map(toLogsheet);
   }
+
+  // Standalone Logsheets screen — every logsheet across the Rental
+  // Company's own fleet of rentals.
+  async listByOrganization(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<Logsheet[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "logsheet.manage",
+    );
+    const records = await this.logsheetRepository.listByRentalCompanyOrganization(
+      rentalCompanyOrganizationId,
+    );
+    return records.map(toLogsheet);
+  }
 }
