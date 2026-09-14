@@ -44,6 +44,7 @@ function fakeRoleRepository(): RoleRepositoryPort {
 // org-type test below picks "renter" explicitly.
 function fakeOrganizationRepository(
   organizationTypeCode: OrganizationTypeCode = "rental_company",
+  status: "active" | "suspended" = "active",
 ): OrganizationRepositoryPort {
   return {
     findTypeByCode: async () => {
@@ -61,8 +62,15 @@ function fakeOrganizationRepository(
       organization_type_code: organizationTypeCode,
       name: "Test Org",
       code: "TESTORG",
+      status,
       created_at: new Date(),
     }),
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
     codeExists: async () => {
       throw new Error("not used in this test");
     },
@@ -135,5 +143,20 @@ describe("PermissionService", () => {
     // the fake role repository would grant it, so this proves the org-type
     // check is a real, independent gate rather than piggybacking on the role check.
     await expect(service.hasPermission("user-5", "org-1", "equipment.manage")).resolves.toBe(false);
+  });
+
+  it("denies every permission once the organization is suspended (Platform Admin action)", async () => {
+    const membership = { id: "m6", status: "active", role_id: OWNER_ROLE_ID };
+    const service = new PermissionService(
+      fakeMembershipRepository(membership),
+      fakeRoleRepository(),
+      fakeOrganizationRepository("rental_company", "suspended"),
+    );
+
+    // The role/membership would otherwise grant this — suspension is an
+    // independent, higher-priority gate.
+    await expect(service.hasPermission("user-6", "org-1", "organization.manage")).resolves.toBe(
+      false,
+    );
   });
 });

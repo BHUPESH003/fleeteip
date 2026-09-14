@@ -64,8 +64,15 @@ function fakeOrganizationTypeRepository(
       organization_type_code: organizationTypeCode,
       name: "Apex Equipment Rentals",
       code: "APEX",
+      status: "active",
       created_at: new Date(),
     }),
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
     codeExists: async () => {
       throw new Error("not used in this test");
     },
@@ -117,6 +124,7 @@ function fakeUserRepository(): UserRepositoryPort {
       email: "owner@apex.example",
       password_hash: "hashed",
       display_name: "Apex Owner",
+      status: "active",
       created_at: new Date(),
     },
     {
@@ -124,12 +132,19 @@ function fakeUserRepository(): UserRepositoryPort {
       email: "new.member@apex.example",
       password_hash: "hashed",
       display_name: "New Member",
+      status: "active",
       created_at: new Date(),
     },
   ];
   return {
     findByEmail: async (email) => users.find((u) => u.email === email),
     findById: async (id) => users.find((u) => u.id === id),
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },

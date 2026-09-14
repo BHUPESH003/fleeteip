@@ -9,6 +9,7 @@ import type {
 import { ConflictError, ForbiddenError, NotFoundError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
+import { NotificationService } from "../../notification/application/notification-service.js";
 import { canTransition } from "../domain/invoice-status.js";
 import type {
   InvoiceLineItemRecord,
@@ -67,7 +68,27 @@ export class BillingService {
     private readonly invoiceRepository: InvoiceRepositoryPort,
     private readonly rentalRepository: RentalRepositoryPort,
     private readonly permissionService: PermissionService,
+    private readonly notificationService: NotificationService,
   ) {}
+
+  // Best-effort side effect — never blocks the real business action. See
+  // CommercialQuotationService's identical wrapper for why.
+  private async notify(input: Parameters<NotificationService["notify"]>[0]): Promise<void> {
+    try {
+      await this.notificationService.notify(input);
+    } catch {
+      // swallow
+    }
+  }
+
+  private async notifyRenterOfInvoice(
+    rentalId: string,
+    input: Omit<Parameters<NotificationService["notify"]>[0], "recipientOrganizationId">,
+  ): Promise<void> {
+    const rental = await this.rentalRepository.findById(rentalId);
+    if (!rental?.renter_organization_id) return;
+    await this.notify({ ...input, recipientOrganizationId: rental.renter_organization_id });
+  }
 
   async createInvoice(
     userId: string,
@@ -198,6 +219,15 @@ export class BillingService {
       throw new ConflictError(`Cannot transition invoice from ${existing.status} to ${status}`);
     }
     const record = await this.invoiceRepository.updateStatus(invoiceId, status);
+    if (status === "issued") {
+      await this.notifyRenterOfInvoice(record.rental_id, {
+        type: "billing.invoice_issued",
+        title: "Invoice issued",
+        message: `Invoice ${record.invoice_number} has been issued.`,
+        relatedResourceType: "invoice",
+        relatedResourceId: record.id,
+      });
+    }
     return toInvoice(record);
   }
 
@@ -224,6 +254,13 @@ export class BillingService {
       method: input.method,
       reference: input.reference,
       notes: input.notes,
+    });
+    await this.notifyRenterOfInvoice(invoice.rental_id, {
+      type: "billing.payment_recorded",
+      title: "Payment recorded",
+      message: `A payment of ${input.amount} was recorded against invoice ${invoice.invoice_number}.`,
+      relatedResourceType: "invoice",
+      relatedResourceId: invoice.id,
     });
     return toInvoice(invoice);
   }

@@ -16,6 +16,13 @@ const NOTIFICATION_TONE: Record<NotificationType, BadgeTone> = {
   "auction.started": "info",
   "auction.ended": "warning",
   "auction.participant_selected": "success",
+  "workorder.issued": "success",
+  "rental.active": "success",
+  "rental.completed": "neutral",
+  "transport.dispatched": "info",
+  "transport.delivered": "success",
+  "billing.invoice_issued": "info",
+  "billing.payment_recorded": "success",
 };
 
 export function notificationsToActivity(notifications: Notification[], limit = 6): ActivityItem[] {

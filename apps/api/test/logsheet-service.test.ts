@@ -82,8 +82,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");

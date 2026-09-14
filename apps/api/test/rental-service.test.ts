@@ -7,6 +7,8 @@ import type {
 } from "../src/modules/organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
 import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
 import type {
   MachineRecord,
   MachineRepositoryPort,
@@ -91,6 +93,7 @@ function fakeOrganizationTypeRepository(
         organization_type_id: `type-${organizationTypeCode}`,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
     },
@@ -103,8 +106,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -264,6 +274,30 @@ function fakeMaintenanceRepository(hasConflict = false): MaintenanceRepositoryPo
   };
 }
 
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient — this file isn't testing notification
+// behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
+}
+
 function buildService(machines: MachineRecord[] = [machine()], hasConflictingMaintenance = false) {
   return new RentalService(
     fakeRentalRepository(),
@@ -271,6 +305,7 @@ function buildService(machines: MachineRecord[] = [machine()], hasConflictingMai
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
     fakePermissionService(),
     fakeMaintenanceRepository(hasConflictingMaintenance),
+    fakeNotificationService(),
   );
 }
 
@@ -417,6 +452,7 @@ describe("RentalService", () => {
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
       { ...fakeMaintenanceRepository(), hasOverlappingMaintenance: async () => hasConflict },
+      fakeNotificationService(),
     );
     const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
     hasConflict = true;
@@ -462,6 +498,7 @@ describe("RentalService", () => {
       fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
       fakePermissionService("renter"),
       fakeMaintenanceRepository(),
+      fakeNotificationService(),
     );
     await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,

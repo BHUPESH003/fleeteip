@@ -36,6 +36,31 @@ Short-form record of what was decided and why. Full rationale for each also live
 - **`pnpm` needed `onlyBuiltDependencies: ["esbuild"]`** in root `package.json` — its default policy silently blocks native postinstall scripts, and the interactive approval prompt can't run non-interactively.
 - **`tsx`'s `watch` subcommand must come immediately after `tsx`, before any flags.** `apps/api`'s `dev` script was `tsx --env-file-if-exists=.env watch src/index.ts` — tsx never recognized `watch` as its subcommand in that position and instead tried to run a script literally named `watch`, failing with `ERR_MODULE_NOT_FOUND`. Fixed to `tsx watch --env-file-if-exists=.env src/index.ts`. Never caught earlier because Stage 5 verification only exercised the built production path (`pnpm build && pnpm start`), never `pnpm dev` itself.
 
+## Project / Work Order / Platform Admin pass
+
+Full report: `docs/project-workorder-platform-admin-report.md`.
+
+- **Project is now a first-class entity** (reverses the earlier locked call that a Project module
+  was "exactly the premature module the working rules forbid") — client validated it's required.
+  Requirement's `project_id` is a real `NOT NULL` FK, backfilled for pre-existing rows.
+- **Work Order is now a first-class entity** — the finalized commercial order, auto-created inside
+  `awardQuotation` (never hand-entered), never a separate Contract entity for this scope.
+- **Platform Admin is a separate `staff_users`/`staff_sessions` principal, not a third organization
+  type** — reuses the same password/session primitives as tenant auth but its own login/cookie.
+  Deliberately keeps `organizationTypeCodeSchema` untouched (still locked to
+  `rental_company`/`renter`), preserving a clean path to add real future tenant types
+  (Transport, OEM) without ever conflating them with FleetIP's own staff.
+- **Category-specific commercial responsibilities are a structured collection
+  (`quotation_scope_items`: item + responsible party + notes), not a growing set of `*Scope`
+  columns** — `fuelScope`/`accommodationScope`/`operatorScope` stay dedicated columns because
+  they're common enough to search/filter/compare on; wire rope scope, ground prep, support crane
+  etc. are rows instead.
+- **Notifications now cover Work Order issuance, Rental active/completed, Transport dispatch/
+  delivery, and Billing invoice/payment events** — reverses the earlier documented decision to skip
+  transport/mobilization notifications as lowest-priority; still deliberately skips bare Requirement
+  creation (no single recipient in a broadcast-discovery marketplace) and a time-based "rental ending
+  soon" reminder (needs a scheduler that doesn't exist yet).
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

@@ -82,8 +82,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -122,7 +129,9 @@ function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRec
   return {
     id: OPEN_REQUIREMENT_ID,
     renter_organization_id: RENTER_ORG_ID,
+    project_id: "project-1",
     product_subcategory_id: "subcategory-1",
+    boom_length: null,
     capacity: null,
     capacity_unit: null,
     quantity: 1,
@@ -131,6 +140,8 @@ function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRec
     requested_start_date: "2026-03-01",
     expected_duration_value: null,
     expected_duration_unit: null,
+    shift_pattern: null,
+    crew_requirement: null,
     shift_requirement: null,
     validity_date: "2026-02-15",
     status: "open",

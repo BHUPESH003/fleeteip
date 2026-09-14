@@ -10,6 +10,7 @@ import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../../../maintenance/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
+import { NotificationService } from "../../../notification/application/notification-service.js";
 import { canTransition } from "../domain/rental-status.js";
 import type { RentalRecord, RentalRepositoryPort } from "../domain/ports.js";
 
@@ -57,7 +58,18 @@ export class RentalService {
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
     private readonly maintenanceRepository: MaintenanceRepositoryPort,
+    private readonly notificationService: NotificationService,
   ) {}
+
+  // Best-effort side effect — never blocks the real business action. See
+  // CommercialQuotationService's identical wrapper for why.
+  private async notify(input: Parameters<NotificationService["notify"]>[0]): Promise<void> {
+    try {
+      await this.notificationService.notify(input);
+    } catch {
+      // swallow
+    }
+  }
 
   async createRental(
     userId: string,
@@ -249,6 +261,19 @@ export class RentalService {
     }
 
     const record = await this.rentalRepository.updateStatus(rentalId, newStatus);
+    if (record.renter_organization_id && (newStatus === "active" || newStatus === "completed")) {
+      await this.notify({
+        recipientOrganizationId: record.renter_organization_id,
+        type: newStatus === "active" ? "rental.active" : "rental.completed",
+        title: newStatus === "active" ? "Rental is now active" : "Rental completed",
+        message:
+          newStatus === "active"
+            ? "Your rental has become active."
+            : "Your rental has been marked completed.",
+        relatedResourceType: "rental",
+        relatedResourceId: record.id,
+      });
+    }
     return toRental(record);
   }
 

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "migrate": "tsx --env-file-if-exists=.env src/infrastructure/database/migrate.ts up",
     "migrate:down": "tsx --env-file-if-exists=.env src/infrastructure/database/migrate.ts down",
-    "seed:demo": "tsx --env-file-if-exists=.env scripts/seed-demo-data.ts"
+    "seed:demo": "tsx --env-file-if-exists=.env scripts/seed-demo-data.ts",
+    "seed:staff-admin": "tsx --env-file-if-exists=.env scripts/seed-staff-admin.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

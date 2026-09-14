@@ -49,6 +49,14 @@ export const commercialQuotationStatusSchema = z.enum([
 ]);
 export type CommercialQuotationStatus = z.infer<typeof commercialQuotationStatusSchema>;
 
+// Who bears a given cost/duty — the common case for fuel/accommodation.
+// `operatorScope` (with_operator/without_operator, reused from Rental)
+// already answers this for the operator; this is the same client-vs-company
+// split for the handful of other terms common enough to be worth a real
+// column, per this phase's brief §5.
+export const responsiblePartySchema = z.enum(["client", "company"]);
+export type ResponsibleParty = z.infer<typeof responsiblePartySchema>;
+
 // Mirrors rentalSchema's term fields exactly — an awarded quotation converts
 // into a Rental by copying fields across. See docs/marketplace-core-loop-design.md §6.
 export const commercialQuotationSchema = z.object({
@@ -72,11 +80,27 @@ export const commercialQuotationSchema = z.object({
   shiftStructure: z.string().min(1).max(500).nullable(),
   sundayCondition: z.string().min(1).max(500).nullable(),
   fuelNorms: z.string().min(1).max(500).nullable(),
+  fuelScope: responsiblePartySchema.nullable(),
   dehireTerms: z.string().min(1).max(1000).nullable(),
   operatorScope: operatorScopeSchema.nullable(),
+  // Nullable — accommodation only applies to some equipment/engagements.
+  accommodationScope: responsiblePartySchema.nullable(),
+  workingHours: z.number().positive().nullable(),
+  workingDaysPerWeek: z.number().int().positive().max(7).nullable(),
+  minimumRentalPeriodValue: z.number().int().positive().nullable(),
+  minimumRentalPeriodUnit: rateUnitSchema.nullable(),
+  // Free text, deliberately not a structured GSTIN/HSN/CGST-SGST breakdown —
+  // Billing's tax_amount stays a plain entered figure; this is the
+  // commercial *term* ("GST extra @18%", "GST inclusive"), not an invoice.
+  gstTerms: z.string().min(1).max(500).nullable(),
   noticePeriodDays: z.number().int().nonnegative().nullable(),
   validityDate: z.string().date(),
+  // Special/site conditions — kept distinct from companyTerms below.
   commercialNotes: z.string().min(1).max(2000).nullable(),
+  // Company-specific/custom T&Cs — the flexible bucket for wording that
+  // differs company to company (§5D). Deliberately separate from
+  // commercialNotes (site/special conditions) so each stays legible.
+  companyTerms: z.string().min(1).max(2000).nullable(),
   status: commercialQuotationStatusSchema,
   // The Renter's explicit "I accept these terms" signal — independent of
   // `status` (no separate "accepted" status; see docs/marketplace-core-loop-
@@ -113,11 +137,19 @@ export const createCommercialQuotationRequestSchema = z
     shiftStructure: z.string().min(1).max(500).optional(),
     sundayCondition: z.string().min(1).max(500).optional(),
     fuelNorms: z.string().min(1).max(500).optional(),
+    fuelScope: responsiblePartySchema.optional(),
     dehireTerms: z.string().min(1).max(1000).optional(),
     operatorScope: operatorScopeSchema.optional(),
+    accommodationScope: responsiblePartySchema.optional(),
+    workingHours: z.number().positive().optional(),
+    workingDaysPerWeek: z.number().int().positive().max(7).optional(),
+    minimumRentalPeriodValue: z.number().int().positive().optional(),
+    minimumRentalPeriodUnit: rateUnitSchema.optional(),
+    gstTerms: z.string().min(1).max(500).optional(),
     noticePeriodDays: z.number().int().nonnegative().optional(),
     validityDate: z.string().date(),
     commercialNotes: z.string().min(1).max(2000).optional(),
+    companyTerms: z.string().min(1).max(2000).optional(),
   })
   .refine((data) => Boolean(data.renterOrganizationId) !== Boolean(data.clientSnapshot), {
     message: "Provide exactly one of renterOrganizationId or clientSnapshot",
@@ -138,13 +170,46 @@ export const updateCommercialQuotationTermsRequestSchema = z.object({
   shiftStructure: z.string().min(1).max(500).optional(),
   sundayCondition: z.string().min(1).max(500).optional(),
   fuelNorms: z.string().min(1).max(500).optional(),
+  fuelScope: responsiblePartySchema.optional(),
   dehireTerms: z.string().min(1).max(1000).optional(),
   operatorScope: operatorScopeSchema.optional(),
+  accommodationScope: responsiblePartySchema.optional(),
+  workingHours: z.number().positive().optional(),
+  workingDaysPerWeek: z.number().int().positive().max(7).optional(),
+  minimumRentalPeriodValue: z.number().int().positive().optional(),
+  minimumRentalPeriodUnit: rateUnitSchema.optional(),
+  gstTerms: z.string().min(1).max(500).optional(),
   noticePeriodDays: z.number().int().nonnegative().optional(),
   commercialNotes: z.string().min(1).max(2000).optional(),
+  companyTerms: z.string().min(1).max(2000).optional(),
 });
 export type UpdateCommercialQuotationTermsRequest = z.infer<
   typeof updateCommercialQuotationTermsRequestSchema
+>;
+
+// --- Scope/Responsibility items: category/equipment-specific commercial
+// responsibilities that don't warrant a dedicated column (e.g. wire rope
+// scope for foundation rigs, ground preparation, support crane) — a
+// structured collection instead of an ever-growing set of *Scope columns.
+// See this phase's brief §9.
+
+export const quotationScopeItemSchema = z.object({
+  id: z.string().uuid(),
+  quotationId: z.string().uuid(),
+  item: z.string().min(1).max(200),
+  responsibleParty: responsiblePartySchema,
+  notes: z.string().min(1).max(500).nullable(),
+  createdAt: z.string().datetime(),
+});
+export type QuotationScopeItem = z.infer<typeof quotationScopeItemSchema>;
+
+export const createQuotationScopeItemRequestSchema = z.object({
+  item: z.string().min(1).max(200),
+  responsibleParty: responsiblePartySchema,
+  notes: z.string().min(1).max(500).optional(),
+});
+export type CreateQuotationScopeItemRequest = z.infer<
+  typeof createQuotationScopeItemRequestSchema
 >;
 
 export const updateCommercialQuotationStatusRequestSchema = z.object({

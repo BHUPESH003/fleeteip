@@ -10,7 +10,12 @@ import {
   type OrganizationTypeCode,
   type PermissionCode,
 } from "@fleetip/contracts/organization";
-import { ConflictError, UnauthorizedError, ValidationError } from "../../../shared/errors.js";
+import {
+  ConflictError,
+  ForbiddenError,
+  UnauthorizedError,
+  ValidationError,
+} from "../../../shared/errors.js";
 import { generateOrganizationCode } from "../../organizations/application/generate-organization-code.js";
 import type {
   MembershipRepositoryPort,
@@ -100,6 +105,12 @@ export class AuthService {
     );
     if (!user || !isValidPassword) {
       throw new UnauthorizedError("Invalid email or password");
+    }
+    // Checked only after a real password match — never before, so a
+    // suspended account's existence can't be inferred from a wrong password
+    // getting a different error than a nonexistent email would.
+    if (user.status === "suspended") {
+      throw new ForbiddenError("This account has been suspended");
     }
     return this.issueSession(user);
   }

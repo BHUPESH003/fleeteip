@@ -31,6 +31,11 @@ export class PermissionService {
 
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
     if (!organization) return false;
+    // A suspended organization (Platform Admin action) loses every
+    // permission immediately — this is the single choke point every
+    // organization-scoped request already passes through, so no other
+    // enforcement point is needed.
+    if (organization.status === "suspended") return false;
     if (
       !PERMISSION_ORGANIZATION_TYPES[permission].includes(
         organization.organization_type_code as OrganizationTypeCode,

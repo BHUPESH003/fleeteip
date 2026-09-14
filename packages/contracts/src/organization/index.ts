@@ -47,6 +47,7 @@ export const permissionCodeSchema = z.enum([
   "transport.respond",
   "logsheet.respond",
   "catalogue.manage",
+  "project.manage",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
@@ -85,6 +86,12 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
   // is scoped to rental_company (not a real platform-admin tier) as a known,
   // documented limitation of the current two-org-type authorization model.
   "catalogue.manage": ["rental_company"],
+  // A Project belongs to the Renter organization — see docs/rental-domain-design.md
+  // and packages/contracts/src/project/index.ts. A Rental Company never manages
+  // a Project directly; it only ever sees Project context threaded through
+  // Requirement/Quotation/Rental (denormalized read fields), same pattern as
+  // machineAssetCode on a Renter-facing Rental.
+  "project.manage": ["renter"],
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;

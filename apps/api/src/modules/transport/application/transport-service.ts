@@ -8,6 +8,7 @@ import { ConflictError, NotFoundError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
+import { NotificationService } from "../../notification/application/notification-service.js";
 import { canTransition } from "../domain/transport-status.js";
 import type { TransportRecord, TransportRepositoryPort } from "../domain/ports.js";
 
@@ -35,7 +36,18 @@ export class TransportService {
     private readonly rentalRepository: RentalRepositoryPort,
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
+    private readonly notificationService: NotificationService,
   ) {}
+
+  // Best-effort side effect — never blocks the real business action. See
+  // CommercialQuotationService's identical wrapper for why.
+  private async notify(input: Parameters<NotificationService["notify"]>[0]): Promise<void> {
+    try {
+      await this.notificationService.notify(input);
+    } catch {
+      // swallow
+    }
+  }
 
   private async requireOwnedRental(rentalCompanyOrganizationId: string, rentalId: string) {
     const rental = await this.rentalRepository.findById(rentalId);
@@ -126,7 +138,7 @@ export class TransportService {
       rentalCompanyOrganizationId,
       "transport.manage",
     );
-    await this.requireOwnedRental(rentalCompanyOrganizationId, rentalId);
+    const rental = await this.requireOwnedRental(rentalCompanyOrganizationId, rentalId);
 
     const existing = await this.transportRepository.findByRentalAndLeg(rentalId, leg);
     if (!existing) {
@@ -139,6 +151,19 @@ export class TransportService {
     }
 
     const record = await this.transportRepository.update(existing.id, updates);
+    if (
+      rental.renter_organization_id &&
+      (updates.status === "dispatched" || updates.status === "delivered")
+    ) {
+      await this.notify({
+        recipientOrganizationId: rental.renter_organization_id,
+        type: updates.status === "dispatched" ? "transport.dispatched" : "transport.delivered",
+        title: updates.status === "dispatched" ? "Transport dispatched" : "Transport delivered",
+        message: `${leg === "mobilization" ? "Mobilization" : "Demobilization"} for your rental has been ${updates.status}.`,
+        relatedResourceType: "transport",
+        relatedResourceId: record.id,
+      });
+    }
     return toTransport(record);
   }
 }

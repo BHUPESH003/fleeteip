@@ -86,6 +86,16 @@ export class AuctionRepository implements AuctionRepositoryPort {
     return rows.map(toAuctionRecord);
   }
 
+  // Platform Admin only — see AuctionRepositoryPort.listAllForPlatformAdmin.
+  async listAllForPlatformAdmin() {
+    const rows = await this.db
+      .selectFrom("auctions")
+      .selectAll()
+      .orderBy("created_at", "desc")
+      .execute();
+    return rows.map(toAuctionRecord);
+  }
+
   // One query: every auction this org owns, joined to its requirement (for
   // the project name) and aggregated against auction_participants (count +
   // whether one has been selected) — avoids looping listParticipants per

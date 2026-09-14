@@ -46,6 +46,8 @@ import type {
   CreateQuotationOfferInput,
   QuotationOfferRecord,
   QuotationOfferRepositoryPort,
+  QuotationScopeItemRecord,
+  QuotationScopeItemRepositoryPort,
   UpdateCommercialQuotationTermsInput,
 } from "../src/modules/marketplace/commercial-quotation/domain/ports.js";
 import { CommercialQuotationService } from "../src/modules/marketplace/commercial-quotation/application/commercial-quotation-service.js";
@@ -173,8 +175,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -188,6 +197,7 @@ function fakeOrganizationTypeRepository(
           organization_type_code: code,
           name: `Test Org (${id})`,
           code: "TESTORG",
+          status: "active",
           created_at: new Date(),
         })),
   };
@@ -236,7 +246,9 @@ function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRec
   return {
     id: OPEN_REQUIREMENT_ID,
     renter_organization_id: RENTER_ORG_ID,
+    project_id: "project-1",
     product_subcategory_id: "subcategory-1",
+    boom_length: null,
     capacity: null,
     capacity_unit: null,
     quantity: 1,
@@ -245,6 +257,8 @@ function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRec
     requested_start_date: "2026-03-01",
     expected_duration_value: null,
     expected_duration_unit: null,
+    shift_pattern: null,
+    crew_requirement: null,
     shift_requirement: null,
     validity_date: "2026-02-15",
     status: "open",
@@ -480,6 +494,9 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     listByOwnerOrganization: async () => {
       throw new Error("not used in this test");
     },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
     listByParticipantOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -595,11 +612,19 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         shift_structure: input.shiftStructure ?? null,
         sunday_condition: input.sundayCondition ?? null,
         fuel_norms: input.fuelNorms ?? null,
+        fuel_scope: input.fuelScope ?? null,
         dehire_terms: input.dehireTerms ?? null,
         operator_scope: input.operatorScope ?? null,
+        accommodation_scope: input.accommodationScope ?? null,
+        working_hours: input.workingHours ?? null,
+        working_days_per_week: input.workingDaysPerWeek ?? null,
+        minimum_rental_period_value: input.minimumRentalPeriodValue ?? null,
+        minimum_rental_period_unit: input.minimumRentalPeriodUnit ?? null,
+        gst_terms: input.gstTerms ?? null,
         notice_period_days: input.noticePeriodDays ?? null,
         validity_date: input.validityDate,
         commercial_notes: input.commercialNotes ?? null,
+        company_terms: input.companyTerms ?? null,
         status: "draft",
         renter_accepted_at: null,
         created_at: new Date(),
@@ -633,14 +658,30 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
           sunday_condition: updates.sundayCondition,
         }),
         ...(updates.fuelNorms !== undefined && { fuel_norms: updates.fuelNorms }),
+        ...(updates.fuelScope !== undefined && { fuel_scope: updates.fuelScope }),
         ...(updates.dehireTerms !== undefined && { dehire_terms: updates.dehireTerms }),
         ...(updates.operatorScope !== undefined && { operator_scope: updates.operatorScope }),
+        ...(updates.accommodationScope !== undefined && {
+          accommodation_scope: updates.accommodationScope,
+        }),
+        ...(updates.workingHours !== undefined && { working_hours: updates.workingHours }),
+        ...(updates.workingDaysPerWeek !== undefined && {
+          working_days_per_week: updates.workingDaysPerWeek,
+        }),
+        ...(updates.minimumRentalPeriodValue !== undefined && {
+          minimum_rental_period_value: updates.minimumRentalPeriodValue,
+        }),
+        ...(updates.minimumRentalPeriodUnit !== undefined && {
+          minimum_rental_period_unit: updates.minimumRentalPeriodUnit,
+        }),
+        ...(updates.gstTerms !== undefined && { gst_terms: updates.gstTerms }),
         ...(updates.noticePeriodDays !== undefined && {
           notice_period_days: updates.noticePeriodDays,
         }),
         ...(updates.commercialNotes !== undefined && {
           commercial_notes: updates.commercialNotes,
         }),
+        ...(updates.companyTerms !== undefined && { company_terms: updates.companyTerms }),
         renter_accepted_at: null,
         updated_at: new Date(),
       };
@@ -708,6 +749,31 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
           q.renter_organization_id === renterOrganizationId &&
           (q.reference_number.includes(query) || q.client_snapshot?.name?.includes(query)),
       ),
+  };
+}
+
+function fakeQuotationScopeItemRepository(): QuotationScopeItemRepositoryPort {
+  const items = new Map<string, QuotationScopeItemRecord>();
+  let nextId = 1;
+  return {
+    create: async (input) => {
+      const record: QuotationScopeItemRecord = {
+        id: `scope-item-${nextId++}`,
+        quotation_id: input.quotationId,
+        item: input.item,
+        responsible_party: input.responsibleParty,
+        notes: input.notes ?? null,
+        created_at: new Date(),
+      };
+      items.set(record.id, record);
+      return record;
+    },
+    findById: async (id) => items.get(id),
+    listByQuotation: async (quotationId) =>
+      [...items.values()].filter((i) => i.quotation_id === quotationId),
+    delete: async (id) => {
+      items.delete(id);
+    },
   };
 }
 
@@ -782,6 +848,7 @@ function buildRentalService(machines: MachineRecord[] = [machine()]) {
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
       fakeMaintenanceRepository(),
+      fakeNotificationService(),
     ),
   };
 }
@@ -791,6 +858,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
   return new CommercialQuotationService(
     fakeCommercialQuotationRepository(),
     fakeQuotationOfferRepository(),
+    fakeQuotationScopeItemRepository(),
     fakeMachineRepository(machines),
     fakeProductRepository(),
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
@@ -798,6 +866,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
     fakeQuotationResponseRepository(),
     fakeAuctionRepository(),
     rentalService,
+    { createFromAward: async () => undefined },
     fakePermissionService(),
     fakeNotificationService(),
   );
@@ -1033,11 +1102,13 @@ describe("CommercialQuotationService", () => {
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
       fakeMaintenanceRepository(),
+      fakeNotificationService(),
     );
     const requirementRepository = fakeRequirementRepository();
     const service = new CommercialQuotationService(
       fakeCommercialQuotationRepository(),
       fakeQuotationOfferRepository(),
+      fakeQuotationScopeItemRepository(),
       fakeMachineRepository(machines),
       fakeProductRepository(),
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
@@ -1045,6 +1116,7 @@ describe("CommercialQuotationService", () => {
       fakeQuotationResponseRepository(),
       fakeAuctionRepository(),
       rentalService,
+      { createFromAward: async () => undefined },
       fakePermissionService(),
       fakeNotificationService(),
     );
@@ -1266,5 +1338,74 @@ describe("CommercialQuotationService", () => {
     await expect(service.listRentalCompanyOrganizations("user-1", RC_ORG_ID)).rejects.toThrow(
       ForbiddenError,
     );
+  });
+
+  describe("scope items", () => {
+    it("lets the drafting Rental Company add a category-specific scope item", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      const item = await service.addScopeItem("user-1", RC_ORG_ID, quotation.id, {
+        item: "Wire rope",
+        responsibleParty: "client",
+        notes: "Client to arrange for foundation rig work",
+      });
+      expect(item.responsibleParty).toBe("client");
+
+      const items = await service.listScopeItems("user-1", RC_ORG_ID, quotation.id);
+      expect(items).toHaveLength(1);
+      expect(items[0]?.item).toBe("Wire rope");
+    });
+
+    it("lets the Renter party read scope items too", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.addScopeItem("user-1", RC_ORG_ID, quotation.id, {
+        item: "Ground preparation",
+        responsibleParty: "company",
+      });
+      const items = await service.listScopeItems("user-2", RENTER_ORG_ID, quotation.id);
+      expect(items).toHaveLength(1);
+    });
+
+    it("rejects adding a scope item once the quotation is no longer editable", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
+      await expect(
+        service.addScopeItem("user-1", RC_ORG_ID, quotation.id, {
+          item: "Support crane",
+          responsibleParty: "company",
+        }),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("lets the Rental Company remove a scope item it added", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      const item = await service.addScopeItem("user-1", RC_ORG_ID, quotation.id, {
+        item: "Support crane",
+        responsibleParty: "company",
+      });
+      await service.removeScopeItem("user-1", RC_ORG_ID, quotation.id, item.id);
+      expect(await service.listScopeItems("user-1", RC_ORG_ID, quotation.id)).toHaveLength(0);
+    });
+
+    it("hides a scope item that belongs to a different quotation behind NotFoundError", async () => {
+      const service = buildService();
+      const quotationA = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      const quotationB = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      const item = await service.addScopeItem("user-1", RC_ORG_ID, quotationA.id, {
+        item: "Wire rope",
+        responsibleParty: "client",
+      });
+      await expect(
+        service.removeScopeItem("user-1", RC_ORG_ID, quotationB.id, item.id),
+      ).rejects.toThrow(NotFoundError);
+    });
   });
 });

@@ -86,6 +86,9 @@ export interface AuctionRepositoryPort {
   // tradeoff as listByRequirement (opening the detail page syncs it).
   listByOwnerOrganization(organizationId: string): Promise<AuctionSummaryOwnerRow[]>;
   listByParticipantOrganization(organizationId: string): Promise<AuctionSummaryParticipantRow[]>;
+  // Platform Admin only — every auction across every tenant, no owner/
+  // participant scoping. See OrganizationRepositoryPort.listAllForPlatformAdmin.
+  listAllForPlatformAdmin(): Promise<AuctionRecord[]>;
 
   // Lazily promotes scheduled -> live -> closed (computing and persisting the
   // winner) based on starts_at/ends_at vs. server time, inside a single

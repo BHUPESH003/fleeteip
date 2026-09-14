@@ -3,7 +3,11 @@
 import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
-import type { CommercialQuotation, QuotationOffer } from "@fleetip/contracts/quotation";
+import type {
+  CommercialQuotation,
+  QuotationOffer,
+  QuotationScopeItem,
+} from "@fleetip/contracts/quotation";
 import type { RateUnit } from "@fleetip/contracts/rental";
 import {
   Badge,
@@ -44,6 +48,136 @@ interface Loaded {
   counterpartyName: string;
 }
 
+// Category/equipment-specific responsibilities (wire rope scope, ground
+// preparation, support crane, ...) — a structured collection rather than an
+// ever-growing set of *Scope columns. Only the drafting Rental Company can
+// add/remove; either party can read.
+function ScopeItemsCard({
+  organizationId,
+  quotationId,
+  canEdit,
+}: {
+  organizationId: string;
+  quotationId: string;
+  canEdit: boolean;
+}) {
+  const [items, setItems] = useState<QuotationScopeItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  async function load() {
+    try {
+      setItems((await apiClient.listScopeItems(organizationId, quotationId)) as QuotationScopeItem[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load scope items");
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [organizationId, quotationId]);
+
+  async function handleAdd(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    try {
+      await apiClient.addScopeItem(organizationId, quotationId, {
+        item: String(form.get("item")),
+        responsibleParty: form.get("responsibleParty") === "company" ? "company" : "client",
+        notes: form.get("notes") ? String(form.get("notes")) : undefined,
+      });
+      formElement.reset();
+      setAdding(false);
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add scope item");
+    }
+  }
+
+  async function handleRemove(scopeItemId: string) {
+    try {
+      await apiClient.removeScopeItem(organizationId, quotationId, scopeItemId);
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove scope item");
+    }
+  }
+
+  return (
+    <Card>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-ink">
+          Category-specific responsibilities
+        </h2>
+        {canEdit && !adding && (
+          <Button variant="secondary" onClick={() => setAdding(true)}>
+            Add item
+          </Button>
+        )}
+      </div>
+      {error && <p className="mb-2 text-sm text-danger">{error}</p>}
+      {items === null ? (
+        <LoadingState label="Loading…" />
+      ) : items.length === 0 && !adding ? (
+        <p className="text-sm text-meta">
+          No equipment-specific responsibilities recorded (e.g. wire rope scope, ground
+          preparation).
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {items.map((scopeItem) => (
+            <li
+              key={scopeItem.id}
+              className="flex items-start justify-between gap-2 border-b border-border pb-2 text-sm"
+            >
+              <div>
+                <span className="font-medium text-ink">{scopeItem.item}</span>
+                <span className="ml-2 text-meta">
+                  — {scopeItem.responsibleParty === "client" ? "Client scope" : "Company scope"}
+                </span>
+                {scopeItem.notes && <p className="text-xs text-meta-light">{scopeItem.notes}</p>}
+              </div>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => void handleRemove(scopeItem.id)}
+                  className="shrink-0 text-xs font-medium text-danger"
+                >
+                  Remove
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {adding && (
+        <form onSubmit={handleAdd} className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Input label="Item" name="item" placeholder="e.g. Wire rope" required />
+            <Select
+              label="Responsible party"
+              name="responsibleParty"
+              options={[
+                { value: "client", label: "Client scope" },
+                { value: "company", label: "Company scope" },
+              ]}
+            />
+            <Input label="Notes" name="notes" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setAdding(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Save</Button>
+          </div>
+        </form>
+      )}
+    </Card>
+  );
+}
+
 export default function QuotationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { currentMembership } = useSession();
@@ -53,6 +187,7 @@ export default function QuotationDetailPage() {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCounterForm, setShowCounterForm] = useState(false);
+  const [workOrderId, setWorkOrderId] = useState<string | null>(null);
 
   async function load(orgId: string, orgType: "renter" | "rental_company") {
     const [quotation, offers] = await Promise.all([
@@ -107,6 +242,14 @@ export default function QuotationDetailPage() {
       }
     })();
   }, [organizationId, organizationType, id]);
+
+  useEffect(() => {
+    if (!organizationId || data?.quotation.status !== "awarded") return;
+    void apiClient
+      .getWorkOrderByQuotationId(organizationId, id)
+      .then((workOrder) => setWorkOrderId((workOrder as { id: string } | null)?.id ?? null))
+      .catch(() => setWorkOrderId(null));
+  }, [organizationId, id, data?.quotation.status]);
 
   async function handleAction(action: "send" | "withdraw" | "accept" | "reject" | "award") {
     if (!organizationId || !organizationType) return;
@@ -224,6 +367,13 @@ export default function QuotationDetailPage() {
           quotation.overtimeRate != null ? formatCurrencyINR(quotation.overtimeRate) : "—",
         ],
         ["Payment terms", quotation.paymentTerms ?? "—"],
+        [
+          "Minimum rental period",
+          quotation.minimumRentalPeriodValue != null
+            ? `${quotation.minimumRentalPeriodValue} ${quotation.minimumRentalPeriodUnit}(s)`
+            : "—",
+        ],
+        ["GST terms", quotation.gstTerms ?? "—"],
         ["Validity", formatDate(quotation.validityDate)],
       ],
     },
@@ -231,7 +381,15 @@ export default function QuotationDetailPage() {
       title: "Operating terms",
       rows: [
         ["Operator scope", quotation.operatorScope?.replace(/_/g, " ") ?? "—"],
+        ["Fuel scope", quotation.fuelScope ?? "—"],
+        ["Accommodation scope", quotation.accommodationScope ?? "—"],
         ["Shift structure", quotation.shiftStructure ?? "—"],
+        [
+          "Working hours / days",
+          quotation.workingHours != null || quotation.workingDaysPerWeek != null
+            ? `${quotation.workingHours ?? "—"} hrs/shift, ${quotation.workingDaysPerWeek ?? "—"} days/week`
+            : "—",
+        ],
         ["Sunday condition", quotation.sundayCondition ?? "—"],
         ["Fuel norms", quotation.fuelNorms ?? "—"],
         [
@@ -239,6 +397,13 @@ export default function QuotationDetailPage() {
           quotation.noticePeriodDays != null ? `${quotation.noticePeriodDays} days` : "—",
         ],
         ["De-hire terms", quotation.dehireTerms ?? "—"],
+      ],
+    },
+    {
+      title: "Terms & conditions",
+      rows: [
+        ["Special / site conditions", quotation.commercialNotes ?? "—"],
+        ["Company-specific T&Cs", quotation.companyTerms ?? "—"],
       ],
     },
   ];
@@ -253,9 +418,15 @@ export default function QuotationDetailPage() {
         title={`Quotation ${quotation.referenceNumber}`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" disabled title="PDF export isn't available yet">
-              Download PDF
-            </Button>
+            {workOrderId && organizationId ? (
+              <a href={apiClient.workOrderPrintUrl(organizationId, workOrderId)} target="_blank" rel="noreferrer">
+                <Button variant="secondary">Download PDF</Button>
+              </a>
+            ) : (
+              <Button variant="secondary" disabled title="Available once the quotation is awarded and a Work Order exists">
+                Download PDF
+              </Button>
+            )}
             <Button variant="secondary" disabled title="Sharing isn't available yet">
               Share
             </Button>
@@ -356,6 +527,13 @@ export default function QuotationDetailPage() {
               </div>
             </Card>
           ))}
+          {organizationId && (
+            <ScopeItemsCard
+              organizationId={organizationId}
+              quotationId={quotation.id}
+              canEdit={isOwner && (quotation.status === "draft" || canNegotiate)}
+            />
+          )}
         </div>
 
         <div className="flex flex-col gap-3.5">

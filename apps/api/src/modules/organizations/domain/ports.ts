@@ -11,6 +11,7 @@ export interface OrganizationRecord {
   organization_type_id: string;
   name: string;
   code: string;
+  status: string;
   created_at: Date | string;
 }
 
@@ -32,6 +33,11 @@ export interface OrganizationRepositoryPort {
   // known Renter to quote) — not a general org directory, just enough to
   // replace a raw organization-id text input with a real Select.
   listByType(organizationTypeCode: string): Promise<OrganizationWithTypeRecord[]>;
+  // Platform Admin only — every organization across every tenant, bypassing
+  // the usual per-caller-organization scoping. Never reused for a tenant
+  // request; see docs/platform-admin-architecture-requirements.md point 3.
+  listAllForPlatformAdmin(): Promise<OrganizationWithTypeRecord[]>;
+  updateStatus(id: string, status: "active" | "suspended"): Promise<OrganizationRecord>;
 }
 
 export interface MembershipRecord {

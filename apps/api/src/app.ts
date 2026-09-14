@@ -16,6 +16,10 @@ import { commercialQuotationRoutes } from "./modules/marketplace/commercial-quot
 import { quotationResponseRoutes } from "./modules/marketplace/quotation-response/presentation/routes.js";
 import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { requirementRoutes } from "./modules/marketplace/rfq/presentation/routes.js";
+import { projectRoutes } from "./modules/marketplace/project/presentation/routes.js";
+import { workOrderRoutes } from "./modules/marketplace/work-order/presentation/routes.js";
+import { staffRoutes } from "./modules/staff/presentation/routes.js";
+import { platformAdminRoutes } from "./modules/platform-admin/presentation/routes.js";
 import { notificationRoutes } from "./modules/notification/presentation/routes.js";
 import { organizationRoutes } from "./modules/organizations/presentation/routes.js";
 import { searchRoutes } from "./modules/search/presentation/routes.js";
@@ -59,16 +63,20 @@ export async function buildApp() {
   await app.register(catalogueRoutes);
   await app.register(equipmentRoutes);
   await app.register(rentalRoutes);
+  await app.register(projectRoutes);
   await app.register(requirementRoutes);
   await app.register(auctionRoutes);
   await app.register(quotationResponseRoutes);
   await app.register(commercialQuotationRoutes);
+  await app.register(workOrderRoutes);
   await app.register(maintenanceRoutes);
   await app.register(transportRoutes);
   await app.register(logsheetRoutes);
   await app.register(billingRoutes);
   await app.register(notificationRoutes);
   await app.register(searchRoutes);
+  await app.register(staffRoutes);
+  await app.register(platformAdminRoutes);
 
   return app;
 }

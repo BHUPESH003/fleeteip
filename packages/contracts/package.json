@@ -17,7 +17,10 @@
     "./logsheet": "./src/logsheet/index.ts",
     "./billing": "./src/billing/index.ts",
     "./notification": "./src/notification/index.ts",
-    "./search": "./src/search/index.ts"
+    "./search": "./src/search/index.ts",
+    "./project": "./src/project/index.ts",
+    "./work-order": "./src/work-order/index.ts",
+    "./platform-admin": "./src/platform-admin/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

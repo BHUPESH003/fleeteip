@@ -18,6 +18,8 @@ import type {
   UpdateTransportInput,
 } from "../src/modules/transport/domain/ports.js";
 import { TransportService } from "../src/modules/transport/application/transport-service.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
@@ -81,8 +83,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -203,6 +212,30 @@ function fakeTransportRepository(rentals: RentalRecord[] = []): TransportReposit
   };
 }
 
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient — this file isn't testing notification
+// behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
+}
+
 function buildService(rentals: RentalRecord[] = [rental()]) {
   return new TransportService(
     fakeTransportRepository(rentals),
@@ -213,6 +246,7 @@ function buildService(rentals: RentalRecord[] = [rental()]) {
       [OTHER_RENTER_ORG_ID]: "renter",
     }),
     fakePermissionService(),
+    fakeNotificationService(),
   );
 }
 
@@ -223,6 +257,7 @@ describe("TransportService", () => {
       fakeRentalRepository([rental()]),
       fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
       fakePermissionService("renter"),
+      fakeNotificationService(),
     );
     await expect(
       service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, { leg: "mobilization" }),

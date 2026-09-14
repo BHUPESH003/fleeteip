@@ -98,6 +98,21 @@ export class CatalogueService {
     input: CreateProductCategoryRequest,
   ): Promise<ProductCategory> {
     await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doCreateCategory(input);
+  }
+
+  // Platform Admin entry points — see this phase's brief §12/§13. Staff
+  // authentication/authorization already happened at the route layer
+  // (getAuthenticatedStaffId); these skip the tenant permission check
+  // entirely rather than faking an organizationId, and share the exact same
+  // validation/write logic as the tenant-facing methods above.
+  async createCategoryAsPlatformAdmin(
+    input: CreateProductCategoryRequest,
+  ): Promise<ProductCategory> {
+    return this.doCreateCategory(input);
+  }
+
+  private async doCreateCategory(input: CreateProductCategoryRequest): Promise<ProductCategory> {
     const codeExists = await this.productCategoryRepository.codeExists(input.code);
     if (codeExists) {
       throw new ConflictError("A product category with this code already exists");
@@ -113,6 +128,20 @@ export class CatalogueService {
     input: UpdateProductCategoryRequest,
   ): Promise<ProductCategory> {
     await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doUpdateCategory(categoryId, input);
+  }
+
+  async updateCategoryAsPlatformAdmin(
+    categoryId: string,
+    input: UpdateProductCategoryRequest,
+  ): Promise<ProductCategory> {
+    return this.doUpdateCategory(categoryId, input);
+  }
+
+  private async doUpdateCategory(
+    categoryId: string,
+    input: UpdateProductCategoryRequest,
+  ): Promise<ProductCategory> {
     const existing = await this.productCategoryRepository.findById(categoryId);
     if (!existing) throw new NotFoundError("Product category not found");
     const record = await this.productCategoryRepository.updateName(categoryId, input.name);
@@ -125,6 +154,18 @@ export class CatalogueService {
     input: CreateProductSubcategoryRequest,
   ): Promise<ProductSubcategory> {
     await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doCreateSubcategory(input);
+  }
+
+  async createSubcategoryAsPlatformAdmin(
+    input: CreateProductSubcategoryRequest,
+  ): Promise<ProductSubcategory> {
+    return this.doCreateSubcategory(input);
+  }
+
+  private async doCreateSubcategory(
+    input: CreateProductSubcategoryRequest,
+  ): Promise<ProductSubcategory> {
     const category = await this.productCategoryRepository.findById(input.productCategoryId);
     if (!category) throw new NotFoundError("Product category not found");
     const codeExists = await this.productSubcategoryRepository.codeExistsInCategory(
@@ -145,6 +186,20 @@ export class CatalogueService {
     input: UpdateProductSubcategoryRequest,
   ): Promise<ProductSubcategory> {
     await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doUpdateSubcategory(subcategoryId, input);
+  }
+
+  async updateSubcategoryAsPlatformAdmin(
+    subcategoryId: string,
+    input: UpdateProductSubcategoryRequest,
+  ): Promise<ProductSubcategory> {
+    return this.doUpdateSubcategory(subcategoryId, input);
+  }
+
+  private async doUpdateSubcategory(
+    subcategoryId: string,
+    input: UpdateProductSubcategoryRequest,
+  ): Promise<ProductSubcategory> {
     const existing = await this.productSubcategoryRepository.findById(subcategoryId);
     if (!existing) throw new NotFoundError("Product subcategory not found");
     const record = await this.productSubcategoryRepository.updateName(subcategoryId, input.name);
@@ -157,6 +212,14 @@ export class CatalogueService {
     input: CreateProductRequest,
   ): Promise<Product> {
     await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doCreateProduct(input);
+  }
+
+  async createProductAsPlatformAdmin(input: CreateProductRequest): Promise<Product> {
+    return this.doCreateProduct(input);
+  }
+
+  private async doCreateProduct(input: CreateProductRequest): Promise<Product> {
     const subcategory = await this.productSubcategoryRepository.findById(
       input.productSubcategoryId,
     );
@@ -172,6 +235,17 @@ export class CatalogueService {
     input: UpdateProductRequest,
   ): Promise<Product> {
     await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doUpdateProduct(productId, input);
+  }
+
+  async updateProductAsPlatformAdmin(
+    productId: string,
+    input: UpdateProductRequest,
+  ): Promise<Product> {
+    return this.doUpdateProduct(productId, input);
+  }
+
+  private async doUpdateProduct(productId: string, input: UpdateProductRequest): Promise<Product> {
     const existing = await this.productRepository.findById(productId);
     if (!existing) throw new NotFoundError("Product not found");
     const record = await this.productRepository.update(productId, input);
