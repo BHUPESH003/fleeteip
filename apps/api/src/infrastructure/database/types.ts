@@ -81,6 +81,18 @@ export interface MembershipsTable {
   created_at: CreatedAt;
 }
 
+export interface OrganizationInvitesTable {
+  id: Generated<string>;
+  organization_id: string;
+  role_id: string;
+  token_hash: string;
+  invited_by_user_id: string | null;
+  status: string;
+  expires_at: Timestamp;
+  accepted_by_user_id: string | null;
+  created_at: CreatedAt;
+}
+
 export interface SessionsTable {
   id: Generated<string>;
   user_id: string;
@@ -119,6 +131,7 @@ export interface Database {
   work_order_reference_sequences: WorkOrderReferenceSequencesTable;
   staff_users: StaffUsersTable;
   staff_sessions: StaffSessionsTable;
+  organization_invites: OrganizationInvitesTable;
   maintenance_records: MaintenanceRecordsTable;
   transport_records: TransportRecordsTable;
   logsheets: LogsheetsTable;

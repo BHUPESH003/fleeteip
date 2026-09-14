@@ -21,9 +21,12 @@ import type {
 import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
 import type {
-  InviteMemberRequest,
+  AcceptInviteRequest,
+  CreateInviteResponse,
+  InvitePreview,
   Organization,
   OrganizationMember,
+  RoleName,
   RoleWithPermissions,
 } from "@fleetip/contracts/organization";
 import type {
@@ -150,14 +153,23 @@ export const apiClient = {
     apiRequest<OrganizationMember[]>(`/organizations/${organizationId}/members`, {
       method: "GET",
     }),
-  inviteMember: (organizationId: string, input: InviteMemberRequest) =>
-    apiRequest<OrganizationMember>(`/organizations/${organizationId}/members`, {
+  createInvite: (organizationId: string, roleName: RoleName) =>
+    apiRequest<CreateInviteResponse>(`/organizations/${organizationId}/invites`, {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify({ roleName }),
     }),
   listRolesAndPermissions: (organizationId: string) =>
     apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/roles`, {
       method: "GET",
+    }),
+
+  // --- Public invite-link flow (may be called with no session at all) ---
+  getInvitePreview: (token: string) =>
+    apiRequest<InvitePreview>(`/invites/${token}`, { method: "GET" }),
+  acceptInvite: (token: string, newAccount?: AcceptInviteRequest) =>
+    apiRequest<{ organizationId: string; roleName: RoleName }>(`/invites/${token}/accept`, {
+      method: "POST",
+      ...(newAccount ? { body: JSON.stringify(newAccount) } : {}),
     }),
 
   listProductCategories: () =>

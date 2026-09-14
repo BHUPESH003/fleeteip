@@ -83,6 +83,47 @@ export interface OrganizationMemberRow {
   created_at: Date | string;
 }
 
+export interface OrganizationInviteRecord {
+  id: string;
+  organization_id: string;
+  role_id: string;
+  token_hash: string;
+  invited_by_user_id: string | null;
+  status: string;
+  expires_at: Date | string;
+  accepted_by_user_id: string | null;
+  created_at: Date | string;
+}
+
+// Joined view for the public preview screen — never exposes token_hash or
+// any tenant-private data beyond what an unauthenticated visitor should see
+// before deciding whether to sign up/accept.
+export interface OrganizationInviteWithContextRow {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  organization_type_code: string;
+  role_id: string;
+  role_name: string;
+  status: string;
+  expires_at: Date | string;
+}
+
+export interface InviteRepositoryPort {
+  create(input: {
+    organizationId: string;
+    roleId: string;
+    tokenHash: string;
+    invitedByUserId: string;
+    expiresAt: Date;
+  }): Promise<OrganizationInviteRecord>;
+  findByTokenHash(tokenHash: string): Promise<OrganizationInviteRecord | undefined>;
+  findWithContextByTokenHash(
+    tokenHash: string,
+  ): Promise<OrganizationInviteWithContextRow | undefined>;
+  markAccepted(id: string, acceptedByUserId: string): Promise<OrganizationInviteRecord>;
+}
+
 export interface MembershipRepositoryPort {
   create(input: {
     userId: string;

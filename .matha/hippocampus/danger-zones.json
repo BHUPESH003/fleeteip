@@ -111,6 +111,13 @@
       "pattern": "matha's recordDecision derives the per-component .jsonl filename directly from the 'component' string (path-joined, slashes replaced) — a long, multi-file component string (e.g. 5 file paths joined with commas) can exceed the filesystem's max filename length and fail with ENAMETOOLONG, silently aborting that one record. Keep 'component' to 1-2 short paths or a short label; put the full list of touched files in the correction/previous_assumption text instead.",
       "description": "matha's recordDecision derives the per-component .jsonl filename directly from the 'component' string (path-joined, slashes replaced) — a long, multi-file component string (e.g. 5 file paths joined with commas) can exceed the filesystem's max filename length and fail with ENAMETOOLONG, silently aborting that one record. Keep 'component' to 1-2 short paths or a short label; put the full list of touched files in the correction/previous_assumption text instead.",
       "confidence": "probable"
+    },
+    {
+      "id": "danger-1789405304702-edcf64463df9257f",
+      "component": "apps/api/src/modules/organizations/application/organization-service.ts",
+      "pattern": "The old inviteMember created memberships with status 'invited' that nothing ever transitioned to 'active' — findActiveMembership filters on status='active' so every permission check silently 403'd forever, while listWithOrganizationByUserId (no status filter) still showed the org in the invitee's UI. Looked fully usable, was actually a dead end. Fixed by the link-based InviteService (see decision record) which creates memberships as 'active' immediately.",
+      "description": "The old inviteMember created memberships with status 'invited' that nothing ever transitioned to 'active' — findActiveMembership filters on status='active' so every permission check silently 403'd forever, while listWithOrganizationByUserId (no status filter) still showed the org in the invitee's UI. Looked fully usable, was actually a dead end. Fixed by the link-based InviteService (see decision record) which creates memberships as 'active' immediately.",
+      "confidence": "probable"
     }
   ]
 }

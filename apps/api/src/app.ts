@@ -22,6 +22,7 @@ import { staffRoutes } from "./modules/staff/presentation/routes.js";
 import { platformAdminRoutes } from "./modules/platform-admin/presentation/routes.js";
 import { notificationRoutes } from "./modules/notification/presentation/routes.js";
 import { organizationRoutes } from "./modules/organizations/presentation/routes.js";
+import { inviteRoutes } from "./modules/organizations/presentation/invite-routes.js";
 import { searchRoutes } from "./modules/search/presentation/routes.js";
 import { transportRoutes } from "./modules/transport/presentation/routes.js";
 import { AppError } from "./shared/errors.js";
@@ -60,6 +61,7 @@ export async function buildApp() {
 
   await app.register(identityRoutes);
   await app.register(organizationRoutes);
+  await app.register(inviteRoutes);
   await app.register(catalogueRoutes);
   await app.register(equipmentRoutes);
   await app.register(rentalRoutes);

@@ -61,6 +61,43 @@ Full report: `docs/project-workorder-platform-admin-report.md`.
   creation (no single recipient in a broadcast-discovery marketplace) and a time-based "rental ending
   soon" reminder (needs a scheduler that doesn't exist yet).
 
+## Invite-link redesign (replaces `OrganizationService.inviteMember`)
+
+The old "invite" was an email lookup: `POST /organizations/:id/members` created a `memberships`
+row with status `"invited"` for an email that had to already belong to a FleetIP user — and nothing
+ever transitioned that row to `"active"`. `findActiveMembership`'s status filter meant the invitee's
+UI showed the organization (via the unfiltered `listWithOrganizationByUserId`) but every permission
+check silently 403'd forever. Root cause of the "how does the aftermath work?" question — there was
+no real aftermath; it was a dead end.
+
+Replaced with a link-based flow, no email delivery required yet:
+
+- **`organization_invites` table**: `token_hash` (sha256, same primitive as session tokens —
+  `hashSessionToken` is generic, not session-specific), `role_id`, `status`
+  (`pending`/`accepted`/`revoked`), 7-day `expires_at`. The raw token is returned exactly once, at
+  creation (`POST /organizations/:id/invites`, `membership.manage`-gated), embedded in a shareable
+  link (`{WEB_ORIGIN}/invite/{token}`) — copy/paste today, automated email delivery is a future
+  addition on the *same* token, not a different mechanism.
+- **Public preview** (`GET /invites/:token`, no auth): organization name/type + role, and whether the
+  invite is expired/already used — safe for an anonymous visitor to see before deciding to sign up.
+- **Accept** (`POST /invites/:token/accept`): branches on the caller's own session, never a
+  client-supplied identity. Logged in already → no body, joins with the existing account. Not logged
+  in → `email`/`password`/`displayName` body, calls a new `AuthService.createAccountAndSession`
+  (extracted from `signup`) that creates **only** a user, deliberately no organization and no
+  membership of its own — the invite is what puts them in an organization, so an invitee never ends
+  up owning a redundant org. Either path creates the membership as `"active"` immediately (no
+  `"invited"` limbo state) and marks the invite `"accepted"`. Verified live: an existing owner of one
+  organization can accept an invite into a second organization and keeps both active memberships.
+- **`OrganizationService.inviteMember` removed entirely**, not deprecated alongside — one mechanism,
+  not two answering the same question differently. `OrganizationService`'s constructor dropped
+  `UserRepositoryPort` (no longer needed once the email-lookup path was gone).
+
+**Organization-name collisions**: `organizations.name` has no uniqueness constraint (verified via
+`\d organizations`) — only the server-generated `code` is unique, and it's already documented
+elsewhere as never used for auth/tenancy/ownership. Two organizations named identically is allowed by
+design; every tenant-scoped query and permission check keys on `organization_id` (a UUID), never on
+name. This was a deliberate original decision, not a gap this pass introduced or needed to close.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

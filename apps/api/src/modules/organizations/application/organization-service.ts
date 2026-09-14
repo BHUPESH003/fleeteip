@@ -1,13 +1,11 @@
 import type {
-  InviteMemberRequest,
   Organization,
   OrganizationMember,
   PermissionCode,
   RoleWithPermissions,
 } from "@fleetip/contracts/organization";
 import { PERMISSION_ORGANIZATION_TYPES, roleNameSchema } from "@fleetip/contracts/organization";
-import type { UserRepositoryPort } from "../../identity/domain/ports.js";
-import { ConflictError, NotFoundError } from "../../../shared/errors.js";
+import { NotFoundError } from "../../../shared/errors.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import type { RoleRepositoryPort } from "../../permissions/domain/ports.js";
 import type {
@@ -52,7 +50,6 @@ export class OrganizationService {
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly membershipRepository: MembershipRepositoryPort,
     private readonly roleRepository: RoleRepositoryPort,
-    private readonly userRepository: UserRepositoryPort,
     private readonly permissionService: PermissionService,
   ) {}
 
@@ -67,46 +64,6 @@ export class OrganizationService {
     await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
     const rows = await this.membershipRepository.listByOrganization(organizationId);
     return rows.map(toMember);
-  }
-
-  // The invited user must already hold a FleetIP account — there is no
-  // email-sending infrastructure in this codebase to invite someone who
-  // doesn't (see inviteMemberRequestSchema's comment). Creates the
-  // membership with status "invited"; there is no separate accept-invite
-  // step yet (also a documented limitation, not silently faked).
-  async inviteMember(
-    userId: string,
-    organizationId: string,
-    input: InviteMemberRequest,
-  ): Promise<OrganizationMember> {
-    await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
-
-    const user = await this.userRepository.findByEmail(input.email);
-    if (!user) {
-      throw new NotFoundError("No FleetIP account exists for this email — they must sign up first");
-    }
-    const existing = await this.membershipRepository.findActiveMembership(user.id, organizationId);
-    if (existing) {
-      throw new ConflictError("This user is already a member of this organization");
-    }
-    const role = await this.roleRepository.findByName(input.roleName);
-    if (!role) throw new NotFoundError("Role not found");
-
-    const membership = await this.membershipRepository.create({
-      userId: user.id,
-      organizationId,
-      roleId: role.id,
-      status: "invited",
-    });
-    return toMember({
-      id: membership.id,
-      user_id: user.id,
-      email: user.email,
-      display_name: user.display_name,
-      role_name: input.roleName,
-      status: membership.status,
-      created_at: membership.created_at,
-    });
   }
 
   // Roles are a small, fixed set (owner/member — see roleNameSchema); this

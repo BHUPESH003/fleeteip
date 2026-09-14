@@ -1,10 +1,10 @@
-import { inviteMemberRequestSchema } from "@fleetip/contracts/organization";
+import { createInviteRequestSchema } from "@fleetip/contracts/organization";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../shared/auth.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
-// Tenant organization administration — a member managing their OWN
+// Tenant organization administration — a member managing THEIR OWN
 // organization's profile/members/roles. See OrganizationService for the
 // authorization shape (organization.manage / membership.manage, already
 // seeded — see docs/frontend-backend-gap-report.md's Organization
@@ -27,17 +27,17 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
   );
 
   fastify.post<{ Params: { organizationId: string } }>(
-    "/organizations/:organizationId/members",
+    "/organizations/:organizationId/invites",
     async (request, reply) => {
       const userId = await getAuthenticatedUserId(request);
-      const body = parseWithSchema(inviteMemberRequestSchema, request.body);
-      const member = await container.organizationService.inviteMember(
+      const body = parseWithSchema(createInviteRequestSchema, request.body);
+      const result = await container.inviteService.createInvite(
         userId,
         request.params.organizationId,
-        body,
+        body.roleName,
       );
       reply.code(201);
-      return member;
+      return result;
     },
   );
 

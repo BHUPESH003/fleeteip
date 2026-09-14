@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  CreateInviteResponse,
   OrganizationMember,
   PermissionCode,
   RoleWithPermissions,
@@ -87,6 +88,8 @@ export default function SettingsPage() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   const [roles, setRoles] = useState<RoleWithPermissions[] | null>(null);
   const [rolesError, setRolesError] = useState<string | null>(null);
@@ -125,17 +128,33 @@ export default function SettingsPage() {
     const form = new FormData(event.currentTarget);
     setInviteSubmitting(true);
     try {
-      await apiClient.inviteMember(organizationId, {
-        email: String(form.get("email") ?? ""),
-        roleName: String(form.get("roleName") ?? "member") as "owner" | "member",
-      });
-      setInviteOpen(false);
-      await loadMembers(organizationId);
+      const roleName = String(form.get("roleName") ?? "member") as "owner" | "member";
+      const result = (await apiClient.createInvite(organizationId, roleName)) as CreateInviteResponse;
+      setInviteLink(result.link);
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Failed to invite member");
+      setInviteError(err instanceof Error ? err.message : "Failed to create invite link");
     } finally {
       setInviteSubmitting(false);
     }
+  }
+
+  async function handleCopyInviteLink() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2000);
+    } catch {
+      // ponytail: clipboard access can be denied by the browser; the link
+      // text is still visible and selectable, so this is a soft failure.
+    }
+  }
+
+  function closeInviteDialog() {
+    setInviteOpen(false);
+    setInviteError(null);
+    setInviteLink(null);
+    setInviteCopied(false);
   }
 
   if (!session || !currentMembership) return null;
@@ -236,9 +255,9 @@ export default function SettingsPage() {
           </Card>
           {canManageMembers && (
             <p className="text-xs text-meta-light">
-              Inviting requires the invitee to already have a FleetIP account (looked up by email) —
-              there is no email-delivery/signup-invite flow yet. See the frontend/backend gap
-              report.
+              Generate a link and share it with whoever you want to invite — they don&apos;t need a
+              FleetIP account first. Sharing by email isn&apos;t automated yet, so send the link
+              yourself for now.
             </p>
           )}
         </div>
@@ -326,31 +345,43 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      <Dialog
-        open={inviteOpen}
-        onClose={() => {
-          setInviteOpen(false);
-          setInviteError(null);
-        }}
-        title="Invite member"
-      >
-        <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4 text-left">
-          {inviteError && <p className="text-sm text-danger">{inviteError}</p>}
-          <p className="text-xs text-meta">
-            The invitee must already have a FleetIP account — invites aren&apos;t sent by email yet,
-            this adds an existing user to your organization directly.
-          </p>
-          <Input label="Email" name="email" type="email" required />
-          <Select label="Role" name="roleName" options={ROLE_OPTIONS} defaultValue="member" />
-          <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="secondary" onClick={() => setInviteOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={inviteSubmitting}>
-              {inviteSubmitting ? "Inviting…" : "Invite member"}
-            </Button>
+      <Dialog open={inviteOpen} onClose={closeInviteDialog} title="Invite member">
+        {inviteLink ? (
+          <div className="flex flex-col gap-4 text-left">
+            <p className="text-xs text-meta">
+              Share this link with the person you&apos;re inviting. It works whether or not they
+              already have a FleetIP account, and expires in 7 days.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={inviteLink} onFocus={(e) => e.currentTarget.select()} />
+              <Button type="button" variant="secondary" onClick={() => void handleCopyInviteLink()}>
+                {inviteCopied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" onClick={closeInviteDialog}>
+                Done
+              </Button>
+            </div>
           </div>
-        </form>
+        ) : (
+          <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4 text-left">
+            {inviteError && <p className="text-sm text-danger">{inviteError}</p>}
+            <p className="text-xs text-meta">
+              Generates a one-time link for this role. Anyone with the link can join your
+              organization — share it only with who you intend to invite.
+            </p>
+            <Select label="Role" name="roleName" options={ROLE_OPTIONS} defaultValue="member" />
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="secondary" onClick={closeInviteDialog}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={inviteSubmitting}>
+                {inviteSubmitting ? "Generating…" : "Generate invite link"}
+              </Button>
+            </div>
+          </form>
+        )}
       </Dialog>
     </div>
   );

@@ -9,9 +9,8 @@ import type {
 } from "../src/modules/organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
 import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
-import type { UserRecord, UserRepositoryPort } from "../src/modules/identity/domain/ports.js";
 import { OrganizationService } from "../src/modules/organizations/application/organization-service.js";
-import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { ForbiddenError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const MEMBER_ROLE_ID = "role-member";
@@ -117,40 +116,6 @@ function fakeMembershipRepository(): MembershipRepositoryPort {
   };
 }
 
-function fakeUserRepository(): UserRepositoryPort {
-  const users: UserRecord[] = [
-    {
-      id: OWNER_USER_ID,
-      email: "owner@apex.example",
-      password_hash: "hashed",
-      display_name: "Apex Owner",
-      status: "active",
-      created_at: new Date(),
-    },
-    {
-      id: "user-new",
-      email: "new.member@apex.example",
-      password_hash: "hashed",
-      display_name: "New Member",
-      status: "active",
-      created_at: new Date(),
-    },
-  ];
-  return {
-    findByEmail: async (email) => users.find((u) => u.email === email),
-    findById: async (id) => users.find((u) => u.id === id),
-    listAllForPlatformAdmin: async () => {
-      throw new Error("not used in this test");
-    },
-    updateStatus: async () => {
-      throw new Error("not used in this test");
-    },
-    create: async () => {
-      throw new Error("not used in this test");
-    },
-  };
-}
-
 function fakeRoleRepository(): RoleRepositoryPort {
   return {
     findByName: async (name) => ({ id: name === "owner" ? OWNER_ROLE_ID : MEMBER_ROLE_ID, name }),
@@ -167,7 +132,6 @@ function buildService(organizationTypeCode: OrganizationTypeCode = "rental_compa
     fakeOrganizationTypeRepository(organizationTypeCode),
     fakeMembershipRepository(),
     fakeRoleRepository(),
-    fakeUserRepository(),
     fakePermissionService(organizationTypeCode),
   );
 }
@@ -192,36 +156,6 @@ describe("OrganizationService", () => {
     expect(members).toHaveLength(1);
     expect(members[0]?.email).toBe("owner@apex.example");
     expect(members[0]?.roleName).toBe("owner");
-  });
-
-  it("invites an existing FleetIP user by email as a new member", async () => {
-    const service = buildService();
-    const member = await service.inviteMember(OWNER_USER_ID, RC_ORG_ID, {
-      email: "new.member@apex.example",
-      roleName: "member",
-    });
-    expect(member.status).toBe("invited");
-    expect(member.displayName).toBe("New Member");
-  });
-
-  it("rejects inviting an email with no FleetIP account", async () => {
-    const service = buildService();
-    await expect(
-      service.inviteMember(OWNER_USER_ID, RC_ORG_ID, {
-        email: "nobody@example.com",
-        roleName: "member",
-      }),
-    ).rejects.toThrow(NotFoundError);
-  });
-
-  it("rejects inviting a user who is already an active member", async () => {
-    const service = buildService();
-    await expect(
-      service.inviteMember(OWNER_USER_ID, RC_ORG_ID, {
-        email: "owner@apex.example",
-        roleName: "member",
-      }),
-    ).rejects.toThrow(ConflictError);
   });
 
   it("lists roles filtered to the caller's own organization type's permissions", async () => {

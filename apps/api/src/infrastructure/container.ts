@@ -27,8 +27,10 @@ import { WorkOrderScopeItemRepository } from "../modules/marketplace/work-order/
 import { MaintenanceService } from "../modules/maintenance/application/maintenance-service.js";
 import { MaintenanceRepository } from "../modules/maintenance/infrastructure/maintenance-repository.js";
 import { OrganizationService } from "../modules/organizations/application/organization-service.js";
+import { InviteService } from "../modules/organizations/application/invite-service.js";
 import { MembershipRepository } from "../modules/organizations/infrastructure/membership-repository.js";
 import { OrganizationRepository } from "../modules/organizations/infrastructure/organization-repository.js";
+import { InviteRepository } from "../modules/organizations/infrastructure/invite-repository.js";
 import { PermissionService } from "../modules/permissions/application/permission-service.js";
 import { RoleRepository } from "../modules/permissions/infrastructure/role-repository.js";
 import { TransportService } from "../modules/transport/application/transport-service.js";
@@ -46,6 +48,7 @@ import { StaffUserRepository } from "../modules/staff/infrastructure/staff-user-
 import { StaffSessionRepository } from "../modules/staff/infrastructure/staff-session-repository.js";
 import { PlatformAdminService } from "../modules/platform-admin/application/platform-admin-service.js";
 import { db } from "./database/client.js";
+import { env } from "./config/env.js";
 
 /**
  * Composition root: wires repositories (infrastructure) into application
@@ -55,6 +58,7 @@ import { db } from "./database/client.js";
 const userRepository = new UserRepository(db);
 const sessionRepository = new SessionRepository(db);
 const organizationRepository = new OrganizationRepository(db);
+const inviteRepository = new InviteRepository(db);
 const membershipRepository = new MembershipRepository(db);
 const roleRepository = new RoleRepository(db);
 
@@ -125,23 +129,35 @@ const platformAdminService = new PlatformAdminService(
   auctionRepository,
 );
 
+const authService = new AuthService(
+  userRepository,
+  sessionRepository,
+  organizationRepository,
+  membershipRepository,
+  roleRepository,
+);
+
+const inviteService = new InviteService(
+  inviteRepository,
+  membershipRepository,
+  roleRepository,
+  permissionService,
+  authService,
+  env.WEB_ORIGIN,
+);
+
 export const container = {
-  authService: new AuthService(
-    userRepository,
-    sessionRepository,
-    organizationRepository,
-    membershipRepository,
-    roleRepository,
-  ),
+  authService,
   permissionService,
 
   organizationService: new OrganizationService(
     organizationRepository,
     membershipRepository,
     roleRepository,
-    userRepository,
     permissionService,
   ),
+
+  inviteService,
 
   catalogueService,
 

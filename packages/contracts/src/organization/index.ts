@@ -131,15 +131,66 @@ export const organizationMemberSchema = z.object({
 });
 export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
 
-// The invited user must already hold a FleetIP account (looked up by email)
-// — there is no email-sending infrastructure in this codebase yet to
-// support inviting someone who doesn't. See
-// docs/frontend-backend-gap-report.md for this documented limitation.
-export const inviteMemberRequestSchema = z.object({
-  email: z.string().email(),
+// --- Invites: a link-based route into an organization, replacing the old
+// email-lookup "invite" (which created a membership nothing ever
+// activated). No email is required to create one — the owner shares the
+// link however they like; email delivery is a future addition on top of
+// the same token, not a different mechanism. ---
+
+export const inviteStatusSchema = z.enum(["pending", "accepted", "revoked"]);
+export type InviteStatus = z.infer<typeof inviteStatusSchema>;
+
+export const createInviteRequestSchema = z.object({
   roleName: roleNameSchema,
 });
-export type InviteMemberRequest = z.infer<typeof inviteMemberRequestSchema>;
+export type CreateInviteRequest = z.infer<typeof createInviteRequestSchema>;
+
+export const organizationInviteSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  roleName: roleNameSchema,
+  status: inviteStatusSchema,
+  expiresAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+});
+export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
+
+// The raw token is returned exactly once, at creation — never stored in
+// plaintext, never retrievable again (same discipline as a session token).
+export const createInviteResponseSchema = z.object({
+  invite: organizationInviteSchema,
+  token: z.string(),
+  link: z.string(),
+});
+export type CreateInviteResponse = z.infer<typeof createInviteResponseSchema>;
+
+// Shown to a visitor who may not be signed in yet — deliberately minimal,
+// never leaks anything about the organization beyond its name/type.
+export const invitePreviewSchema = z.object({
+  organizationName: z.string(),
+  organizationTypeCode: organizationTypeCodeSchema,
+  roleName: roleNameSchema,
+  status: inviteStatusSchema,
+  expired: z.boolean(),
+});
+export type InvitePreview = z.infer<typeof invitePreviewSchema>;
+
+// Only required when the visitor has no existing session — accepting while
+// already logged in needs no body at all (the server uses the caller's own
+// session, never a client-supplied identity).
+export const acceptInviteRequestSchema = z
+  .object({
+    email: z.string().email().optional(),
+    password: z.string().min(8).optional(),
+    displayName: z.string().min(1).optional(),
+  })
+  .refine(
+    (data) =>
+      (!data.email && !data.password && !data.displayName) ||
+      (data.email && data.password && data.displayName),
+    { message: "Provide email, password, and displayName together, or none of them" },
+  );
+export type AcceptInviteRequest = z.infer<typeof acceptInviteRequestSchema>;
 
 export const roleWithPermissionsSchema = z.object({
   roleName: roleNameSchema,
