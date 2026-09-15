@@ -43,6 +43,17 @@ export async function quotationResponseRoutes(fastify: FastifyInstance): Promise
     },
   );
 
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/requested-quotations",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.quotationResponseService.listRequestedQuotations(
+        userId,
+        request.params.organizationId,
+      );
+    },
+  );
+
   fastify.post<{
     Params: { organizationId: string; requirementId: string; rentalCompanyOrganizationId: string };
   }>(

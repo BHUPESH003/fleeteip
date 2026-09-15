@@ -322,6 +322,7 @@ function fakeQuotationResponseRepository(): QuotationResponseRepositoryPort {
         indicative_rate: input.indicativeRate ?? null,
         indicative_rate_unit: input.indicativeRateUnit ?? null,
         notes: input.notes ?? null,
+        quotation_requested_at: existing?.quotation_requested_at ?? null,
         created_at: existing?.created_at ?? new Date(),
         updated_at: new Date(),
       };
@@ -337,6 +338,19 @@ function fakeQuotationResponseRepository(): QuotationResponseRepositoryPort {
     findById: async (id) => responses.get(id),
     listByRequirement: async (requirementId) =>
       [...responses.values()].filter((r) => r.requirement_id === requirementId),
+    markQuotationRequested: async (id) => {
+      const existing = responses.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated = { ...existing, quotation_requested_at: new Date() };
+      responses.set(id, updated);
+      return updated;
+    },
+    listRequestedByRentalCompanyOrganization: async (rentalCompanyOrganizationId) =>
+      [...responses.values()].filter(
+        (r) =>
+          r.rental_company_organization_id === rentalCompanyOrganizationId &&
+          r.quotation_requested_at !== null,
+      ),
   };
 }
 

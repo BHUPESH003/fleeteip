@@ -315,6 +315,7 @@ export interface QuotationResponsesTable {
   indicative_rate: number | null;
   indicative_rate_unit: string | null;
   notes: string | null;
+  quotation_requested_at: Date | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }

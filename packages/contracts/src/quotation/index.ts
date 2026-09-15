@@ -15,6 +15,11 @@ export const quotationResponseSchema = z.object({
   indicativeRate: z.number().positive().nullable(),
   indicativeRateUnit: rateUnitSchema.nullable(),
   notes: z.string().min(1).max(1000).nullable(),
+  // Set when the Renter clicks "Request quotation" on this response — null
+  // until then. Lets the Rental Company see which of their own responses
+  // are waiting on a formal quotation without depending on still having
+  // the notification (Quotations page's "Requested" filter).
+  quotationRequestedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

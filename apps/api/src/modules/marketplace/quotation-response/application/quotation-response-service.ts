@@ -17,6 +17,9 @@ function toQuotationResponse(record: QuotationResponseRecord): QuotationResponse
     indicativeRate: record.indicative_rate,
     indicativeRateUnit: record.indicative_rate_unit,
     notes: record.notes,
+    quotationRequestedAt: record.quotation_requested_at
+      ? new Date(record.quotation_requested_at).toISOString()
+      : null,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
   };
@@ -114,6 +117,10 @@ export class QuotationResponseService {
         "Can only request a quotation from a rental company that responded as interested",
       );
     }
+    // Persisted first — this is the durable record of the ask, independent
+    // of whether the notification below actually gets delivered/read/kept,
+    // and it's what backs the Rental Company's own "Requested" filter.
+    await this.quotationResponseRepository.markQuotationRequested(response.id);
     // Not swallowed like submitResponse's notification — here, notifying
     // *is* the entire business action, not a side effect alongside a DB
     // write, so a failure must surface to the Renter rather than silently
@@ -161,6 +168,27 @@ export class QuotationResponseService {
       throw new NotFoundError("Requirement not found in this organization");
     }
     const records = await this.quotationResponseRepository.listByRequirement(requirementId);
+    return records.map(toQuotationResponse);
+  }
+
+  // The Rental Company's "Requested" filter on the Quotations page — every
+  // one of its own responses the Renter has explicitly asked it to
+  // formalize. Whether a CommercialQuotation already exists for one of
+  // these is left to the caller to cross-reference (see domain/ports.ts);
+  // this repository has no CommercialQuotation dependency.
+  async listRequestedQuotations(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<QuotationResponse[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rfq.respond",
+    );
+    const records =
+      await this.quotationResponseRepository.listRequestedByRentalCompanyOrganization(
+        rentalCompanyOrganizationId,
+      );
     return records.map(toQuotationResponse);
   }
 }

@@ -331,6 +331,7 @@ function fakeQuotationResponseRepository(
       indicative_rate: 1200,
       indicative_rate_unit: "day",
       notes: null,
+      quotation_requested_at: null,
       created_at: new Date(),
       updated_at: new Date(),
     },
@@ -345,6 +346,12 @@ function fakeQuotationResponseRepository(
     },
     findById: async (id) => responses.find((r) => r.id === id),
     listByRequirement: async () => {
+      throw new Error("not used in this test");
+    },
+    markQuotationRequested: async () => {
+      throw new Error("not used in this test");
+    },
+    listRequestedByRentalCompanyOrganization: async () => {
       throw new Error("not used in this test");
     },
   };
@@ -871,7 +878,7 @@ function buildRentalService(machines: MachineRecord[] = [machine()]) {
   };
 }
 
-function buildService(machines: MachineRecord[] = [machine()]) {
+function buildService(machines: MachineRecord[] = [machine()], requirements?: RequirementRecord[]) {
   const { rentalService } = buildRentalService(machines);
   return new CommercialQuotationService(
     fakeCommercialQuotationRepository(),
@@ -880,7 +887,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
     fakeMachineRepository(machines),
     fakeProductRepository(),
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
-    fakeRequirementRepository(),
+    fakeRequirementRepository(requirements),
     fakeQuotationResponseRepository(),
     fakeAuctionRepository(),
     rentalService,
@@ -934,6 +941,30 @@ describe("CommercialQuotationService", () => {
     });
     expect(quotation.requirementId).toBe(OPEN_REQUIREMENT_ID);
     expect(quotation.quotationResponseId).toBe(RESPONSE_ID);
+  });
+
+  it("locks the quotation's rate unit to the requirement's own expectedDurationUnit, ignoring the caller's choice", async () => {
+    const service = buildService([machine()], [requirement({ expected_duration_unit: "month" })]);
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      rateUnit: "day",
+    });
+    expect(quotation.rateUnit).toBe("month");
+  });
+
+  it("falls back to the caller's chosen rate unit when the requirement has no expectedDurationUnit", async () => {
+    const service = buildService([machine()], [requirement()]);
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      rateUnit: "day",
+    });
+    expect(quotation.rateUnit).toBe("day");
   });
 
   it("rejects quoting against a requirement that is not open", async () => {

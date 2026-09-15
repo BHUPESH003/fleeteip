@@ -2,7 +2,8 @@
 
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
-import type { CommercialQuotation, CommercialQuotationStatus } from "@fleetip/contracts/quotation";
+import type { CommercialQuotation, CommercialQuotationStatus, QuotationResponse } from "@fleetip/contracts/quotation";
+import type { Requirement } from "@fleetip/contracts/rfq";
 import {
   Badge,
   Button,
@@ -28,7 +29,7 @@ import { useSession } from "../../../lib/session-context";
 import { CreateQuotationDialog } from "./CreateQuotationDialog";
 import { acceptanceLabel, QUOTATION_STATUS_MAP } from "./shared";
 
-type Filter = "all" | CommercialQuotationStatus;
+type Filter = "all" | CommercialQuotationStatus | "requested";
 
 const FILTERS: Filter[] = ["all", "draft", "sent", "negotiating", "awarded", "rejected", "expired", "withdrawn"];
 
@@ -37,6 +38,12 @@ interface Loaded {
   machinesById: Map<string, Machine>;
   renterNames: Map<string, string>;
   rentalCompanyNames: Map<string, string>;
+  // Rental-company-only: every "interested" response of ours the Renter has
+  // explicitly asked us to formalize (via "Request quotation"), plus the
+  // Requirement each one is against — so "Requested" doesn't rely on still
+  // having the notification. Empty for a Renter.
+  requestedResponses: QuotationResponse[];
+  requirementsById: Map<string, Requirement>;
 }
 
 export default function QuotationsPage() {
@@ -60,6 +67,11 @@ export default function QuotationsPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(Boolean(requirementIdParam || sourceAuctionIdParam));
+  // Set when opening the dialog from a "Requested" row rather than the URL —
+  // requirementIdParam still wins when present (an actual notification/
+  // dashboard link), this only fills in for the in-page click path.
+  const [manualRequirementId, setManualRequirementId] = useState<string | null>(null);
+  const activeRequirementId = requirementIdParam ?? manualRequirementId;
 
   // A notification/dashboard link (e.g. "Request quotation") arrives here via
   // router.push — a same-route, query-only navigation that the App Router
@@ -75,15 +87,28 @@ export default function QuotationsPage() {
     try {
       const quotations = (await apiClient.listQuotations(orgId)) as CommercialQuotation[];
       if (orgType === "rental_company") {
-        const [machines, renterOrgs] = await Promise.all([
+        const [machines, renterOrgs, requestedResponses] = await Promise.all([
           canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
           apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
+          apiClient.listRequestedQuotations(orgId) as Promise<QuotationResponse[]>,
         ]);
+        // Requirement details (project, capacity, quantity) for whichever
+        // ones are still pending — getRequirementForDiscovery is the same
+        // read the Open Market response dialog already uses.
+        const fulfilledResponseIds = new Set(
+          quotations.filter((q) => q.quotationResponseId).map((q) => q.quotationResponseId as string),
+        );
+        const pending = requestedResponses.filter((r) => !fulfilledResponseIds.has(r.id));
+        const requirements = await Promise.all(
+          pending.map((r) => apiClient.getRequirementForDiscovery(orgId, r.requirementId) as Promise<Requirement>),
+        );
         setData({
           quotations,
           machinesById: new Map(machines.map((m) => [m.id, m])),
           renterNames: new Map(renterOrgs.map((o) => [o.id, o.name])),
           rentalCompanyNames: new Map(),
+          requestedResponses: pending,
+          requirementsById: new Map(requirements.map((r) => [r.id, r])),
         });
       } else {
         const rentalCompanyOrgs = (await apiClient.listRentalCompanyOrganizations(
@@ -94,6 +119,8 @@ export default function QuotationsPage() {
           machinesById: new Map(),
           renterNames: new Map(),
           rentalCompanyNames: new Map(rentalCompanyOrgs.map((o) => [o.id, o.name])),
+          requestedResponses: [],
+          requirementsById: new Map(),
         });
       }
     } catch (err) {
@@ -157,6 +184,20 @@ export default function QuotationsPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Input placeholder="Reference, renter, machine…" className="w-64" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {organizationType === "rental_company" && (
+          <button
+            type="button"
+            onClick={() => setFilter("requested")}
+            className={[
+              "rounded-control border px-3 py-1.5 text-xs font-semibold",
+              filter === "requested"
+                ? "border-ink-strong bg-ink-strong text-white"
+                : "border-border-strong bg-surface text-ink-muted hover:bg-surface-sunk",
+            ].join(" ")}
+          >
+            Requested · {data.requestedResponses.length}
+          </button>
+        )}
         {FILTERS.map((key) => (
           <button
             key={key}
@@ -174,7 +215,72 @@ export default function QuotationsPage() {
         ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {filter === "requested" ? (
+        data.requestedResponses.length === 0 ? (
+          <EmptyState
+            title="Nothing waiting on you"
+            description="Requirements the Renter has explicitly asked for a formal quotation on show up here."
+          />
+        ) : (
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>Requirement</Th>
+                <Th>Your indicative rate</Th>
+                <Th>Requested</Th>
+                <Th />
+              </Tr>
+            </Thead>
+            <Tbody>
+              {data.requestedResponses.map((response) => {
+                const requirement = data.requirementsById.get(response.requirementId);
+                return (
+                  <Tr key={response.id}>
+                    <Td>
+                      <div className="flex flex-col">
+                        <span className="font-mono text-xs text-ink">
+                          RFQ-{response.requirementId.slice(0, 8).toUpperCase()}
+                        </span>
+                        <span className="text-xs text-meta">
+                          {requirement
+                            ? [
+                                requirement.capacity
+                                  ? `${requirement.capacity}${requirement.capacityUnit ?? ""}`
+                                  : null,
+                                requirement.projectName,
+                                `qty ${requirement.quantity}`,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")
+                            : "—"}
+                        </span>
+                      </div>
+                    </Td>
+                    <Td className="font-mono">
+                      {response.indicativeRate ? `${response.indicativeRate} / ${response.indicativeRateUnit}` : "—"}
+                    </Td>
+                    <Td className="text-meta">
+                      {response.quotationRequestedAt ? formatDate(response.quotationRequestedAt) : "—"}
+                    </Td>
+                    <Td>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualRequirementId(response.requirementId);
+                          setCreateOpen(true);
+                        }}
+                        className="text-xs font-medium text-accent-text"
+                      >
+                        Create quotation
+                      </button>
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </Tbody>
+          </Table>
+        )
+      ) : filtered.length === 0 ? (
         <EmptyState title="No quotations match these filters" />
       ) : (
         <Table>
@@ -259,9 +365,12 @@ export default function QuotationsPage() {
       {organizationType === "rental_company" && (
         <CreateQuotationDialog
           open={createOpen}
-          onClose={() => setCreateOpen(false)}
+          onClose={() => {
+            setCreateOpen(false);
+            setManualRequirementId(null);
+          }}
           organizationId={organizationId}
-          requirementIdParam={requirementIdParam}
+          requirementIdParam={activeRequirementId}
           sourceAuctionIdParam={sourceAuctionIdParam}
           onCreated={() => void load(organizationId, organizationType)}
         />

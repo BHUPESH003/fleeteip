@@ -77,6 +77,16 @@ export default function RentalDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState(searchParams.get("tab") ?? "overview");
 
+  // A notification/search hit for a *different* rental reaches this page
+  // via router.push — same route, only the [id] segment differs — which the
+  // App Router doesn't remount the page for either, so the useState
+  // initializer above never re-runs and `tab` stays stuck on whatever it
+  // was for the previous rental. Reset per `id`, reading tab fresh each
+  // time (falls back to "overview" when the new link carries no tab param).
+  useEffect(() => {
+    setTab(searchParams.get("tab") ?? "overview");
+  }, [id]);
+
   async function load(orgId: string) {
     const [rentals, invoices] = await Promise.all([
       apiClient.listRentals(orgId) as Promise<Rental[]>,

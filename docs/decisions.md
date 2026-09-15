@@ -488,6 +488,86 @@ while already on `/settings` in a different tab). Plausibly the same bug, but un
 — left alone rather than speculatively rewritten; worth a look if a similar "link doesn't do what it
 says" report comes in for those.
 
+## Full sweep of the useState-from-searchParams bug, plus three Create Quotation gaps
+
+Client asked to check every screen for the same bug class just fixed on Quotations/Billing, and
+separately flagged three more issues on the "Create a quotation" form from a screenshot. Handled
+together since they touched the same two files.
+
+**The searchParams sweep** (dispatched to an agent, since it needed checking every `<Link>`/
+`router.push` across the app against every `useState` seeded from `useSearchParams()`, not just
+grep hits): confirmed the App Router remounts a page for neither a query-only change **nor a
+changed `[id]` dynamic segment** (verified: no `key={id}` anywhere, no `template.tsx` files) — so
+the bug applies to cross-record navigation too, not just query-only. Found and fixed three more real
+instances:
+- `settings/page.tsx`'s `tab` state — the sidebar's "Organization"/"Settings" links do nothing while
+  already on Settings in a different tab. Fixed with the same `useEffect(() => { if (tabParam)
+  setTab(tabParam) }, [tabParam])` idiom.
+- `machines/[id]/page.tsx` and `rentals/[id]/page.tsx`'s `tab` state — opening a notification/search
+  hit for a *different* machine or rental lands on the new record's page still showing whatever tab
+  was selected for the previous one, since a changed `[id]` doesn't remount either. Fixed with
+  `useEffect(() => { setTab(searchParams.get("tab") ?? "overview") }, [id])` — unconditional and
+  keyed on `id`, so a fresh id with no tab param correctly resets to "overview" instead of staying
+  wherever it was.
+- `CreateQuotationDialog.tsx`'s `loadingContext`/`loadingAuctionPrefill` — the dialog stays mounted
+  (only `open` toggles), so a second notification for a *different* requirement arriving after these
+  flags already settled to `false` never flips them back to `true`; the form briefly rendered as a
+  manual quotation (no requirement banner, no locked renter, no pre-filled rate) for the duration of
+  the re-fetch. Fixed by setting them `true` at the start of each effect, not just relying on the
+  mount-time initializer.
+
+Checked and confirmed **not** live bugs, left alone: `auctions/page.tsx`'s `selectedRequirementId`
+(every path to `/auctions?requirementId=...` crosses a different route first, always a fresh mount),
+`transport/[id]/page.tsx`'s `rentalId` (self-healing — the data-loading effect already unconditionally
+calls `setRentalId` on every relevant param change), and `CreateQuotationDialog`'s `customerMode`
+initializer (masked by `isFromRequirement`, itself a correctly-recomputed plain `const`, not stateful —
+no observable symptom).
+
+**Three more issues on Create Quotation, all client-reported from one screenshot:**
+
+1. **"The rate unit lets you change it instead of keeping what was requested."** Same fix as
+   `QuotationResponseService.submitResponse`'s `indicativeRateUnit` from a few commits earlier:
+   `CommercialQuotationService.createQuotation` now locks `rateUnit` to the requirement's own
+   `expectedDurationUnit` when it has one, server-side and unconditional. The dialog hides the picker
+   and shows the locked unit read-only in that case, same UI pattern as the Open Market response
+   dialog.
+2. **"If the requirement needs more than one machine, we only let the user pick one."** Confirmed
+   the data model already supports it — `commercial_quotations` has no unique constraint on
+   `requirementId` alone, so multiple quotations against the same requirement (one per machine) were
+   always possible, the dialog just never let you pick more than one. Changed the Machine field from
+   a single `<Select>` to a checkbox list; submitting now creates one `CommercialQuotation` per
+   selected machine, all with the same terms (the Renter asked for N of the same equipment type, not
+   N different deals) — partial failures are reported by asset code rather than silently dropped, and
+   the dialog only closes once every selected machine succeeded.
+3. **Client asked for a "Requested" filter + count on the Quotations page**, so a Rental Company
+   doesn't have to rely on still having the notification to find what's waiting on them. This needed
+   real persistence, not just reading notifications: added `quotation_responses.quotation_requested_at`
+   (migration `0028`), set by `QuotationResponseService.requestQuotation` (persisted *before* the
+   notification send — it's the durable record of the ask, independent of whether the notification
+   itself is ever delivered/read/kept) alongside a new `listRequestedQuotations` method/route,
+   `GET .../requested-quotations`. The Quotations page fetches this list (rental_company only) and
+   cross-references it against existing quotations' `quotationResponseId` to drop off ones already
+   formalized, rendering a distinct table (no CommercialQuotation exists yet for these) with a
+   "Create quotation" action per row that opens the same dialog, prefilled.
+
+   **That cross-reference exposed a real, separate, pre-existing bug while building it**:
+   `CreateQuotationDialog` never actually sent `quotationResponseId` when creating a quotation from a
+   requirement — the field exists on the contract and the backend already validates it correctly (see
+   the "Path A" test `commercial-quotation-service.test.ts` had all along), the frontend just never
+   populated it. This meant every commercial quotation ever formalized from a response was silently
+   unlinked from that response — which is also why the Renter's requirement detail page's "Open
+   {reference}" link next to an interested response has likely never actually resolved
+   (`quotationByResponseId` had nothing to match against). Fixed by having the dialog also fetch the
+   Rental Company's own response for the requirement (best-effort — creating straight from Open
+   Market with no prior response is still valid) and include its id in the create payload.
+
+Verified live end-to-end: created a requirement with `expectedDurationUnit: month`, submitted a
+response with `day`, requested a quotation, confirmed it appears in `GET .../requested-quotations`;
+created a quotation for it with `rateUnit: day` in the payload and confirmed it came back `month`;
+created a second quotation against the same requirement for a different machine (no unique-constraint
+conflict, confirming the multi-machine fan-out is safe); created a third quotation explicitly passing
+`quotationResponseId` and confirmed it round-trips correctly linked.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

@@ -363,6 +363,10 @@ export const apiClient = {
     ),
 
   // --- QuotationResponse ---
+  listRequestedQuotations: (organizationId: string) =>
+    apiRequest<QuotationResponse[]>(`/organizations/${organizationId}/requested-quotations`, {
+      method: "GET",
+    }),
   listResponsesForRequirement: (organizationId: string, requirementId: string) =>
     apiRequest<QuotationResponse[]>(
       `/organizations/${organizationId}/requirements/${requirementId}/responses`,

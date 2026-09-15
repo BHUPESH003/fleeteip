@@ -89,6 +89,11 @@ export function CreateQuotationDialog({
   const [machines, setMachines] = useState<Machine[]>([]);
   const [renterOrganizations, setRenterOrganizations] = useState<Organization[]>([]);
   const [requirement, setRequirement] = useState<Requirement | null>(null);
+  // This rental company's own "interested" response to the requirement, if
+  // any — recorded on the created quotation as quotationResponseId so the
+  // Renter's requirement page can link back to it, and so this response
+  // drops off the Quotations page's "Requested" filter once formalized.
+  const [responseId, setResponseId] = useState<string | null>(null);
   const [subcategoryName, setSubcategoryName] = useState<string | null>(null);
   const [prefilledRate, setPrefilledRate] = useState<number | null>(null);
   const [customerMode, setCustomerMode] = useState<"external" | "renter">(
@@ -108,6 +113,12 @@ export function CreateQuotationDialog({
 
   useEffect(() => {
     if (!open || !requirementIdParam) return;
+    // This dialog stays mounted (only `open` toggles) — a notification for
+    // a *different* requirement arriving after this effect already settled
+    // to false once needs to flip it back to true, not just rely on the
+    // initializer above, which only ran at first mount.
+    setLoadingContext(true);
+    setResponseId(null);
     void (async () => {
       try {
         const req = (await apiClient.getRequirementForDiscovery(
@@ -123,6 +134,18 @@ export function CreateQuotationDialog({
           (s) => s.id === req.productSubcategoryId,
         );
         setSubcategoryName(match?.name ?? null);
+        // Best-effort — creating a quotation without ever having submitted
+        // an "interested" response first (e.g. straight from Open Market)
+        // is valid; there's just nothing to link back to in that case.
+        try {
+          const response = (await apiClient.getMyResponse(
+            organizationId,
+            requirementIdParam,
+          )) as { id: string };
+          setResponseId(response.id);
+        } catch {
+          // No response on file for this requirement — fine.
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load the requirement");
       } finally {
@@ -133,6 +156,8 @@ export function CreateQuotationDialog({
 
   useEffect(() => {
     if (!open || !sourceAuctionIdParam) return;
+    // Same reasoning as loadingContext above — this dialog stays mounted.
+    setLoadingAuctionPrefill(true);
     void (async () => {
       try {
         const detail = (await apiClient.getAuctionDetail(
@@ -167,45 +192,73 @@ export function CreateQuotationDialog({
       setError("Valid until date cannot be after the start date");
       return;
     }
-    try {
-      await apiClient.createQuotation(organizationId, {
-        machineId: String(form.get("machineId")),
-        requirementId: requirementIdParam ?? undefined,
-        sourceAuctionId: sourceAuctionIdParam ?? undefined,
-        ...(customerMode === "renter"
-          ? { renterOrganizationId: String(form.get("renterOrganizationId")) }
-          : { clientSnapshot: { name: String(form.get("clientName")) } }),
-        startDate,
-        endDate: endDate ? String(endDate) : undefined,
-        rate: Number(form.get("rate")),
-        rateUnit: String(form.get("rateUnit")) as RateUnit,
-        validityDate,
-        fuelScope: form.get("fuelScope") ? (String(form.get("fuelScope")) as ResponsibleParty) : undefined,
-        accommodationScope: form.get("accommodationScope")
-          ? (String(form.get("accommodationScope")) as ResponsibleParty)
-          : undefined,
-        workingHours: form.get("workingHours") ? Number(form.get("workingHours")) : undefined,
-        workingDaysPerWeek: form.get("workingDaysPerWeek")
-          ? Number(form.get("workingDaysPerWeek"))
-          : undefined,
-        minimumRentalPeriodValue: form.get("minimumRentalPeriodValue")
-          ? Number(form.get("minimumRentalPeriodValue"))
-          : undefined,
-        minimumRentalPeriodUnit: form.get("minimumRentalPeriodUnit")
-          ? (String(form.get("minimumRentalPeriodUnit")) as RateUnit)
-          : undefined,
-        gstTerms: form.get("gstTerms") ? String(form.get("gstTerms")) : undefined,
-        commercialNotes: form.get("commercialNotes") ? String(form.get("commercialNotes")) : undefined,
-        companyTerms: form.get("companyTerms") ? String(form.get("companyTerms")) : undefined,
-      });
+    const machineIds = form.getAll("machineId").map(String);
+    if (machineIds.length === 0) {
+      setError("Select at least one machine");
+      return;
+    }
+    const commonFields = {
+      requirementId: requirementIdParam ?? undefined,
+      quotationResponseId: responseId ?? undefined,
+      sourceAuctionId: sourceAuctionIdParam ?? undefined,
+      ...(customerMode === "renter"
+        ? { renterOrganizationId: String(form.get("renterOrganizationId")) }
+        : { clientSnapshot: { name: String(form.get("clientName")) } }),
+      startDate,
+      endDate: endDate ? String(endDate) : undefined,
+      rate: Number(form.get("rate")),
+      rateUnit: (lockedRateUnit ?? String(form.get("rateUnit"))) as RateUnit,
+      validityDate,
+      fuelScope: form.get("fuelScope") ? (String(form.get("fuelScope")) as ResponsibleParty) : undefined,
+      accommodationScope: form.get("accommodationScope")
+        ? (String(form.get("accommodationScope")) as ResponsibleParty)
+        : undefined,
+      workingHours: form.get("workingHours") ? Number(form.get("workingHours")) : undefined,
+      workingDaysPerWeek: form.get("workingDaysPerWeek")
+        ? Number(form.get("workingDaysPerWeek"))
+        : undefined,
+      minimumRentalPeriodValue: form.get("minimumRentalPeriodValue")
+        ? Number(form.get("minimumRentalPeriodValue"))
+        : undefined,
+      minimumRentalPeriodUnit: form.get("minimumRentalPeriodUnit")
+        ? (String(form.get("minimumRentalPeriodUnit")) as RateUnit)
+        : undefined,
+      gstTerms: form.get("gstTerms") ? String(form.get("gstTerms")) : undefined,
+      commercialNotes: form.get("commercialNotes") ? String(form.get("commercialNotes")) : undefined,
+      companyTerms: form.get("companyTerms") ? String(form.get("companyTerms")) : undefined,
+    };
+
+    // A requirement can ask for more than one machine (quantity > 1) — one
+    // quotation per machine is what the data model already supports
+    // (commercial_quotations has no unique constraint on requirementId
+    // alone), the dialog just used to only ever let you pick one. Same
+    // terms across all selected machines: the Renter asked for N of the
+    // same equipment type, not N different deals.
+    const failures: string[] = [];
+    for (const machineId of machineIds) {
+      try {
+        await apiClient.createQuotation(organizationId, { ...commonFields, machineId });
+      } catch (err) {
+        const assetCode = activeMachines.find((m) => m.id === machineId)?.assetCode ?? machineId;
+        failures.push(`${assetCode}: ${err instanceof Error ? err.message : "failed"}`);
+      }
+    }
+    onCreated();
+    if (failures.length === 0) {
       formElement.reset();
-      onCreated();
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create quotation");
+    } else {
+      setError(
+        `Created ${machineIds.length - failures.length} of ${machineIds.length} quotations. Failed — ${failures.join("; ")}`,
+      );
     }
   }
 
+  // Locked to the requirement's own unit when it has one — see
+  // CommercialQuotationService.createQuotation, which enforces this
+  // server-side regardless; this just avoids showing a picker whose choice
+  // would be silently overridden.
+  const lockedRateUnit = requirement?.expectedDurationUnit ?? null;
   const activeMachines = machines.filter((m) => m.status === "active");
   const renterName = (id: string) =>
     renterOrganizations.find((o) => o.id === id)?.name ?? `Renter ${id.slice(0, 8)}…`;
@@ -230,15 +283,25 @@ export function CreateQuotationDialog({
           <div className="flex flex-col gap-1">
             <p className="text-xs font-semibold uppercase tracking-wide text-meta">Customer</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Select
-                label="Machine"
-                name="machineId"
-                required
-                options={[
-                  { value: "", label: "Select a machine" },
-                  ...activeMachines.map((m) => ({ value: m.id, label: m.assetCode })),
-                ]}
-              />
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-ink-muted">
+                  Machine{requirement && requirement.quantity > 1 ? ` — needs ${requirement.quantity}` : ""}
+                </span>
+                <div className="flex max-h-[136px] flex-col gap-1 overflow-y-auto rounded-control border border-border-strong px-2.5 py-2">
+                  {activeMachines.map((m) => (
+                    <label key={m.id} className="flex items-center gap-2 text-sm text-ink">
+                      <input type="checkbox" name="machineId" value={m.id} />
+                      {m.assetCode}
+                    </label>
+                  ))}
+                </div>
+                {requirement && requirement.quantity > 1 && (
+                  <span className="text-[11px] text-meta">
+                    Select more than one to quote several machines in one go — one quotation is created per
+                    machine selected, all with the same terms below.
+                  </span>
+                )}
+              </div>
               {!isFromRequirement && (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-ink-muted">Customer type</span>
@@ -291,7 +354,15 @@ export function CreateQuotationDialog({
               />
               <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
               <Input label="Rate" name="rate" type="number" step="0.01" required defaultValue={prefilledRate ?? undefined} />
-              <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
+              {lockedRateUnit ? (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-ink-muted">Rate unit</span>
+                  <p className="flex h-[34px] items-center text-sm text-ink capitalize">{lockedRateUnit}</p>
+                  <input type="hidden" name="rateUnit" value={lockedRateUnit} />
+                </div>
+              ) : (
+                <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
+              )}
               <Input
                 label="Valid until"
                 name="validityDate"
