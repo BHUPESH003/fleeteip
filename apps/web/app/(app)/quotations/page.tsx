@@ -61,6 +61,16 @@ export default function QuotationsPage() {
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(Boolean(requirementIdParam || sourceAuctionIdParam));
 
+  // A notification/dashboard link (e.g. "Request quotation") arrives here via
+  // router.push — a same-route, query-only navigation that the App Router
+  // doesn't remount this page for, so the useState initializer above never
+  // re-runs and createOpen stays stuck at whatever it was on first mount.
+  // Mirrors the quotationIdParam redirect effect below, which already gets
+  // this right.
+  useEffect(() => {
+    if (requirementIdParam || sourceAuctionIdParam) setCreateOpen(true);
+  }, [requirementIdParam, sourceAuctionIdParam]);
+
   async function load(orgId: string, orgType: "renter" | "rental_company") {
     try {
       const quotations = (await apiClient.listQuotations(orgId)) as CommercialQuotation[];

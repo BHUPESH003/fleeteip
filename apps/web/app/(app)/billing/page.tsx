@@ -79,9 +79,16 @@ function InvoiceRow({
   // A notification/dashboard deep link (?invoiceId=...) — open this one row
   // without the reader having to find and expand it themselves. Billing has
   // no [id] detail page, unlike every other resource; this is the closest
-  // equivalent an expand-in-place list can offer.
+  // equivalent an expand-in-place list can offer. A plain useState
+  // initializer for `expanded` isn't enough here: this link arrives via
+  // router.push, a same-route query-only navigation the App Router doesn't
+  // remount this page for, so an initializer snapshotted at first mount
+  // would stay stuck at its original value.
   useEffect(() => {
-    if (highlighted) void load();
+    if (highlighted) {
+      setExpanded(true);
+      void load();
+    }
   }, [highlighted]);
 
   async function handleStatus(status: "issued" | "cancelled") {

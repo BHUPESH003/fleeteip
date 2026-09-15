@@ -456,6 +456,38 @@ own notification list with the right type/message/link. Also verified the guard 
 Company calling this on itself gets 403 (`rfq.manage` is Renter-only), and requesting from a company
 that never responded (or responded not-interested) gets a 409 `ConflictError`.
 
+## Clicking "Quotation requested" landed on Quotations but never opened the form
+
+Client-reported, right after the previous fix shipped: clicking the new "Quotation requested"
+notification navigated to `/quotations?requirementId=...` correctly, but `CreateQuotationDialog` never
+opened — no pre-filled form, just the plain list.
+
+Root cause: `const [createOpen, setCreateOpen] = useState(Boolean(requirementIdParam ||
+sourceAuctionIdParam))` — a `useState` **initializer**, which only runs once, at first mount. The
+notification bell navigates with `router.push(...)`, a same-route, query-only transition — the App
+Router doesn't remount the page for that, only re-renders it with the new `searchParams`. So if
+`QuotationsPage` was already mounted (which it very often is — the sidebar nav, prior visits, or
+simply having the tab open), `createOpen`'s initializer never re-runs and silently stays `false`
+forever, no matter what the URL says. The tell was sitting two lines below it the whole time: the
+`quotationIdParam` redirect already does this correctly, as a `useEffect` that re-runs whenever the
+param actually changes — proof this is a real bug, not a design choice, and exactly what the fix
+should mirror. Added the matching effect: `useEffect(() => { if (requirementIdParam ||
+sourceAuctionIdParam) setCreateOpen(true) }, [requirementIdParam, sourceAuctionIdParam])`.
+
+**Caught the identical bug in my own prior commit before it was even reported**: `billing/page.tsx`'s
+`InvoiceRow` had `const [expanded, setExpanded] = useState(Boolean(highlighted))` — same
+initializer-vs-query-only-navigation mismatch, meaning the `?invoiceId=` deep link I'd just built would
+correctly fetch the invoice's detail (that part *was* a reactive `useEffect`) but never actually expand
+the row to show it, for the exact same reason. Fixed by moving `setExpanded(true)` into the existing
+reactive effect instead of the state initializer.
+
+**Not chased further, flagged instead**: the same `useState(Boolean(...))`/`useState(searchParams.get(...))`
+pattern also exists for tab state in `settings/page.tsx`, `machines/[id]/page.tsx`, and
+`rentals/[id]/page.tsx` (e.g. the sidebar's "Organization" link to `/settings?tab=organization`, clicked
+while already on `/settings` in a different tab). Plausibly the same bug, but unverified and unreported
+— left alone rather than speculatively rewritten; worth a look if a similar "link doesn't do what it
+says" report comes in for those.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.
