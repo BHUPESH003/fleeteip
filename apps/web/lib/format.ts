@@ -1,3 +1,9 @@
+// For a date <input>'s min/max — "today" in the same YYYY-MM-DD shape the
+// API's z.string().date() fields use.
+export function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function formatRelativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const minutes = Math.round(diffMs / 60_000);

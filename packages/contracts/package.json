@@ -20,7 +20,8 @@
     "./search": "./src/search/index.ts",
     "./project": "./src/project/index.ts",
     "./work-order": "./src/work-order/index.ts",
-    "./platform-admin": "./src/platform-admin/index.ts"
+    "./platform-admin": "./src/platform-admin/index.ts",
+    "./shared": "./src/shared/dates.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

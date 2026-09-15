@@ -5,6 +5,7 @@ import type { OperatorScope, RateUnit } from "@fleetip/contracts/rental";
 import { Button, Dialog, Input, Select } from "@fleetip/ui";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { todayIsoDate } from "../../../lib/format";
 
 const RATE_UNIT_OPTIONS = [
   { value: "shift", label: "Per shift" },
@@ -49,6 +50,11 @@ export function CreateRentalDialog({ open, onClose, organizationId, onCreated }:
     const noticePeriodDays = form.get("noticePeriodDays");
     const operatorScope = form.get("operatorScope");
     const endDate = form.get("endDate");
+    const startDate = String(form.get("startDate"));
+    if (endDate && String(endDate) < startDate) {
+      setError("End date cannot be before the start date");
+      return;
+    }
     try {
       await apiClient.createRental(organizationId, {
         machineId: String(form.get("machineId")),
@@ -64,7 +70,7 @@ export function CreateRentalDialog({ open, onClose, organizationId, onCreated }:
             }),
         projectName: form.get("projectName") ? String(form.get("projectName")) : undefined,
         projectLocation: form.get("projectLocation") ? String(form.get("projectLocation")) : undefined,
-        startDate: String(form.get("startDate")),
+        startDate,
         endDate: endDate ? String(endDate) : undefined,
         rate: Number(form.get("rate")),
         rateUnit: String(form.get("rateUnit")) as RateUnit,
@@ -139,7 +145,7 @@ export function CreateRentalDialog({ open, onClose, organizationId, onCreated }:
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Input label="Project name" name="projectName" />
                 <Input label="Project location" name="projectLocation" />
-                <Input label="Start date" name="startDate" type="date" required />
+                <Input label="Start date" name="startDate" type="date" min={todayIsoDate()} required />
                 <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
                 <Input label="Rate" name="rate" type="number" step="0.01" required />
                 <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />

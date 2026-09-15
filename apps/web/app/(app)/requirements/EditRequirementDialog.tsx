@@ -4,6 +4,7 @@ import type { Requirement } from "@fleetip/contracts/rfq";
 import { Button, Dialog, Input } from "@fleetip/ui";
 import { type FormEvent, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { todayIsoDate } from "../../../lib/format";
 
 export interface EditRequirementDialogProps {
   open: boolean;
@@ -29,6 +30,10 @@ export function EditRequirementDialog({
     const form = new FormData(event.currentTarget);
     const quantity = Number(form.get("quantity"));
     const requestedStartDate = String(form.get("requestedStartDate") ?? "");
+    if (requestedStartDate < requirement.validityDate) {
+      setError("Requested start date cannot be before the requirement's validity date");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -63,6 +68,11 @@ export function EditRequirementDialog({
             label="Requested start date"
             name="requestedStartDate"
             type="date"
+            // The lower of "today" and the current value — so a requirement
+            // whose start date has already organically passed can still be
+            // saved unchanged (e.g. to bump quantity), while picking a new
+            // date still can't go into the past.
+            min={requirement.requestedStartDate < todayIsoDate() ? requirement.requestedStartDate : todayIsoDate()}
             defaultValue={requirement.requestedStartDate}
             required
           />

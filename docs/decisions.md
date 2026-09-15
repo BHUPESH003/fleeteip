@@ -236,6 +236,69 @@ Scoped, on request, to Requirement only (Rental carries the identical leftover f
 Verified live: posting a requirement with no `projectName`/`projectLocation` in the request body at
 all comes back with both correctly populated from the selected project.
 
+## No date validation anywhere — past dates, and nonsensical date pairs, were all accepted
+
+Client-reported, with a screenshot: "Post a requirement" let a past `requestedStartDate` through, and
+its `validityDate` could be set to a date already in the past relative to today — nothing anywhere
+stopped either. Investigating turned up the same gap everywhere in the app, not just here: every
+`z.string().date()` field across Rental, Project, Maintenance, Billing, Commercial Quotation, and
+Transport had zero validation, front or back — no `min` on any date `<input>`, no cross-field
+ordering check anywhere except Auction's existing `endsAt > startsAt` refine. User chose the widest
+scope on offer: fix every date-pair field with a real, confirmed gap, not just Requirement.
+
+The rules aren't uniform across entities — each was decided from the entity's own actual semantics,
+confirmed against `seed-demo-data.ts` and `acceptance-flows.test.ts` (both drive real services
+in-process, bypassing Zod entirely, so they were useless as a red-flag but essential as a sanity check
+for which "obvious" rule would have broken a deliberately-valid real scenario):
+
+- **Requirement** (`requestedStartDate`/`validityDate`): neither may be in the past, and
+  `validityDate <= requestedStartDate` — the doc comment says validityDate is when the RFQ "stops
+  accepting new responses," which makes no sense after the equipment is already due on site.
+- **Rental**/**Commercial Quotation** (`startDate`/`endDate`/`validityDate`): `startDate` can't be in
+  the past (`docs/rental-domain-design.md`: "may be today or a future date"), `endDate >= startDate`,
+  and for Quotation, `validityDate` follows the same not-in-past + `<= startDate` rule as Requirement's.
+  **Deliberately NOT applied** to `createQuotationOfferRequestSchema`'s `startDate` — the counter-offer
+  UI carries the quotation's existing `startDate` forward unchanged with no date picker of its own; a
+  negotiation that runs long enough for that date to lapse must still be able to counter-offer. Only
+  the `endDate >= startDate` ordering survives there.
+- **Project**/**Maintenance** (`startDate`/`endDate`): ordering only (`endDate >= startDate`) — no
+  "not in the past" rule, because backfilling a project already underway, or logging a maintenance
+  window that already happened, is the normal case, not a bug. Confirmed by
+  `seed-demo-data.ts` itself, which logs a maintenance record with both dates in the past.
+- **Billing** (`billingPeriodStart`/`billingPeriodEnd`/`dueDate`/`paidDate`): `billingPeriodEnd >=
+  billingPeriodStart` and `dueDate >= billingPeriodEnd`. No past/future restriction on any of these —
+  invoicing a period that already happened is the normal case, and `seed-demo-data.ts`'s own
+  `paidDate` is deliberately *ahead* of "today" (its whole demo journey is scheduled to start in the
+  future), which ruled out a tempting "paidDate can't be in the future" rule.
+- **Transport** (`plannedDate`/`actualDate`): no ordering rule between them at all — real dispatch can
+  legitimately happen earlier or later than planned. Only `actualDate` gets a rule: can't be in the
+  future (you can't record that a truck "actually" left tomorrow).
+- **Auction** (`startsAt`/`endsAt`): left alone beyond its existing `endsAt > startsAt` refine. A
+  tempting `startsAt` not-in-the-past addition was dropped after finding both `seed-demo-data.ts` and
+  `acceptance-flows.test.ts` deliberately create an auction that started two minutes ago, to
+  demonstrate immediate bidding — an intentional, real capability, not a gap.
+
+Cross-field ordering on a *partial update* schema can't be a Zod refine (either date may be absent
+from the payload) — `RequirementService.updateRequirement` and `ProjectService.updateProject` check
+the merged final values (`update.field ?? existing.field`) instead, throwing `ValidationError`. Single-
+field "not in the past/future" checks don't have this problem and stay in the Zod schema even for
+partial updates (`updateRequirementRequestSchema`, `updateTransportRequestSchema`).
+
+One more edit-form trap, caught before shipping: `EditRequirementDialog`'s `requestedStartDate` input
+got a naive `min={today}` at first — which silently made the form **unsubmittable** for any requirement
+whose start date had already organically drifted into the past while still open (the browser blocks
+submission of an out-of-range value before `onSubmit` even fires, even to save an unrelated field like
+quantity). Fixed to `min` = the *earlier* of today and the requirement's current value, so an unchanged
+stale date stays submittable while picking a new one still can't go into the past.
+
+Shared date-comparison helpers live at `packages/contracts/src/shared/dates.ts` (`todayIsoDate`,
+`isPastIsoDate`, `isFutureIsoDate` — plain string comparison, since every date here is already
+`YYYY-MM-DD`) and `apps/web/lib/format.ts` (`todayIsoDate`, for `min`/`max` attributes).
+
+Verified live against the exact reported screenshot's values (`requestedStartDate: 2026-09-30`,
+`validityDate: 2026-09-04`, with "today" being 2026-09-15) — now rejected with "Validity date cannot
+be in the past."
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

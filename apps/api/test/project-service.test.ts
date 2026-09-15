@@ -14,7 +14,7 @@ import type {
   ProjectRepositoryPort,
 } from "../src/modules/marketplace/project/domain/ports.js";
 import { ProjectService } from "../src/modules/marketplace/project/application/project-service.js";
-import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RENTER_ORG_ID = "org-renter";
@@ -224,6 +224,19 @@ describe("ProjectService", () => {
       siteLocation: "Sector 63, Noida",
     });
     expect(updated.siteLocation).toBe("Sector 63, Noida");
+  });
+
+  it("rejects moving the start date past the project's own end date", async () => {
+    const service = buildService();
+    const project = await service.createProject("user-1", RENTER_ORG_ID, {
+      ...baseInput,
+      endDate: "2026-04-01",
+    });
+    // endDate isn't part of this update at all — it must still be checked
+    // against the persisted value.
+    await expect(
+      service.updateProject("user-1", RENTER_ORG_ID, project.id, { startDate: "2026-05-01" }),
+    ).rejects.toThrow(ValidationError);
   });
 
   it("rejects editing project fields once it is no longer active", async () => {

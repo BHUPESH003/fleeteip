@@ -7,6 +7,7 @@ import type { CrewRequirement, ShiftPattern } from "@fleetip/contracts/rfq";
 import { Button, Dialog, Input, Select } from "@fleetip/ui";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { todayIsoDate } from "../../../lib/format";
 
 const DURATION_UNIT_OPTIONS = [
   { value: "", label: "Not specified" },
@@ -74,6 +75,12 @@ export function PostRequirementDialog({
     const boomLength = form.get("boomLength");
     const shiftPattern = form.get("shiftPattern");
     const crewRequirement = form.get("crewRequirement");
+    const requestedStartDate = String(form.get("requestedStartDate"));
+    const validityDate = String(form.get("validityDate"));
+    if (validityDate > requestedStartDate) {
+      setError("Validity date cannot be after the requested start date");
+      return;
+    }
     try {
       await apiClient.createRequirement(organizationId, {
         projectId: String(form.get("projectId")),
@@ -82,7 +89,7 @@ export function PostRequirementDialog({
         capacityUnit: form.get("capacityUnit") ? String(form.get("capacityUnit")) : undefined,
         boomLength: boomLength ? Number(boomLength) : undefined,
         quantity: Number(form.get("quantity") || 1),
-        requestedStartDate: String(form.get("requestedStartDate")),
+        requestedStartDate,
         expectedDurationValue: durationValue ? Number(durationValue) : undefined,
         expectedDurationUnit: durationUnit ? (String(durationUnit) as RateUnit) : undefined,
         shiftPattern: shiftPattern ? (String(shiftPattern) as ShiftPattern) : undefined,
@@ -92,7 +99,7 @@ export function PostRequirementDialog({
         shiftRequirement: form.get("shiftRequirement")
           ? String(form.get("shiftRequirement"))
           : undefined,
-        validityDate: String(form.get("validityDate")),
+        validityDate,
         notes: form.get("notes") ? String(form.get("notes")) : undefined,
       });
       formElement.reset();
@@ -155,8 +162,20 @@ export function PostRequirementDialog({
             <Input label="Quantity" name="quantity" type="number" defaultValue={1} min={1} />
             <Input label="Capacity" name="capacity" type="number" step="0.01" />
             <Input label="Capacity unit" name="capacityUnit" placeholder="e.g. Ton, Meter" />
-            <Input label="Requested start date" name="requestedStartDate" type="date" required />
-            <Input label="Validity date" name="validityDate" type="date" required />
+            <Input
+              label="Requested start date"
+              name="requestedStartDate"
+              type="date"
+              min={todayIsoDate()}
+              required
+            />
+            <Input
+              label="Validity date"
+              name="validityDate"
+              type="date"
+              min={todayIsoDate()}
+              required
+            />
             <Input label="Expected duration" name="expectedDurationValue" type="number" />
             <Select label="Duration unit" name="expectedDurationUnit" options={DURATION_UNIT_OPTIONS} />
             <Input

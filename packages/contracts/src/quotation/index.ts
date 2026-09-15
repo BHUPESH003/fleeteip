@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { clientSnapshotSchema, operatorScopeSchema, rateUnitSchema } from "../rental/index.js";
+import { isPastIsoDate } from "../shared/dates.js";
 
 // --- QuotationResponse: a Rental Company's lightweight reply to a Requirement ---
 
@@ -154,6 +155,24 @@ export const createCommercialQuotationRequestSchema = z
   .refine((data) => Boolean(data.renterOrganizationId) !== Boolean(data.clientSnapshot), {
     message: "Provide exactly one of renterOrganizationId or clientSnapshot",
     path: ["renterOrganizationId"],
+  })
+  .refine((data) => !isPastIsoDate(data.startDate), {
+    message: "Start date cannot be in the past",
+    path: ["startDate"],
+  })
+  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
+  })
+  .refine((data) => !isPastIsoDate(data.validityDate), {
+    message: "Validity date cannot be in the past",
+    path: ["validityDate"],
+  })
+  .refine((data) => data.validityDate <= data.startDate, {
+    // Same reasoning as Requirement's validityDate — the quotation shouldn't
+    // still be acceptable after the rental it proposes has already started.
+    message: "Validity date cannot be after the start date",
+    path: ["validityDate"],
   });
 export type CreateCommercialQuotationRequest = z.infer<
   typeof createCommercialQuotationRequestSchema
@@ -238,11 +257,21 @@ export const quotationOfferSchema = z.object({
 });
 export type QuotationOffer = z.infer<typeof quotationOfferSchema>;
 
-export const createQuotationOfferRequestSchema = z.object({
-  rate: z.number().positive(),
-  rateUnit: rateUnitSchema,
-  startDate: z.string().date(),
-  endDate: z.string().date().optional(),
-  notes: z.string().min(1).max(1000).optional(),
-});
+export const createQuotationOfferRequestSchema = z
+  .object({
+    rate: z.number().positive(),
+    rateUnit: rateUnitSchema,
+    startDate: z.string().date(),
+    endDate: z.string().date().optional(),
+    notes: z.string().min(1).max(1000).optional(),
+  })
+  // No "not in the past" check on startDate here — unlike the initial
+  // CreateQuotationDialog, the counter-offer UI carries the quotation's
+  // existing startDate forward unchanged (no date picker of its own); a
+  // negotiation that runs long enough for that date to lapse must still be
+  // able to counter-offer. Ordering is still worth enforcing either way.
+  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
+  });
 export type CreateQuotationOfferRequest = z.infer<typeof createQuotationOfferRequestSchema>;

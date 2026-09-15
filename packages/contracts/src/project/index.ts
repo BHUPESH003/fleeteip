@@ -27,15 +27,22 @@ export const projectSchema = z.object({
 });
 export type Project = z.infer<typeof projectSchema>;
 
-export const createProjectRequestSchema = z.object({
-  projectType: z.string().min(1).max(100),
-  projectName: z.string().min(1).max(200),
-  siteLocation: z.string().min(1).max(200),
-  state: z.string().min(1).max(100).optional(),
-  district: z.string().min(1).max(100).optional(),
-  startDate: z.string().date(),
-  endDate: z.string().date().optional(),
-});
+export const createProjectRequestSchema = z
+  .object({
+    projectType: z.string().min(1).max(100),
+    projectName: z.string().min(1).max(200),
+    siteLocation: z.string().min(1).max(200),
+    state: z.string().min(1).max(100).optional(),
+    district: z.string().min(1).max(100).optional(),
+    startDate: z.string().date(),
+    endDate: z.string().date().optional(),
+  })
+  // No "not in the past" rule for startDate — unlike Rental/Requirement,
+  // backfilling a Project that's already underway is a normal case.
+  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
+  });
 export type CreateProjectRequest = z.infer<typeof createProjectRequestSchema>;
 
 // Deliberately excludes status (updateProjectStatusRequestSchema's job) and

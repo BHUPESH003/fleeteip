@@ -135,6 +135,14 @@ export class RequirementService {
     if (existing.status !== "open") {
       throw new ConflictError("Requirement fields can only be edited while it is open");
     }
+    // Cross-field ordering can't be a schema-level refine here — a partial
+    // update may carry only one of the two dates — so it's checked against
+    // the merged final values instead.
+    const finalStartDate = updates.requestedStartDate ?? existing.requested_start_date;
+    const finalValidityDate = updates.validityDate ?? existing.validity_date;
+    if (finalValidityDate > finalStartDate) {
+      throw new ValidationError("Validity date cannot be after the requested start date");
+    }
     const record = await this.requirementRepository.updateFields(requirementId, updates);
     return toRequirement(record);
   }

@@ -4,7 +4,7 @@ import type {
   ProjectStatus,
   UpdateProjectRequest,
 } from "@fleetip/contracts/project";
-import { ConflictError, NotFoundError } from "../../../../shared/errors.js";
+import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/project-status.js";
 import type { ProjectRecord, ProjectRepositoryPort } from "../domain/ports.js";
@@ -100,6 +100,14 @@ export class ProjectService {
     const existing = await this.loadOwned(renterOrganizationId, projectId);
     if (existing.status !== "active") {
       throw new ConflictError("Project fields can only be edited while it is active");
+    }
+    // Cross-field ordering can't be a schema-level refine here — a partial
+    // update may carry only one of the two dates — so it's checked against
+    // the merged final values instead.
+    const finalStartDate = updates.startDate ?? existing.start_date;
+    const finalEndDate = updates.endDate ?? existing.end_date;
+    if (finalEndDate && finalEndDate < finalStartDate) {
+      throw new ValidationError("End date cannot be before the start date");
     }
     const record = await this.projectRepository.updateFields(projectId, updates);
     return toProject(record);

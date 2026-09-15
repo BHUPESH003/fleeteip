@@ -24,6 +24,12 @@ export function CreateProjectDialog({
     setError(null);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const startDate = String(form.get("startDate"));
+    const endDate = form.get("endDate") ? String(form.get("endDate")) : undefined;
+    if (endDate && endDate < startDate) {
+      setError("End date cannot be before the start date");
+      return;
+    }
     try {
       await apiClient.createProject(organizationId, {
         projectType: String(form.get("projectType")),
@@ -31,8 +37,8 @@ export function CreateProjectDialog({
         siteLocation: String(form.get("siteLocation")),
         state: form.get("state") ? String(form.get("state")) : undefined,
         district: form.get("district") ? String(form.get("district")) : undefined,
-        startDate: String(form.get("startDate")),
-        endDate: form.get("endDate") ? String(form.get("endDate")) : undefined,
+        startDate,
+        endDate,
       });
       formElement.reset();
       onCreated();

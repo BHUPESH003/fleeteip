@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { rateUnitSchema } from "../rental/index.js";
+import { isPastIsoDate } from "../shared/dates.js";
 
 export const requirementStatusSchema = z.enum(["open", "closed", "cancelled"]);
 export type RequirementStatus = z.infer<typeof requirementStatusSchema>;
@@ -44,30 +45,45 @@ export const requirementSchema = z.object({
 });
 export type Requirement = z.infer<typeof requirementSchema>;
 
-export const createRequirementRequestSchema = z.object({
-  projectId: z.string().uuid(),
-  productSubcategoryId: z.string().uuid(),
-  capacity: z.number().positive().optional(),
-  capacityUnit: z.string().min(1).max(20).optional(),
-  boomLength: z.number().positive().optional(),
-  // Optional, not `.default(1)` — a Zod default makes the schema's output
-  // type diverge from its input type, which breaks parseWithSchema<T>'s
-  // generic inference (T gets inferred from the input side). The service
-  // applies the default instead.
-  quantity: z.number().int().positive().optional(),
-  // No projectName/projectLocation here — the selected Project (projectId)
-  // is the single source of truth for both; the service snapshots them from
-  // the resolved Project record itself rather than trusting free text the
-  // caller would otherwise have to retype. See docs/decisions.md.
-  requestedStartDate: z.string().date(),
-  expectedDurationValue: z.number().int().positive().optional(),
-  expectedDurationUnit: rateUnitSchema.optional(),
-  shiftPattern: shiftPatternSchema.optional(),
-  crewRequirement: crewRequirementSchema.optional(),
-  shiftRequirement: z.string().min(1).max(500).optional(),
-  validityDate: z.string().date(),
-  notes: z.string().min(1).max(2000).optional(),
-});
+export const createRequirementRequestSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    productSubcategoryId: z.string().uuid(),
+    capacity: z.number().positive().optional(),
+    capacityUnit: z.string().min(1).max(20).optional(),
+    boomLength: z.number().positive().optional(),
+    // Optional, not `.default(1)` — a Zod default makes the schema's output
+    // type diverge from its input type, which breaks parseWithSchema<T>'s
+    // generic inference (T gets inferred from the input side). The service
+    // applies the default instead.
+    quantity: z.number().int().positive().optional(),
+    // No projectName/projectLocation here — the selected Project (projectId)
+    // is the single source of truth for both; the service snapshots them from
+    // the resolved Project record itself rather than trusting free text the
+    // caller would otherwise have to retype. See docs/decisions.md.
+    requestedStartDate: z.string().date(),
+    expectedDurationValue: z.number().int().positive().optional(),
+    expectedDurationUnit: rateUnitSchema.optional(),
+    shiftPattern: shiftPatternSchema.optional(),
+    crewRequirement: crewRequirementSchema.optional(),
+    shiftRequirement: z.string().min(1).max(500).optional(),
+    validityDate: z.string().date(),
+    notes: z.string().min(1).max(2000).optional(),
+  })
+  .refine((data) => !isPastIsoDate(data.requestedStartDate), {
+    message: "Requested start date cannot be in the past",
+    path: ["requestedStartDate"],
+  })
+  .refine((data) => !isPastIsoDate(data.validityDate), {
+    message: "Validity date cannot be in the past",
+    path: ["validityDate"],
+  })
+  .refine((data) => data.validityDate <= data.requestedStartDate, {
+    // validityDate is when the RFQ stops accepting new responses — it makes
+    // no sense for that to fall after the equipment is already due on site.
+    message: "Validity date cannot be after the requested start date",
+    path: ["validityDate"],
+  });
 export type CreateRequirementRequest = z.infer<typeof createRequirementRequestSchema>;
 
 // Renter-only transition: open -> closed | cancelled. Closing is a status
@@ -104,5 +120,16 @@ export const updateRequirementRequestSchema = z
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "Provide at least one field to update",
+  })
+  .refine((data) => data.requestedStartDate === undefined || !isPastIsoDate(data.requestedStartDate), {
+    message: "Requested start date cannot be in the past",
+    path: ["requestedStartDate"],
+  })
+  .refine((data) => data.validityDate === undefined || !isPastIsoDate(data.validityDate), {
+    message: "Validity date cannot be in the past",
+    path: ["validityDate"],
   });
+// Cross-field ordering (validityDate <= requestedStartDate) isn't checkable
+// here — either field may be absent from a partial update, so it's enforced
+// in RequirementService.updateRequirement against the merged final values.
 export type UpdateRequirementRequest = z.infer<typeof updateRequirementRequestSchema>;

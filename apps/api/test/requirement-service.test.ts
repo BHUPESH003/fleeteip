@@ -382,6 +382,19 @@ describe("RequirementService", () => {
     expect(updated.quantity).toBe(2);
   });
 
+  it("rejects moving the requested start date before the requirement's own validity date", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    // baseInput's validityDate is 2026-02-15 — moving requestedStartDate to
+    // 2026-02-01 (only field in the payload) must still be checked against
+    // it, even though validityDate itself isn't part of this update.
+    await expect(
+      service.updateRequirement("user-1", RENTER_ORG_ID, requirement.id, {
+        requestedStartDate: "2026-02-01",
+      }),
+    ).rejects.toThrow(ValidationError);
+  });
+
   it("rejects editing requirement fields once it is no longer open", async () => {
     const service = buildService();
     const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
