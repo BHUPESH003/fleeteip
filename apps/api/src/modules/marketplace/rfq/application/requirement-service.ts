@@ -77,8 +77,14 @@ export class RequirementService {
       capacityUnit: input.capacityUnit,
       boomLength: input.boomLength,
       quantity: input.quantity ?? 1,
-      projectName: input.projectName,
-      projectLocation: input.projectLocation,
+      // Snapshotted from the already-resolved Project, never the caller's
+      // own free text — projectId is the single source of truth for a
+      // requirement's project (see docs/decisions.md). This denormalized
+      // copy still matters: it's how a Rental Company sees project context
+      // in the cross-tenant Open Market view, which has no access to the
+      // Renter's own Project records (tenant isolation).
+      projectName: project.project_name,
+      projectLocation: project.site_location,
       requestedStartDate: input.requestedStartDate,
       expectedDurationValue: input.expectedDurationValue,
       expectedDurationUnit: input.expectedDurationUnit,

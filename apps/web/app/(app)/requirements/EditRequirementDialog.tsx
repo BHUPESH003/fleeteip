@@ -27,16 +27,12 @@ export function EditRequirementDialog({
     event.preventDefault();
     setError(null);
     const form = new FormData(event.currentTarget);
-    const projectName = String(form.get("projectName") ?? "").trim();
-    const projectLocation = String(form.get("projectLocation") ?? "").trim();
     const quantity = Number(form.get("quantity"));
     const requestedStartDate = String(form.get("requestedStartDate") ?? "");
 
     setSubmitting(true);
     try {
       const updated = await apiClient.updateRequirement(organizationId, requirement.id, {
-        ...(projectName !== (requirement.projectName ?? "") ? { projectName } : {}),
-        ...(projectLocation !== (requirement.projectLocation ?? "") ? { projectLocation } : {}),
         ...(quantity && quantity !== requirement.quantity ? { quantity } : {}),
         ...(requestedStartDate !== requirement.requestedStartDate ? { requestedStartDate } : {}),
       });
@@ -55,16 +51,6 @@ export function EditRequirementDialog({
         {error && <p className="text-sm text-danger">{error}</p>}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input
-            label="Project name"
-            name="projectName"
-            defaultValue={requirement.projectName ?? ""}
-          />
-          <Input
-            label="Project location"
-            name="projectLocation"
-            defaultValue={requirement.projectLocation ?? ""}
-          />
           <Input
             label="Quantity"
             name="quantity"

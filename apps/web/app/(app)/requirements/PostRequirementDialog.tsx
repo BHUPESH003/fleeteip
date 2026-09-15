@@ -82,10 +82,6 @@ export function PostRequirementDialog({
         capacityUnit: form.get("capacityUnit") ? String(form.get("capacityUnit")) : undefined,
         boomLength: boomLength ? Number(boomLength) : undefined,
         quantity: Number(form.get("quantity") || 1),
-        projectName: form.get("projectName") ? String(form.get("projectName")) : undefined,
-        projectLocation: form.get("projectLocation")
-          ? String(form.get("projectLocation"))
-          : undefined,
         requestedStartDate: String(form.get("requestedStartDate")),
         expectedDurationValue: durationValue ? Number(durationValue) : undefined,
         expectedDurationUnit: durationUnit ? (String(durationUnit) as RateUnit) : undefined,
@@ -159,8 +155,6 @@ export function PostRequirementDialog({
             <Input label="Quantity" name="quantity" type="number" defaultValue={1} min={1} />
             <Input label="Capacity" name="capacity" type="number" step="0.01" />
             <Input label="Capacity unit" name="capacityUnit" placeholder="e.g. Ton, Meter" />
-            <Input label="Project name" name="projectName" />
-            <Input label="Project location" name="projectLocation" />
             <Input label="Requested start date" name="requestedStartDate" type="date" required />
             <Input label="Validity date" name="validityDate" type="date" required />
             <Input label="Expected duration" name="expectedDurationValue" type="number" />

@@ -298,6 +298,17 @@ describe("RequirementService", () => {
     expect(requirement.renterOrganizationId).toBe(RENTER_ORG_ID);
   });
 
+  // The caller never supplies projectName/projectLocation at all (removed
+  // from CreateRequirementRequest — projectId is the sole input) — this
+  // snapshot still matters for the cross-tenant Open Market view, which has
+  // no access to the Renter's own Project records. See docs/decisions.md.
+  it("snapshots the resolved project's own name and location onto the requirement", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    expect(requirement.projectName).toBe("Metro Bridge Foundation");
+    expect(requirement.projectLocation).toBe("Jaipur");
+  });
+
   it("rejects requirement management for a Rental Company organization", async () => {
     const service = new RequirementService(
       fakeRequirementRepository(),

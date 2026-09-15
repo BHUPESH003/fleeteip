@@ -55,8 +55,10 @@ export const createRequirementRequestSchema = z.object({
   // generic inference (T gets inferred from the input side). The service
   // applies the default instead.
   quantity: z.number().int().positive().optional(),
-  projectName: z.string().min(1).max(200).optional(),
-  projectLocation: z.string().min(1).max(200).optional(),
+  // No projectName/projectLocation here — the selected Project (projectId)
+  // is the single source of truth for both; the service snapshots them from
+  // the resolved Project record itself rather than trusting free text the
+  // caller would otherwise have to retype. See docs/decisions.md.
   requestedStartDate: z.string().date(),
   expectedDurationValue: z.number().int().positive().optional(),
   expectedDurationUnit: rateUnitSchema.optional(),

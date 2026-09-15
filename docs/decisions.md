@@ -205,6 +205,37 @@ the page's own primary purpose. If not, gate the mismatched one behind its own `
 check with a graceful empty/null fallback — never assume a page's own permission covers every
 resource it happens to also fetch.
 
+## Post Requirement asked for the project's name/location twice
+
+Client-reported, with a screenshot: "Post a requirement" has a Project dropdown (a real Project,
+already carrying its own name and location) directly above free-text "Project name"/"Project
+location" inputs asking for the same two things again. Root cause confirmed from the codebase's own
+comment in `packages/contracts/src/project/index.ts`: "A Project ... replaces the free-text
+projectName/projectLocation strings previously repeated on every Requirement/Rental." When the
+Project entity and `Requirement.projectId` were added (an earlier phase this session), the *old*
+free-text fields were never actually removed — an unfinished migration, not a design choice.
+
+Scoped, on request, to Requirement only (Rental carries the identical leftover fields but has no
+`projectId` at all — a separate, bigger job, left alone here):
+
+- Removed the "Project name"/"Project location" inputs from `PostRequirementDialog.tsx` and
+  `EditRequirementDialog.tsx` — nothing to type, the selection already carries both.
+- `createRequirementRequestSchema` no longer accepts `projectName`/`projectLocation` as caller input
+  at all — `projectId` is the only way to say what project a requirement belongs to.
+- Requirement's own `project_name`/`project_location` columns stay (removing them is the bigger,
+  declined "full migration" option) and still matter: they're how a Rental Company sees project
+  context in the cross-tenant Open Market view, which has no access to a Renter's own Project records
+  (tenant isolation). `RequirementService.createRequirement` already resolved the real Project record
+  to validate `projectId` — it just wasn't using the name/location already in hand. Fixed to snapshot
+  `project.project_name`/`project.site_location` onto the requirement automatically, instead of
+  trusting (now-removed) free text the caller would otherwise have had to retype accurately by hand.
+  `seed-demo-data.ts`'s two `createRequirement` calls dropped their now-redundant explicit
+  `projectName`/`projectLocation` (which already exactly matched the real project's own fields —
+  further evidence this was leftover duplication, not divergent data).
+
+Verified live: posting a requirement with no `projectName`/`projectLocation` in the request body at
+all comes back with both correctly populated from the selected project.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.
