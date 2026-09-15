@@ -10,6 +10,13 @@ export interface RegisterMachineDialogProps {
   onClose: () => void;
   organizationId: string;
   onRegistered: () => void;
+  // Pre-fills classification when opened from a specific catalogue product
+  // (e.g. "Register as machine" on the product page) instead of the blank
+  // machines-page flow. Machine's product reference is fixed once
+  // registered — this only saves re-picking the same dropdowns.
+  initialCategoryId?: string;
+  initialSubcategoryId?: string;
+  initialProductId?: string;
 }
 
 export function RegisterMachineDialog({
@@ -17,6 +24,9 @@ export function RegisterMachineDialog({
   onClose,
   organizationId,
   onRegistered,
+  initialCategoryId,
+  initialSubcategoryId,
+  initialProductId,
 }: RegisterMachineDialogProps) {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [subcategories, setSubcategories] = useState<ProductSubcategory[]>([]);
@@ -30,8 +40,17 @@ export function RegisterMachineDialog({
     if (!open) return;
     void (async () => {
       setCategories((await apiClient.listProductCategories()) as ProductCategory[]);
+      if (initialCategoryId && initialSubcategoryId && initialProductId) {
+        setCategoryId(initialCategoryId);
+        setSubcategories(
+          (await apiClient.listProductSubcategories(initialCategoryId)) as ProductSubcategory[],
+        );
+        setSubcategoryId(initialSubcategoryId);
+        setProducts((await apiClient.listProducts(initialSubcategoryId)) as Product[]);
+        setProductId(initialProductId);
+      }
     })();
-  }, [open]);
+  }, [open, initialCategoryId, initialSubcategoryId, initialProductId]);
 
   async function handleCategoryChange(value: string) {
     setCategoryId(value);

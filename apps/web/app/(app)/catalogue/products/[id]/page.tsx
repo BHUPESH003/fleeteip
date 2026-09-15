@@ -25,6 +25,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../../../lib/api-client";
 import { useSession } from "../../../../../lib/session-context";
 import { flattenSpecifications, MACHINE_STATUS_MAP } from "../../../machines/shared";
+import { RegisterMachineDialog } from "../../../machines/RegisterMachineDialog";
 import { CatalogueConfirmDialog, CatalogueFormDialog } from "../../AdminDialogs";
 import { formatCapacity } from "../../shared";
 
@@ -41,11 +42,13 @@ export default function ProductDetailPage() {
   const organizationId = currentMembership?.organizationId;
   const canSeeOwnFleet = currentMembership?.organization.organizationTypeCode === "rental_company";
   const canManage = hasPermission("catalogue.manage");
+  const canRegisterMachine = canSeeOwnFleet && hasPermission("equipment.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
 
@@ -179,7 +182,22 @@ export default function ProductDetailPage() {
         </div>
 
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-ink">Machines using this product</h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-ink">Machines using this product</h2>
+            {canSeeOwnFleet && (
+              <Button
+                variant="secondary"
+                onClick={() => setRegisterOpen(true)}
+                title={
+                  canRegisterMachine
+                    ? undefined
+                    : "Requires equipment.manage (Rental Company organizations only)"
+                }
+              >
+                Register as machine
+              </Button>
+            )}
+          </div>
           {!canSeeOwnFleet ? (
             <p className="text-sm text-meta">Only visible to a Rental Company&apos;s own fleet.</p>
           ) : ownMachines.length === 0 ? (
@@ -288,6 +306,18 @@ export default function ProductDetailPage() {
         }
         confirmLabel="Disable"
       />
+
+      {organizationId && (
+        <RegisterMachineDialog
+          open={registerOpen}
+          onClose={() => setRegisterOpen(false)}
+          organizationId={organizationId}
+          onRegistered={() => void load()}
+          initialCategoryId={subcategory?.productCategoryId}
+          initialSubcategoryId={product.productSubcategoryId}
+          initialProductId={product.id}
+        />
+      )}
     </div>
   );
 }
