@@ -53,6 +53,24 @@ export default function RequirementDetailPage() {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // rentalCompanyOrganizationIds this session has just requested a
+  // quotation from — swaps that response row's button for confirmation
+  // instead of re-navigating away, so it stays put next to the response.
+  const [requestedFrom, setRequestedFrom] = useState<Set<string>>(new Set());
+  // Separate from `error` deliberately — that one renders as a full-page
+  // ErrorState, too disruptive for one row's action failing.
+  const [requestQuotationError, setRequestQuotationError] = useState<string | null>(null);
+
+  async function handleRequestQuotation(rentalCompanyOrganizationId: string) {
+    if (!organizationId) return;
+    setRequestQuotationError(null);
+    try {
+      await apiClient.requestQuotation(organizationId, id, rentalCompanyOrganizationId);
+      setRequestedFrom((prev) => new Set(prev).add(rentalCompanyOrganizationId));
+    } catch (err) {
+      setRequestQuotationError(err instanceof Error ? err.message : "Failed to request a quotation");
+    }
+  }
 
   async function load(orgId: string) {
     const requirement = (await apiClient.getRequirement(orgId, id)) as Requirement;
@@ -261,6 +279,8 @@ export default function RequirementDetailPage() {
             />
           </div>
 
+          {requestQuotationError && <p className="text-sm text-danger">{requestQuotationError}</p>}
+
           <Card padding={responses.length === 0 ? "md" : "none"}>
             {responses.length === 0 ? (
               <EmptyState
@@ -314,13 +334,18 @@ export default function RequirementDetailPage() {
                               >
                                 Open {linkedQuotation.referenceNumber}
                               </Link>
+                            ) : requestedFrom.has(response.rentalCompanyOrganizationId) ? (
+                              <span className="text-xs text-meta">Requested</span>
                             ) : (
-                              <Link
-                                href={`/quotations?requirementId=${requirement.id}`}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleRequestQuotation(response.rentalCompanyOrganizationId)
+                                }
                                 className="text-xs font-medium text-accent-text"
                               >
                                 Request quotation
-                              </Link>
+                              </button>
                             ))}
                         </Td>
                       </Tr>

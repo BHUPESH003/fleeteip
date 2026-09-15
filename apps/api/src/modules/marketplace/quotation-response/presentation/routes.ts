@@ -42,4 +42,20 @@ export async function quotationResponseRoutes(fastify: FastifyInstance): Promise
       );
     },
   );
+
+  fastify.post<{
+    Params: { organizationId: string; requirementId: string; rentalCompanyOrganizationId: string };
+  }>(
+    "/organizations/:organizationId/requirements/:requirementId/responses/:rentalCompanyOrganizationId/request-quotation",
+    async (request, reply) => {
+      const userId = await getAuthenticatedUserId(request);
+      await container.quotationResponseService.requestQuotation(
+        userId,
+        request.params.organizationId,
+        request.params.requirementId,
+        request.params.rentalCompanyOrganizationId,
+      );
+      reply.code(204);
+    },
+  );
 }

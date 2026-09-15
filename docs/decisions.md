@@ -419,6 +419,43 @@ every `MaintenanceService` method requires `maintenance.manage` with no renter-f
 all (no `maintenance.respond` permission exists), so Maintenance is genuinely rental-company-internal
 by design, not a bug.
 
+## "Request quotation" didn't request anything
+
+Client-reported, with a screenshot: on a Renter's Requirement detail page, a Rental Company that
+responded "interested" but hasn't yet formalized a `CommercialQuotation` shows a "Request quotation"
+link — it just navigated to `/quotations?requirementId=...`, the Renter's own Quotations page. Checked
+what that actually does for a Renter: `CreateQuotationDialog` (the thing that `requirementId` query
+param is meant to open) only renders when `organizationType === "rental_company"` — for a Renter it's a
+complete no-op, landing on a plain list with nothing pre-filled and no way to act on it. Renters can't
+create quotations at all (`quotation.manage` is rental_company-only); the button's entire premise was
+navigating the wrong party to a screen only the *other* party can use.
+
+The real ask, per the button's own label and the client's report: tell the Rental Company the Renter
+wants a formal quotation. Added the actual action instead of a broken redirect:
+- New notification type `requirement.quotation_requested`.
+- `QuotationResponseService.requestQuotation(userId, renterOrganizationId, requirementId,
+  rentalCompanyOrganizationId)` — `rfq.manage` (Renter-only), requires the target company's own
+  response to exist and be `"interested"` (`ConflictError` otherwise), then notifies that company.
+  Deliberately **not** wrapped in the "swallow notification failures" try/catch every other caller in
+  this codebase uses — those calls have already done their real DB write and the notification is a
+  side effect; here, notifying the Rental Company *is* the entire business action, so a failure has to
+  surface to the Renter rather than silently doing nothing while returning success.
+- `POST /organizations/:organizationId/requirements/:requirementId/responses/:rentalCompanyOrganizationId/request-quotation`.
+- The Rental Company's notification needs its own `relatedResourceType` (`quotation_request`, not
+  `requirement`) — `/requirements/[id]` is Renter-only, so a Rental Company clicking a plain
+  `requirement`-typed notification would hit a permission wall. Routes to
+  `/quotations?requirementId=...` instead — the create-quotation flow that param shape was always
+  meant for.
+- Frontend: the link is now a button that calls the endpoint and swaps to "Requested" in place,
+  instead of navigating the Renter anywhere — the whole point was to notify someone else, not to send
+  the Renter to a different page.
+
+Verified live end-to-end: submitted an interested response as a Rental Company, called
+"Request quotation" as the Renter, confirmed the notification actually landed in the Rental Company's
+own notification list with the right type/message/link. Also verified the guard rails: a Rental
+Company calling this on itself gets 403 (`rfq.manage` is Renter-only), and requesting from a company
+that never responded (or responded not-interested) gets a 409 `ConflictError`.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

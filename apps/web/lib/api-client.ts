@@ -382,6 +382,11 @@ export const apiClient = {
       `/organizations/${organizationId}/requirements/${requirementId}/response`,
       { method: "PUT", body: JSON.stringify(input) },
     ),
+  requestQuotation: (organizationId: string, requirementId: string, rentalCompanyOrganizationId: string) =>
+    apiRequest<void>(
+      `/organizations/${organizationId}/requirements/${requirementId}/responses/${rentalCompanyOrganizationId}/request-quotation`,
+      { method: "POST" },
+    ),
 
   // --- CommercialQuotation + Negotiation ---
   listRenterOrganizations: (organizationId: string) =>

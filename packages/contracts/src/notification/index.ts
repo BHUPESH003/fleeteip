@@ -12,6 +12,7 @@ import { z } from "zod";
 // infra exists yet — flagged as Phase 2/infra work, not added here).
 export const notificationTypeSchema = z.enum([
   "requirement.response_received",
+  "requirement.quotation_requested",
   "quotation.sent",
   "quotation.negotiation_offer",
   "quotation.offer_accepted",

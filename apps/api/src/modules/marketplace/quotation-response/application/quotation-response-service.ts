@@ -89,6 +89,45 @@ export class QuotationResponseService {
     return toQuotationResponse(record);
   }
 
+  // The Renter's own action on an "interested" response with no formal
+  // CommercialQuotation yet — the frontend's "Request quotation" button used
+  // to just navigate the Renter to their own /quotations page, which does
+  // nothing for them (only a rental_company can create one there) and never
+  // told the Rental Company anything. This is the actual ask.
+  async requestQuotation(
+    userId: string,
+    renterOrganizationId: string,
+    requirementId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<void> {
+    await this.permissionService.requirePermission(userId, renterOrganizationId, "rfq.manage");
+    const requirement = await this.requirementRepository.findById(requirementId);
+    if (!requirement || requirement.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Requirement not found in this organization");
+    }
+    const response = await this.quotationResponseRepository.findByRequirementAndOrganization(
+      requirementId,
+      rentalCompanyOrganizationId,
+    );
+    if (!response || response.status !== "interested") {
+      throw new ConflictError(
+        "Can only request a quotation from a rental company that responded as interested",
+      );
+    }
+    // Not swallowed like submitResponse's notification — here, notifying
+    // *is* the entire business action, not a side effect alongside a DB
+    // write, so a failure must surface to the Renter rather than silently
+    // doing nothing.
+    await this.notificationService.notify({
+      recipientOrganizationId: rentalCompanyOrganizationId,
+      type: "requirement.quotation_requested",
+      title: "Quotation requested",
+      message: "The Renter has asked you to formalize a commercial quotation for your response.",
+      relatedResourceType: "quotation_request",
+      relatedResourceId: requirementId,
+    });
+  }
+
   async getMyResponse(
     userId: string,
     rentalCompanyOrganizationId: string,

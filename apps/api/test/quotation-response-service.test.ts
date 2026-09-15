@@ -17,7 +17,10 @@ import type {
   SubmitQuotationResponseInput,
 } from "../src/modules/marketplace/quotation-response/domain/ports.js";
 import { QuotationResponseService } from "../src/modules/marketplace/quotation-response/application/quotation-response-service.js";
-import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
+import type {
+  CreateNotificationInput,
+  NotificationRepositoryPort,
+} from "../src/modules/notification/domain/ports.js";
 import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 
@@ -141,6 +144,45 @@ function fakeNotificationService(): NotificationService {
     },
   };
   return new NotificationService(throwingRepo, fakePermissionService());
+}
+
+// requestQuotation, unlike submitResponse, doesn't swallow a notification
+// failure (notifying *is* the whole business action here) — needs a fake
+// that actually succeeds and captures what was sent.
+function fakeNotificationServiceCapturing(): {
+  service: NotificationService;
+  sent: CreateNotificationInput[];
+} {
+  const sent: CreateNotificationInput[] = [];
+  const repo: NotificationRepositoryPort = {
+    create: async (input) => {
+      sent.push(input);
+      return {
+        id: "notification-1",
+        recipient_organization_id: input.recipientOrganizationId,
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        related_resource_type: input.relatedResourceType ?? null,
+        related_resource_id: input.relatedResourceId ?? null,
+        read_at: null,
+        created_at: new Date(),
+      };
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return { service: new NotificationService(repo, fakePermissionService()), sent };
 }
 
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
@@ -377,5 +419,100 @@ describe("QuotationResponseService", () => {
     await expect(
       service.listResponsesForRequirement("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  describe("requestQuotation", () => {
+    it("notifies the interested Rental Company", async () => {
+      const responseRepository = fakeQuotationResponseRepository();
+      const requirementRepository = fakeRequirementRepository();
+      const rcService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "interested",
+        indicativeRate: 1200,
+        indicativeRateUnit: "day",
+      });
+
+      const { service: notificationService, sent } = fakeNotificationServiceCapturing();
+      const renterService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService("renter"),
+        notificationService,
+      );
+      await renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        recipientOrganizationId: RC_ORG_ID,
+        type: "requirement.quotation_requested",
+        relatedResourceType: "quotation_request",
+        relatedResourceId: OPEN_REQUIREMENT_ID,
+      });
+    });
+
+    it("rejects requesting a quotation from a company that hasn't responded", async () => {
+      const service = new QuotationResponseService(
+        fakeQuotationResponseRepository(),
+        fakeRequirementRepository(),
+        fakePermissionService("renter"),
+        fakeNotificationService(),
+      );
+      await expect(
+        service.requestQuotation("user-1", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects requesting a quotation from a company that responded not_interested", async () => {
+      const responseRepository = fakeQuotationResponseRepository();
+      const requirementRepository = fakeRequirementRepository();
+      const rcService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "not_interested",
+      });
+
+      const renterService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService("renter"),
+        fakeNotificationService(),
+      );
+      await expect(
+        renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects for a requirement belonging to a different Renter organization", async () => {
+      const service = new QuotationResponseService(
+        fakeQuotationResponseRepository(),
+        fakeRequirementRepository(),
+        fakePermissionService("renter"),
+        fakeNotificationService(),
+      );
+      await expect(
+        service.requestQuotation("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("rejects requestQuotation for a Rental Company organization (rfq.manage is Renter-only)", async () => {
+      const service = new QuotationResponseService(
+        fakeQuotationResponseRepository(),
+        fakeRequirementRepository(),
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await expect(
+        service.requestQuotation("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(ForbiddenError);
+    });
   });
 });

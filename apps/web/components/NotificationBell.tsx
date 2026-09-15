@@ -17,6 +17,11 @@ const UNREAD_POLL_INTERVAL_MS = 25_000;
 // selected via a query param on their list page instead).
 const ROUTE_BY_RESOURCE_TYPE: Record<string, (id: string) => string> = {
   requirement: (id) => `/requirements/${id}`,
+  // requirement.quotation_requested's recipient is a Rental Company, which
+  // can't open /requirements/[id] at all (Renter-only) — a distinct
+  // resource type routes it to where they can actually act: the create-
+  // quotation flow, prefilled from the requirement.
+  quotation_request: (id) => `/quotations?requirementId=${id}`,
   quotation: (id) => `/quotations/${id}`,
   auction: (id) => `/auctions?auctionId=${id}`,
   rental: (id) => `/rentals/${id}`,
