@@ -299,6 +299,26 @@ Verified live against the exact reported screenshot's values (`requestedStartDat
 `validityDate: 2026-09-04`, with "today" being 2026-09-15) — now rejected with "Validity date cannot
 be in the past."
 
+## Open Market's "Respond" form: misaligned fields, and anchored below the whole table
+
+Client-reported with a screenshot: the "Interested"/"Not interested" radios in the inline response
+form didn't line up with the Rate/Unit/Notes fields next to them. Root cause: `Input`/`Select` each
+carry their own `mb-3` on their label wrapper (meant for vertically-stacked fields), but the plain
+radio `<label>`s and `<Button>`s in this *horizontal* `items-end` row didn't have it — so their
+visible bottoms landed 12px below the input boxes' bottoms instead of level with them, since
+`align-items` aligns the margin box, not the rendered content box.
+
+While fixing that, a second, bigger UX problem surfaced (client-flagged): the form was rendered once,
+appended after the *entire* table, regardless of which row's "Respond" was clicked — with more than a
+couple of open requirements, responding to an early row meant scrolling all the way down to reach the
+form that just appeared at the bottom.
+
+Fixed both by replacing the inline `<Card>` with a `<Dialog>` (the same modal every other
+create/edit form in the app already uses) instead of patching the margin mismatch in place — a modal
+overlays the page regardless of scroll position, so the scroll problem doesn't exist, and its fields
+stack vertically (`flex-col`), which is what `Input`/`Select`'s `mb-3` was already meant for — the
+misalignment doesn't exist there either. `Card` import was dropped as no longer used in this file.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

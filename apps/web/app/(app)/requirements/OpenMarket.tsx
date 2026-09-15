@@ -8,7 +8,7 @@ import type { Requirement } from "@fleetip/contracts/rfq";
 import {
   Badge,
   Button,
-  Card,
+  Dialog,
   EmptyState,
   ErrorState,
   Input,
@@ -303,51 +303,68 @@ export function OpenMarket({
         </Table>
       )}
 
-      {respondingId &&
-        (() => {
-          const req = data.requirements.find((r) => r.id === respondingId);
-          if (!req) return null;
-          const response = data.responses.get(respondingId);
-          return (
-            <Card>
-              <h2 className="mb-3 text-sm font-semibold text-ink">
-                Respond to {data.subcategoriesById.get(req.productSubcategoryId)?.name ?? "requirement"}
-              </h2>
-              {response && (
-                <p className="mb-3 text-sm text-meta">
-                  Current response: <StatusBadge status={response.status} map={RESPONSE_STATUS_MAP} />{" "}
-                  {response.indicativeRate ? `${response.indicativeRate} / ${response.indicativeRateUnit}` : ""}
-                </p>
-              )}
-              <form onSubmit={(e) => void handleRespond(e, respondingId)} className="flex flex-wrap items-end gap-3">
-                <label className="flex items-center gap-2 text-sm text-ink-muted">
-                  <input type="radio" name="interested" value="yes" defaultChecked required />
-                  Interested
-                </label>
-                <label className="flex items-center gap-2 text-sm text-ink-muted">
-                  <input type="radio" name="interested" value="no" required />
-                  Not interested
-                </label>
-                <Input label="Rate" name="indicativeRate" type="number" step="0.01" />
-                <Select
-                  label="Unit"
-                  name="indicativeRateUnit"
-                  options={[
-                    { value: "shift", label: "Shift" },
-                    { value: "day", label: "Day" },
-                    { value: "week", label: "Week" },
-                    { value: "month", label: "Month" },
-                  ]}
-                />
-                <Input label="Notes" name="notes" />
-                <Button type="submit">Submit</Button>
-                <Button type="button" variant="tertiary" onClick={() => setRespondingId(null)}>
-                  Cancel
-                </Button>
-              </form>
-            </Card>
-          );
-        })()}
+      {(() => {
+        // A modal instead of a row appended after the whole table — with
+        // many requirements, "Respond" on an early row used to open a form
+        // anchored at the very bottom, forcing a scroll to reach it.
+        const req = respondingId ? data.requirements.find((r) => r.id === respondingId) : undefined;
+        const response = req ? data.responses.get(req.id) : undefined;
+        const subcategoryName = req
+          ? (data.subcategoriesById.get(req.productSubcategoryId)?.name ?? "requirement")
+          : "requirement";
+        return (
+          <Dialog
+            open={Boolean(respondingId)}
+            onClose={() => setRespondingId(null)}
+            title={`Respond to ${subcategoryName}`}
+          >
+            {req && (
+              <>
+                {response && (
+                  <p className="mb-3 text-sm text-meta">
+                    Current response: <StatusBadge status={response.status} map={RESPONSE_STATUS_MAP} />{" "}
+                    {response.indicativeRate
+                      ? `${response.indicativeRate} / ${response.indicativeRateUnit}`
+                      : ""}
+                  </p>
+                )}
+                <form onSubmit={(e) => void handleRespond(e, req.id)} className="flex flex-col gap-3 text-left">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 text-sm text-ink-muted">
+                      <input type="radio" name="interested" value="yes" defaultChecked required />
+                      Interested
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-ink-muted">
+                      <input type="radio" name="interested" value="no" required />
+                      Not interested
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input label="Rate" name="indicativeRate" type="number" step="0.01" />
+                    <Select
+                      label="Unit"
+                      name="indicativeRateUnit"
+                      options={[
+                        { value: "shift", label: "Shift" },
+                        { value: "day", label: "Day" },
+                        { value: "week", label: "Week" },
+                        { value: "month", label: "Month" },
+                      ]}
+                    />
+                  </div>
+                  <Input label="Notes" name="notes" />
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button type="button" variant="secondary" onClick={() => setRespondingId(null)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit">Submit</Button>
+                  </div>
+                </form>
+              </>
+            )}
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
