@@ -1,5 +1,9 @@
 import type { ClientSnapshot, OperatorScope, RateUnit } from "@fleetip/contracts/rental";
-import type { CommercialQuotationStatus, QuotationOfferStatus } from "@fleetip/contracts/quotation";
+import type {
+  CommercialQuotationStatus,
+  QuotationOfferStatus,
+  ResponsibleParty,
+} from "@fleetip/contracts/quotation";
 
 export interface CommercialQuotationRecord {
   id: string;
@@ -22,11 +26,19 @@ export interface CommercialQuotationRecord {
   shift_structure: string | null;
   sunday_condition: string | null;
   fuel_norms: string | null;
+  fuel_scope: ResponsibleParty | null;
   dehire_terms: string | null;
   operator_scope: OperatorScope | null;
+  accommodation_scope: ResponsibleParty | null;
+  working_hours: number | null;
+  working_days_per_week: number | null;
+  minimum_rental_period_value: number | null;
+  minimum_rental_period_unit: RateUnit | null;
+  gst_terms: string | null;
   notice_period_days: number | null;
   validity_date: string;
   commercial_notes: string | null;
+  company_terms: string | null;
   status: CommercialQuotationStatus;
   renter_accepted_at: Date | string | null;
   created_at: Date | string;
@@ -53,11 +65,19 @@ export interface CreateCommercialQuotationInput {
   shiftStructure?: string;
   sundayCondition?: string;
   fuelNorms?: string;
+  fuelScope?: ResponsibleParty;
   dehireTerms?: string;
   operatorScope?: OperatorScope;
+  accommodationScope?: ResponsibleParty;
+  workingHours?: number;
+  workingDaysPerWeek?: number;
+  minimumRentalPeriodValue?: number;
+  minimumRentalPeriodUnit?: RateUnit;
+  gstTerms?: string;
   noticePeriodDays?: number;
   validityDate: string;
   commercialNotes?: string;
+  companyTerms?: string;
 }
 
 export interface UpdateCommercialQuotationTermsInput {
@@ -68,10 +88,18 @@ export interface UpdateCommercialQuotationTermsInput {
   shiftStructure?: string;
   sundayCondition?: string;
   fuelNorms?: string;
+  fuelScope?: ResponsibleParty;
   dehireTerms?: string;
   operatorScope?: OperatorScope;
+  accommodationScope?: ResponsibleParty;
+  workingHours?: number;
+  workingDaysPerWeek?: number;
+  minimumRentalPeriodValue?: number;
+  minimumRentalPeriodUnit?: RateUnit;
+  gstTerms?: string;
   noticePeriodDays?: number;
   commercialNotes?: string;
+  companyTerms?: string;
 }
 
 // Written when an offer is accepted — the negotiable subset only. See
@@ -148,4 +176,30 @@ export interface QuotationOfferRepositoryPort {
   // one live offer at a time. See docs/marketplace-core-loop-design.md §7.
   supersedePending(quotationId: string): Promise<void>;
   updateStatus(id: string, status: QuotationOfferStatus): Promise<QuotationOfferRecord>;
+}
+
+// Category/equipment-specific commercial responsibilities that don't warrant
+// a dedicated column (wire rope scope, ground preparation, support crane,
+// ...) — see this phase's brief §9.
+export interface QuotationScopeItemRecord {
+  id: string;
+  quotation_id: string;
+  item: string;
+  responsible_party: ResponsibleParty;
+  notes: string | null;
+  created_at: Date | string;
+}
+
+export interface CreateQuotationScopeItemInput {
+  quotationId: string;
+  item: string;
+  responsibleParty: ResponsibleParty;
+  notes?: string;
+}
+
+export interface QuotationScopeItemRepositoryPort {
+  create(input: CreateQuotationScopeItemInput): Promise<QuotationScopeItemRecord>;
+  findById(id: string): Promise<QuotationScopeItemRecord | undefined>;
+  listByQuotation(quotationId: string): Promise<QuotationScopeItemRecord[]>;
+  delete(id: string): Promise<void>;
 }

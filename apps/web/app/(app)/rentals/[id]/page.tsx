@@ -67,6 +67,11 @@ export default function RentalDetailPage() {
   // transport.manage/logsheet.manage.
   const canReadTransport = !isRenter || hasPermission("transport.respond");
   const canReadLogsheets = !isRenter || hasPermission("logsheet.respond");
+  // Invoices here are enrichment for the Billing tab, not the point of this
+  // page (rental.manage/.respond is) — a role without billing.manage/.respond
+  // still gets a fully working rental page, just with an empty invoice list.
+  const canReadInvoices = isRenter ? hasPermission("billing.respond") : hasPermission("billing.manage");
+  const canReadMachines = !isRenter && hasPermission("equipment.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,15 +80,17 @@ export default function RentalDetailPage() {
   async function load(orgId: string) {
     const [rentals, invoices] = await Promise.all([
       apiClient.listRentals(orgId) as Promise<Rental[]>,
-      apiClient.listInvoices(orgId) as Promise<Invoice[]>,
+      canReadInvoices ? (apiClient.listInvoices(orgId) as Promise<Invoice[]>) : Promise.resolve([]),
     ]);
     const rental = rentals.find((r) => r.id === id);
     if (!rental) throw new Error("Rental not found");
 
     let product: Product | null = null;
     let machine: Machine | null = null;
-    if (!isRenter) {
-      // Product/machine identity needs equipment.manage — Rental Company only.
+    // Product/machine identity needs equipment.manage — Rental Company only.
+    // Products are only fetched to resolve the machine's productId, so pair
+    // it with the same guard instead of fetching it unconditionally.
+    if (canReadMachines) {
       const [machines, products] = await Promise.all([
         apiClient.listMachines(orgId) as Promise<Machine[]>,
         apiClient.listProducts() as Promise<Product[]>,
@@ -109,7 +116,7 @@ export default function RentalDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load rental");
       }
     })();
-  }, [organizationId, id]);
+  }, [organizationId, id, canReadInvoices, canReadMachines]);
 
   async function handleStatus(status: Rental["status"]) {
     if (!organizationId) return;

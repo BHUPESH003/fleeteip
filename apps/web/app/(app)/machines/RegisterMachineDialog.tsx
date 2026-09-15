@@ -90,23 +90,32 @@ export function RegisterMachineDialog({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Select
               label="Category"
-              options={categories.map((c) => ({ value: c.id, label: c.name }))}
+              options={[
+                { value: "", label: "Select a category" },
+                ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ]}
               value={categoryId}
               onChange={(e) => void handleCategoryChange(e.target.value)}
             />
             <Select
               label="Subcategory"
-              options={subcategories.map((s) => ({ value: s.id, label: s.name }))}
+              options={[
+                { value: "", label: subcategories.length ? "Select a subcategory" : "—" },
+                ...subcategories.map((s) => ({ value: s.id, label: s.name })),
+              ]}
               value={subcategoryId}
               disabled={!categoryId}
               onChange={(e) => void handleSubcategoryChange(e.target.value)}
             />
             <Select
               label="Product"
-              options={products.map((p) => ({
-                value: p.id,
-                label: `${p.manufacturer} ${p.name}${p.capacity ? ` (${p.capacity} ${p.capacityUnit})` : ""}`,
-              }))}
+              options={[
+                { value: "", label: products.length ? "Select a product" : "—" },
+                ...products.map((p) => ({
+                  value: p.id,
+                  label: `${p.manufacturer} ${p.name}${p.capacity ? ` (${p.capacity} ${p.capacityUnit})` : ""}`,
+                })),
+              ]}
               value={productId}
               disabled={!subcategoryId}
               onChange={(e) => setProductId(e.target.value)}

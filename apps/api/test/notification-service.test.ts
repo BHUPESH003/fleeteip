@@ -21,6 +21,9 @@ const RENTER_ORG_ID = "org-renter";
 
 function fakePermissionService(): PermissionService {
   const membershipRepository: MembershipRepositoryPort = {
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",
@@ -35,7 +38,22 @@ function fakePermissionService(): PermissionService {
     },
   };
   const roleRepository: RoleRepositoryPort = {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["organization.manage"] : [],
@@ -63,8 +81,15 @@ function fakePermissionService(): PermissionService {
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -205,5 +230,105 @@ describe("NotificationService", () => {
   it("rejects listing another organization's notifications without membership", async () => {
     const service = buildService();
     await expect(service.list("user-3", "org-unrelated")).rejects.toThrow(ForbiddenError);
+  });
+
+  // Regression: notifications are a member's own inbox, not an admin config
+  // surface — listing/marking read must work for ANY active member,
+  // regardless of which (if any) permissions their role holds. This used to
+  // require organization.manage, which locked out every non-owner custom
+  // role (see docs/decisions.md).
+  it("lists and marks notifications read for a member whose role holds no permissions at all", async () => {
+    const membershipRepository: MembershipRepositoryPort = {
+      updateRole: async () => {
+        throw new Error("not used in this test");
+      },
+      findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
+        id: "membership-2",
+        status: "active",
+        role_id: "role-no-permissions",
+      }),
+      create: async () => {
+        throw new Error("not used in this test");
+      },
+      listWithOrganizationByUserId: async () => [],
+      listByOrganization: async () => {
+        throw new Error("not used in this test");
+      },
+    };
+    const roleRepository: RoleRepositoryPort = {
+      findByName: async () => {
+        throw new Error("not used in this test");
+      },
+      findById: async () => {
+        throw new Error("not used in this test");
+      },
+      listForOrganization: async () => {
+        throw new Error("not used in this test");
+      },
+      create: async () => {
+        throw new Error("not used in this test");
+      },
+      update: async () => {
+        throw new Error("not used in this test");
+      },
+      delete: async () => {
+        throw new Error("not used in this test");
+      },
+      hasPermission: async () => false,
+      listPermissionCodesByRoleId: async () => [],
+    };
+    const organizationRepository: OrganizationRepositoryPort = {
+      findTypeByCode: async () => {
+        throw new Error("not used in this test");
+      },
+      create: async () => {
+        throw new Error("not used in this test");
+      },
+      findById: async () => {
+        throw new Error("not used in this test");
+      },
+      findWithTypeById: async (id) => ({
+        id,
+        organization_type_id: "type-rental_company",
+        organization_type_code: "rental_company",
+        name: "Test Org",
+        code: "TESTORG",
+        status: "active",
+        created_at: new Date(),
+      }),
+      listAllForPlatformAdmin: async () => {
+        throw new Error("not used in this test");
+      },
+      updateStatus: async () => {
+        throw new Error("not used in this test");
+      },
+      codeExists: async () => {
+        throw new Error("not used in this test");
+      },
+      listByType: async () => {
+        throw new Error("not used in this test");
+      },
+    };
+    const permissionService = new PermissionService(
+      membershipRepository,
+      roleRepository,
+      organizationRepository,
+    );
+    const service = new NotificationService(fakeNotificationRepository(), permissionService);
+
+    const notification = await service.notify({
+      recipientOrganizationId: RC_ORG_ID,
+      type: "quotation.sent",
+      title: "Quotation sent",
+      message: "message-1",
+    });
+
+    const preview = await service.list("user-no-permissions", RC_ORG_ID);
+    expect(preview.notifications).toHaveLength(1);
+
+    const read = await service.markRead("user-no-permissions", RC_ORG_ID, notification.id);
+    expect(read?.readAt).not.toBeNull();
+
+    await expect(service.markAllRead("user-no-permissions", RC_ORG_ID)).resolves.toBeUndefined();
   });
 });

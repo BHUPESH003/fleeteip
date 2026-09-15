@@ -19,6 +19,10 @@ export default function MaintenanceDetailPage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const canView = hasPermission("maintenance.manage");
+  // Machine names are enrichment, not the point of this page (maintenance.manage
+  // is) — a role without equipment.manage still gets a fully working page, just
+  // without asset codes resolved (already handled: `machine?.assetCode ?? "—"`).
+  const canListMachines = hasPermission("equipment.manage");
 
   const [record, setRecord] = useState<MaintenanceRecord | null>(null);
   const [machine, setMachine] = useState<Machine | null>(null);
@@ -31,7 +35,7 @@ export default function MaintenanceDetailPage() {
       try {
         const [records, machines] = await Promise.all([
           apiClient.listMaintenanceForMachine(organizationId, machineId) as Promise<MaintenanceRecord[]>,
-          apiClient.listMachines(organizationId) as Promise<Machine[]>,
+          canListMachines ? (apiClient.listMachines(organizationId) as Promise<Machine[]>) : Promise.resolve([]),
         ]);
         const found = records.find((r) => r.id === id) ?? null;
         if (!found) {
@@ -44,7 +48,7 @@ export default function MaintenanceDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load maintenance record");
       }
     })();
-  }, [organizationId, machineId, id]);
+  }, [organizationId, machineId, id, canListMachines]);
 
   if (!organizationId) return <LoadingState label="Loading…" />;
 

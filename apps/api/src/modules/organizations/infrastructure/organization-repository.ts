@@ -21,16 +21,25 @@ export class OrganizationRepository implements OrganizationRepositoryPort {
         name: input.name,
         code: input.code,
       })
-      .returning(["id", "organization_type_id", "name", "code", "created_at"])
+      .returning(["id", "organization_type_id", "name", "code", "status", "created_at"])
       .executeTakeFirstOrThrow();
   }
 
   findById(id: string) {
     return this.db
       .selectFrom("organizations")
-      .select(["id", "organization_type_id", "name", "code", "created_at"])
+      .select(["id", "organization_type_id", "name", "code", "status", "created_at"])
       .where("id", "=", id)
       .executeTakeFirst();
+  }
+
+  updateStatus(id: string, status: "active" | "suspended") {
+    return this.db
+      .updateTable("organizations")
+      .set({ status })
+      .where("id", "=", id)
+      .returning(["id", "organization_type_id", "name", "code", "status", "created_at"])
+      .executeTakeFirstOrThrow();
   }
 
   findWithTypeById(id: string) {
@@ -46,6 +55,7 @@ export class OrganizationRepository implements OrganizationRepositoryPort {
         "organizations.organization_type_id as organization_type_id",
         "organizations.name as name",
         "organizations.code as code",
+        "organizations.status as status",
         "organizations.created_at as created_at",
         "organization_types.code as organization_type_code",
       ])
@@ -75,11 +85,35 @@ export class OrganizationRepository implements OrganizationRepositoryPort {
         "organizations.organization_type_id as organization_type_id",
         "organizations.name as name",
         "organizations.code as code",
+        "organizations.status as status",
         "organizations.created_at as created_at",
         "organization_types.code as organization_type_code",
       ])
       .where("organization_types.code", "=", organizationTypeCode)
       .orderBy("organizations.name")
+      .execute();
+  }
+
+  // Platform Admin only — every organization, no per-caller scoping. See
+  // OrganizationRepositoryPort.listAllForPlatformAdmin.
+  listAllForPlatformAdmin() {
+    return this.db
+      .selectFrom("organizations")
+      .innerJoin(
+        "organization_types",
+        "organization_types.id",
+        "organizations.organization_type_id",
+      )
+      .select([
+        "organizations.id as id",
+        "organizations.organization_type_id as organization_type_id",
+        "organizations.name as name",
+        "organizations.code as code",
+        "organizations.status as status",
+        "organizations.created_at as created_at",
+        "organization_types.code as organization_type_code",
+      ])
+      .orderBy("organizations.created_at", "desc")
       .execute();
   }
 }

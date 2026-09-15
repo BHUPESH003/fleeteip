@@ -41,8 +41,16 @@ interface Loaded {
 }
 
 export default function MachinesPage() {
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  // Rentals (availability lookups) and renter orgs (name display) are
+  // enrichment, not the point of this page (equipment.manage is) — a role
+  // without rental.manage/quotation.manage still gets a fully working page,
+  // just without current-rental info resolved (already handled: machines
+  // show as available and renter name falls back to "—"/"Renter"). Gating
+  // the fetch itself also skips a request that would 403.
+  const canListRentals = hasPermission("rental.manage");
+  const canListRenterOrgs = hasPermission("quotation.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,10 +67,10 @@ export default function MachinesPage() {
     try {
       const [machines, rentals, categories, products, renterOrgs] = await Promise.all([
         apiClient.listMachines(orgId) as Promise<Machine[]>,
-        apiClient.listRentals(orgId) as Promise<Rental[]>,
+        canListRentals ? (apiClient.listRentals(orgId) as Promise<Rental[]>) : Promise.resolve([]),
         apiClient.listProductCategories() as Promise<ProductCategory[]>,
         apiClient.listProducts() as Promise<Product[]>,
-        apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
+        canListRenterOrgs ? (apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>) : Promise.resolve([]),
       ]);
       const subcategoryLists = await Promise.all(
         categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
@@ -82,7 +90,7 @@ export default function MachinesPage() {
 
   useEffect(() => {
     if (organizationId) void load(organizationId);
-  }, [organizationId]);
+  }, [organizationId, canListRentals, canListRenterOrgs]);
 
   const filtered = useMemo(() => {
     if (!data) return [];

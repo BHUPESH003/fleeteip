@@ -38,6 +38,12 @@ export default function CataloguePage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const canManage = hasPermission("catalogue.manage");
+  // Machine counts are enrichment, not the point of this page (browsing the
+  // catalogue needs no permission at all) — a role without equipment.manage
+  // still gets the full catalogue, just without the "in your fleet" counts
+  // (already handled: `machines` empty → counts fall back to 0). Gating the
+  // fetch itself also skips a request that would 403.
+  const canListMachines = hasPermission("equipment.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +58,7 @@ export default function CataloguePage() {
     const [categories, products, machines] = await Promise.all([
       apiClient.listProductCategories() as Promise<ProductCategory[]>,
       apiClient.listProducts() as Promise<Product[]>,
-      apiClient.listMachines(orgId) as Promise<Machine[]>,
+      canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
     ]);
     // Bounded fan-out over categories (a handful, platform-wide), same
     // pattern already used by machines/page.tsx — not a per-machine
@@ -74,7 +80,7 @@ export default function CataloguePage() {
         setError(err instanceof Error ? err.message : "Failed to load catalogue");
       }
     })();
-  }, [organizationId]);
+  }, [organizationId, canListMachines]);
 
   async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

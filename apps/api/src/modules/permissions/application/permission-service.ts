@@ -31,6 +31,11 @@ export class PermissionService {
 
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
     if (!organization) return false;
+    // A suspended organization (Platform Admin action) loses every
+    // permission immediately — this is the single choke point every
+    // organization-scoped request already passes through, so no other
+    // enforcement point is needed.
+    if (organization.status === "suspended") return false;
     if (
       !PERMISSION_ORGANIZATION_TYPES[permission].includes(
         organization.organization_type_code as OrganizationTypeCode,
@@ -49,5 +54,19 @@ export class PermissionService {
     if (!(await this.hasPermission(userId, organizationId, permission))) {
       throw new ForbiddenError();
     }
+  }
+
+  // Weaker than requirePermission — for data that belongs to the member
+  // themselves within the organization (e.g. their own notifications
+  // inbox), not to a specific manage/respond capability. Still respects
+  // organization suspension; never checks a permission code against the
+  // role, so it doesn't matter which (if any) permissions a custom role
+  // grants — every active member passes.
+  async requireActiveMembership(userId: string, organizationId: string): Promise<void> {
+    const membership = await this.membershipRepository.findActiveMembership(userId, organizationId);
+    if (!membership) throw new ForbiddenError();
+
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!organization || organization.status === "suspended") throw new ForbiddenError();
   }
 }

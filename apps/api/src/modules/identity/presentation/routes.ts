@@ -1,21 +1,10 @@
 import { loginRequestSchema, signupRequestSchema } from "@fleetip/contracts/identity";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { env } from "../../../infrastructure/config/env.js";
 import { container } from "../../../infrastructure/container.js";
-import { getSessionToken } from "../../../shared/auth.js";
+import { getSessionToken, setSessionCookie } from "../../../shared/auth.js";
 import { UnauthorizedError } from "../../../shared/errors.js";
 import { parseWithSchema } from "../../../shared/validate.js";
-
-function setSessionCookie(reply: FastifyReply, token: string, expiresAt: Date): void {
-  reply.setCookie(env.SESSION_COOKIE_NAME, token, {
-    httpOnly: true,
-    signed: true,
-    path: "/",
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production",
-    expires: expiresAt,
-  });
-}
 
 // Brute-force/enumeration protection — keyed by IP, not email, since an
 // attacker controls the email field. Deliberately generous (this guards

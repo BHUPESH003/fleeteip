@@ -1,10 +1,13 @@
 "use client";
 
 import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
+import type { Project } from "@fleetip/contracts/project";
 import type { RateUnit } from "@fleetip/contracts/rental";
+import type { CrewRequirement, ShiftPattern } from "@fleetip/contracts/rfq";
 import { Button, Dialog, Input, Select } from "@fleetip/ui";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { todayIsoDate } from "../../../lib/format";
 
 const DURATION_UNIT_OPTIONS = [
   { value: "", label: "Not specified" },
@@ -12,6 +15,19 @@ const DURATION_UNIT_OPTIONS = [
   { value: "day", label: "Days" },
   { value: "week", label: "Weeks" },
   { value: "month", label: "Months" },
+];
+
+const SHIFT_PATTERN_OPTIONS = [
+  { value: "", label: "Not specified" },
+  { value: "single", label: "Single shift" },
+  { value: "double", label: "Double shift" },
+  { value: "flexi", label: "Flexi shift" },
+];
+
+const CREW_REQUIREMENT_OPTIONS = [
+  { value: "", label: "Not specified" },
+  { value: "one_crew_set", label: "One crew set" },
+  { value: "two_crew_sets", label: "Two crew sets" },
 ];
 
 export interface PostRequirementDialogProps {
@@ -30,14 +46,16 @@ export function PostRequirementDialog({
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [subcategories, setSubcategories] = useState<ProductSubcategory[]>([]);
   const [categoryId, setCategoryId] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     void (async () => {
       setCategories((await apiClient.listProductCategories()) as ProductCategory[]);
+      setProjects((await apiClient.listProjects(organizationId)) as Project[]);
     })();
-  }, [open]);
+  }, [open, organizationId]);
 
   async function handleCategoryChange(value: string) {
     setCategoryId(value);
@@ -54,23 +72,34 @@ export function PostRequirementDialog({
     const capacity = form.get("capacity");
     const durationValue = form.get("expectedDurationValue");
     const durationUnit = form.get("expectedDurationUnit");
+    const boomLength = form.get("boomLength");
+    const shiftPattern = form.get("shiftPattern");
+    const crewRequirement = form.get("crewRequirement");
+    const requestedStartDate = String(form.get("requestedStartDate"));
+    const validityDate = String(form.get("validityDate"));
+    if (validityDate > requestedStartDate) {
+      setError("Validity date cannot be after the requested start date");
+      return;
+    }
     try {
       await apiClient.createRequirement(organizationId, {
+        projectId: String(form.get("projectId")),
         productSubcategoryId: String(form.get("productSubcategoryId")),
         capacity: capacity ? Number(capacity) : undefined,
         capacityUnit: form.get("capacityUnit") ? String(form.get("capacityUnit")) : undefined,
+        boomLength: boomLength ? Number(boomLength) : undefined,
         quantity: Number(form.get("quantity") || 1),
-        projectName: form.get("projectName") ? String(form.get("projectName")) : undefined,
-        projectLocation: form.get("projectLocation")
-          ? String(form.get("projectLocation"))
-          : undefined,
-        requestedStartDate: String(form.get("requestedStartDate")),
+        requestedStartDate,
         expectedDurationValue: durationValue ? Number(durationValue) : undefined,
         expectedDurationUnit: durationUnit ? (String(durationUnit) as RateUnit) : undefined,
+        shiftPattern: shiftPattern ? (String(shiftPattern) as ShiftPattern) : undefined,
+        crewRequirement: crewRequirement
+          ? (String(crewRequirement) as CrewRequirement)
+          : undefined,
         shiftRequirement: form.get("shiftRequirement")
           ? String(form.get("shiftRequirement"))
           : undefined,
-        validityDate: String(form.get("validityDate")),
+        validityDate,
         notes: form.get("notes") ? String(form.get("notes")) : undefined,
       });
       formElement.reset();
@@ -89,6 +118,18 @@ export function PostRequirementDialog({
         {error && <p className="text-sm text-danger">{error}</p>}
 
         <div className="flex flex-col gap-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-meta">Project</p>
+          <Select
+            name="projectId"
+            required
+            options={[
+              { value: "", label: projects.length ? "Select a project" : "No active projects — create one first" },
+              ...projects.map((p) => ({ value: p.id, label: `${p.projectCode} — ${p.projectName}` })),
+            ]}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1 border-t border-border pt-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-meta">Equipment</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Select
@@ -121,14 +162,33 @@ export function PostRequirementDialog({
             <Input label="Quantity" name="quantity" type="number" defaultValue={1} min={1} />
             <Input label="Capacity" name="capacity" type="number" step="0.01" />
             <Input label="Capacity unit" name="capacityUnit" placeholder="e.g. Ton, Meter" />
-            <Input label="Project name" name="projectName" />
-            <Input label="Project location" name="projectLocation" />
-            <Input label="Requested start date" name="requestedStartDate" type="date" required />
-            <Input label="Validity date" name="validityDate" type="date" required />
+            <Input
+              label="Requested start date"
+              name="requestedStartDate"
+              type="date"
+              min={todayIsoDate()}
+              required
+            />
+            <Input
+              label="Validity date"
+              name="validityDate"
+              type="date"
+              min={todayIsoDate()}
+              required
+            />
             <Input label="Expected duration" name="expectedDurationValue" type="number" />
             <Select label="Duration unit" name="expectedDurationUnit" options={DURATION_UNIT_OPTIONS} />
+            <Input
+              label="Boom length"
+              name="boomLength"
+              type="number"
+              step="0.01"
+              placeholder="If applicable"
+            />
+            <Select label="Shift" name="shiftPattern" options={SHIFT_PATTERN_OPTIONS} />
+            <Select label="Crew" name="crewRequirement" options={CREW_REQUIREMENT_OPTIONS} />
           </div>
-          <Input label="Shift requirement" name="shiftRequirement" />
+          <Input label="Shift timing notes" name="shiftRequirement" />
           <Input label="Notes" name="notes" />
         </div>
 

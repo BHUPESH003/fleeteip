@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isFutureIsoDate } from "../shared/dates.js";
 
 export const transportLegSchema = z.enum(["mobilization", "demobilization"]);
 export type TransportLeg = z.infer<typeof transportLegSchema>;
@@ -34,14 +35,22 @@ export const createTransportRequestSchema = z.object({
 });
 export type CreateTransportRequest = z.infer<typeof createTransportRequestSchema>;
 
-export const updateTransportRequestSchema = z.object({
-  pickupLocation: z.string().min(1).max(300).optional(),
-  destination: z.string().min(1).max(300).optional(),
-  plannedDate: z.string().date().optional(),
-  actualDate: z.string().date().optional(),
-  status: transportStatusSchema.optional(),
-  transportDetails: z.string().min(1).max(1000).optional(),
-  charges: z.number().nonnegative().optional(),
-  notes: z.string().min(1).max(2000).optional(),
-});
+export const updateTransportRequestSchema = z
+  .object({
+    pickupLocation: z.string().min(1).max(300).optional(),
+    destination: z.string().min(1).max(300).optional(),
+    plannedDate: z.string().date().optional(),
+    actualDate: z.string().date().optional(),
+    status: transportStatusSchema.optional(),
+    transportDetails: z.string().min(1).max(1000).optional(),
+    charges: z.number().nonnegative().optional(),
+    notes: z.string().min(1).max(2000).optional(),
+  })
+  // No ordering rule against plannedDate — dispatch can legitimately happen
+  // earlier or later than planned. actualDate records something that has
+  // already happened, though, so it can't be dated into the future.
+  .refine((data) => data.actualDate === undefined || !isFutureIsoDate(data.actualDate), {
+    message: "Actual date cannot be in the future",
+    path: ["actualDate"],
+  });
 export type UpdateTransportRequest = z.infer<typeof updateTransportRequestSchema>;

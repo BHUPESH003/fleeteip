@@ -11,15 +11,19 @@ import type {
 const REQUIREMENT_COLUMNS = [
   "id",
   "renter_organization_id",
+  "project_id",
   "product_subcategory_id",
   "capacity",
   "capacity_unit",
+  "boom_length",
   "quantity",
   "project_name",
   "project_location",
   "requested_start_date",
   "expected_duration_value",
   "expected_duration_unit",
+  "shift_pattern",
+  "crew_requirement",
   "shift_requirement",
   "validity_date",
   "status",
@@ -28,13 +32,16 @@ const REQUIREMENT_COLUMNS = [
   "updated_at",
 ] as const;
 
-// status/expected_duration_unit are plain `text` columns — this app is the
-// only writer, always through the closed contract enums, so narrowing back
-// here is safe (same reasoning as RentalRepository's toRentalRecord).
+// status/expected_duration_unit/shift_pattern/crew_requirement are plain
+// `text` columns — this app is the only writer, always through the closed
+// contract enums, so narrowing back here is safe (same reasoning as
+// RentalRepository's toRentalRecord).
 function toRequirementRecord(
-  row: Omit<RequirementRecord, "status" | "expected_duration_unit"> & {
+  row: Omit<RequirementRecord, "status" | "expected_duration_unit" | "shift_pattern" | "crew_requirement"> & {
     status: string;
     expected_duration_unit: string | null;
+    shift_pattern: string | null;
+    crew_requirement: string | null;
   },
 ): RequirementRecord {
   return row as RequirementRecord;
@@ -48,15 +55,19 @@ export class RequirementRepository implements RequirementRepositoryPort {
       .insertInto("requirements")
       .values({
         renter_organization_id: input.renterOrganizationId,
+        project_id: input.projectId,
         product_subcategory_id: input.productSubcategoryId,
         capacity: input.capacity ?? null,
         capacity_unit: input.capacityUnit ?? null,
+        boom_length: input.boomLength ?? null,
         quantity: input.quantity,
         project_name: input.projectName ?? null,
         project_location: input.projectLocation ?? null,
         requested_start_date: input.requestedStartDate,
         expected_duration_value: input.expectedDurationValue ?? null,
         expected_duration_unit: input.expectedDurationUnit ?? null,
+        shift_pattern: input.shiftPattern ?? null,
+        crew_requirement: input.crewRequirement ?? null,
         shift_requirement: input.shiftRequirement ?? null,
         validity_date: input.validityDate,
         status: "open",
@@ -113,6 +124,7 @@ export class RequirementRepository implements RequirementRepositoryPort {
       .set({
         ...(updates.capacity !== undefined && { capacity: updates.capacity }),
         ...(updates.capacityUnit !== undefined && { capacity_unit: updates.capacityUnit }),
+        ...(updates.boomLength !== undefined && { boom_length: updates.boomLength }),
         ...(updates.quantity !== undefined && { quantity: updates.quantity }),
         ...(updates.projectName !== undefined && { project_name: updates.projectName }),
         ...(updates.projectLocation !== undefined && {
@@ -126,6 +138,10 @@ export class RequirementRepository implements RequirementRepositoryPort {
         }),
         ...(updates.expectedDurationUnit !== undefined && {
           expected_duration_unit: updates.expectedDurationUnit,
+        }),
+        ...(updates.shiftPattern !== undefined && { shift_pattern: updates.shiftPattern }),
+        ...(updates.crewRequirement !== undefined && {
+          crew_requirement: updates.crewRequirement,
         }),
         ...(updates.shiftRequirement !== undefined && {
           shift_requirement: updates.shiftRequirement,

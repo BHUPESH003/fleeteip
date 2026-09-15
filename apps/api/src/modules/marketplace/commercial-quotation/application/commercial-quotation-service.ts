@@ -3,7 +3,9 @@ import type {
   CommercialQuotation,
   CreateCommercialQuotationRequest,
   CreateQuotationOfferRequest,
+  CreateQuotationScopeItemRequest,
   QuotationOffer,
+  QuotationScopeItem,
   UpdateCommercialQuotationTermsRequest,
 } from "@fleetip/contracts/quotation";
 import {
@@ -24,12 +26,15 @@ import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
 import type { QuotationResponseRepositoryPort } from "../../quotation-response/domain/ports.js";
 import { NotificationService } from "../../../notification/application/notification-service.js";
 import { RentalService } from "../../rental/application/rental-service.js";
+import type { WorkOrderCreationPort } from "../../work-order/domain/ports.js";
 import { canTransition } from "../domain/quotation-status.js";
 import type {
   CommercialQuotationRecord,
   CommercialQuotationRepositoryPort,
   QuotationOfferRecord,
   QuotationOfferRepositoryPort,
+  QuotationScopeItemRecord,
+  QuotationScopeItemRepositoryPort,
 } from "../domain/ports.js";
 
 function toQuotation(
@@ -57,11 +62,19 @@ function toQuotation(
     shiftStructure: record.shift_structure,
     sundayCondition: record.sunday_condition,
     fuelNorms: record.fuel_norms,
+    fuelScope: record.fuel_scope,
     dehireTerms: record.dehire_terms,
     operatorScope: record.operator_scope,
+    accommodationScope: record.accommodation_scope,
+    workingHours: record.working_hours,
+    workingDaysPerWeek: record.working_days_per_week,
+    minimumRentalPeriodValue: record.minimum_rental_period_value,
+    minimumRentalPeriodUnit: record.minimum_rental_period_unit,
+    gstTerms: record.gst_terms,
     noticePeriodDays: record.notice_period_days,
     validityDate: record.validity_date,
     commercialNotes: record.commercial_notes,
+    companyTerms: record.company_terms,
     status: record.status,
     renterAcceptedAt: record.renter_accepted_at
       ? new Date(record.renter_accepted_at).toISOString()
@@ -98,12 +111,24 @@ function toOffer(record: QuotationOfferRecord): QuotationOffer {
   };
 }
 
+function toScopeItem(record: QuotationScopeItemRecord): QuotationScopeItem {
+  return {
+    id: record.id,
+    quotationId: record.quotation_id,
+    item: record.item,
+    responsibleParty: record.responsible_party,
+    notes: record.notes,
+    createdAt: new Date(record.created_at).toISOString(),
+  };
+}
+
 const EDITABLE_STATUSES = new Set(["draft", "sent", "negotiating"]);
 
 export class CommercialQuotationService {
   constructor(
     private readonly quotationRepository: CommercialQuotationRepositoryPort,
     private readonly offerRepository: QuotationOfferRepositoryPort,
+    private readonly scopeItemRepository: QuotationScopeItemRepositoryPort,
     private readonly machineRepository: MachineRepositoryPort,
     private readonly productRepository: ProductRepositoryPort,
     private readonly organizationRepository: OrganizationRepositoryPort,
@@ -111,6 +136,7 @@ export class CommercialQuotationService {
     private readonly quotationResponseRepository: QuotationResponseRepositoryPort,
     private readonly auctionRepository: AuctionRepositoryPort,
     private readonly rentalService: RentalService,
+    private readonly workOrderService: WorkOrderCreationPort,
     private readonly permissionService: PermissionService,
     private readonly notificationService: NotificationService,
   ) {}
@@ -212,11 +238,19 @@ export class CommercialQuotationService {
       shiftStructure: input.shiftStructure,
       sundayCondition: input.sundayCondition,
       fuelNorms: input.fuelNorms,
+      fuelScope: input.fuelScope,
       dehireTerms: input.dehireTerms,
       operatorScope: input.operatorScope,
+      accommodationScope: input.accommodationScope,
+      workingHours: input.workingHours,
+      workingDaysPerWeek: input.workingDaysPerWeek,
+      minimumRentalPeriodValue: input.minimumRentalPeriodValue,
+      minimumRentalPeriodUnit: input.minimumRentalPeriodUnit,
+      gstTerms: input.gstTerms,
       noticePeriodDays: input.noticePeriodDays,
       validityDate: input.validityDate,
       commercialNotes: input.commercialNotes,
+      companyTerms: input.companyTerms,
     });
     return toQuotation(record);
   }
@@ -376,6 +410,68 @@ export class CommercialQuotationService {
     }
     const record = await this.quotationRepository.updateTerms(quotationId, updates);
     return toQuotation(record);
+  }
+
+  // Category/equipment-specific responsibilities (wire rope scope, ground
+  // preparation, support crane, ...) — a structured collection rather than
+  // an ever-growing set of *Scope columns. Only the drafting Rental Company
+  // adds/removes items, same editable-status gate as updateTerms; either
+  // party may read the list (same visibility as offers/terms).
+  async addScopeItem(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    quotationId: string,
+    input: CreateQuotationScopeItemRequest,
+  ): Promise<QuotationScopeItem> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "quotation.manage",
+    );
+    const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
+    if (!EDITABLE_STATUSES.has(existing.status)) {
+      throw new ConflictError("Scope items can only be edited before the quotation is closed out");
+    }
+    const record = await this.scopeItemRepository.create({
+      quotationId,
+      item: input.item,
+      responsibleParty: input.responsibleParty,
+      notes: input.notes,
+    });
+    return toScopeItem(record);
+  }
+
+  async listScopeItems(
+    userId: string,
+    organizationId: string,
+    quotationId: string,
+  ): Promise<QuotationScopeItem[]> {
+    await this.requireQuotationPermission(userId, organizationId);
+    await this.loadAsParty(organizationId, quotationId);
+    const records = await this.scopeItemRepository.listByQuotation(quotationId);
+    return records.map(toScopeItem);
+  }
+
+  async removeScopeItem(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    quotationId: string,
+    scopeItemId: string,
+  ): Promise<void> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "quotation.manage",
+    );
+    const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
+    if (!EDITABLE_STATUSES.has(existing.status)) {
+      throw new ConflictError("Scope items can only be edited before the quotation is closed out");
+    }
+    const item = await this.scopeItemRepository.findById(scopeItemId);
+    if (!item || item.quotation_id !== quotationId) {
+      throw new NotFoundError("Scope item not found on this quotation");
+    }
+    await this.scopeItemRepository.delete(scopeItemId);
   }
 
   async sendQuotation(
@@ -639,7 +735,7 @@ export class CommercialQuotationService {
       throw new ConflictError("The Renter has not accepted this quotation yet");
     }
 
-    await this.rentalService.createRental(userId, rentalCompanyOrganizationId, {
+    const rental = await this.rentalService.createRental(userId, rentalCompanyOrganizationId, {
       machineId: existing.machine_id,
       renterOrganizationId: existing.renter_organization_id ?? undefined,
       clientSnapshot: existing.client_snapshot ?? undefined,
@@ -659,14 +755,61 @@ export class CommercialQuotationService {
       noticePeriodDays: existing.notice_period_days ?? undefined,
     });
 
+    let projectId: string | undefined;
     if (existing.requirement_id) {
       const requirement = await this.requirementRepository.findById(existing.requirement_id);
       if (requirement?.status === "open") {
         await this.requirementRepository.updateStatus(existing.requirement_id, "closed");
       }
+      projectId = requirement?.project_id;
     }
 
     const record = await this.quotationRepository.updateStatus(quotationId, "awarded");
+
+    // The Work Order is the finalized commercial order — created here,
+    // automatically, from the same terms just awarded, never hand-entered.
+    // See docs for this phase's brief §10.
+    const scopeItems = await this.scopeItemRepository.listByQuotation(quotationId);
+    await this.workOrderService.createFromAward(
+      {
+        quotationId: record.id,
+        rentalId: rental.id,
+        rentalCompanyOrganizationId,
+        renterOrganizationId: record.renter_organization_id ?? undefined,
+        clientSnapshot: record.client_snapshot ?? undefined,
+        projectId,
+        machineId: record.machine_id,
+        startDate: record.start_date,
+        endDate: record.end_date ?? undefined,
+        rate: record.rate,
+        rateUnit: record.rate_unit,
+        mobilizationCharge: record.mobilization_charge ?? undefined,
+        demobilizationCharge: record.demobilization_charge ?? undefined,
+        overtimeRate: record.overtime_rate ?? undefined,
+        paymentTerms: record.payment_terms ?? undefined,
+        shiftStructure: record.shift_structure ?? undefined,
+        sundayCondition: record.sunday_condition ?? undefined,
+        fuelNorms: record.fuel_norms ?? undefined,
+        fuelScope: record.fuel_scope ?? undefined,
+        dehireTerms: record.dehire_terms ?? undefined,
+        operatorScope: record.operator_scope ?? undefined,
+        accommodationScope: record.accommodation_scope ?? undefined,
+        workingHours: record.working_hours ?? undefined,
+        workingDaysPerWeek: record.working_days_per_week ?? undefined,
+        minimumRentalPeriodValue: record.minimum_rental_period_value ?? undefined,
+        minimumRentalPeriodUnit: record.minimum_rental_period_unit ?? undefined,
+        gstTerms: record.gst_terms ?? undefined,
+        noticePeriodDays: record.notice_period_days ?? undefined,
+        commercialNotes: record.commercial_notes ?? undefined,
+        companyTerms: record.company_terms ?? undefined,
+      },
+      scopeItems.map((item) => ({
+        item: item.item,
+        responsibleParty: item.responsible_party,
+        notes: item.notes,
+      })),
+    );
+
     if (record.renter_organization_id) {
       await this.notify({
         recipientOrganizationId: record.renter_organization_id,

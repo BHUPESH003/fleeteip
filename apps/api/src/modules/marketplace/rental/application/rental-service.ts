@@ -10,6 +10,7 @@ import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../../../maintenance/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
+import { NotificationService } from "../../../notification/application/notification-service.js";
 import { canTransition } from "../domain/rental-status.js";
 import type { RentalRecord, RentalRepositoryPort } from "../domain/ports.js";
 
@@ -57,7 +58,18 @@ export class RentalService {
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly permissionService: PermissionService,
     private readonly maintenanceRepository: MaintenanceRepositoryPort,
+    private readonly notificationService: NotificationService,
   ) {}
+
+  // Best-effort side effect — never blocks the real business action. See
+  // CommercialQuotationService's identical wrapper for why.
+  private async notify(input: Parameters<NotificationService["notify"]>[0]): Promise<void> {
+    try {
+      await this.notificationService.notify(input);
+    } catch {
+      // swallow
+    }
+  }
 
   async createRental(
     userId: string,
@@ -137,21 +149,33 @@ export class RentalService {
     return toRental(record);
   }
 
-  async getRental(
-    userId: string,
-    rentalCompanyOrganizationId: string,
-    rentalId: string,
-  ): Promise<Rental> {
-    await this.permissionService.requirePermission(
-      userId,
-      rentalCompanyOrganizationId,
-      "rental.manage",
-    );
-    const record = await this.rentalRepository.findById(rentalId);
-    if (!record) {
-      throw new NotFoundError("Rental not found");
+  // Single-rental lookup — mirrors listRentals' organization-type branch,
+  // which this was missing entirely (a Renter has no rental.manage on any
+  // organization, rental_company-only per PERMISSION_ORGANIZATION_TYPES, so
+  // this always 404'd for a Renter regardless of role/permissions — not a
+  // custom-role edge case, every Renter viewing a Transport/Logsheet detail
+  // page for their own rental hit this).
+  async getRental(userId: string, organizationId: string, rentalId: string): Promise<Rental> {
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      await this.permissionService.requirePermission(userId, organizationId, "rental.respond");
+      const record = await this.rentalRepository.findById(rentalId);
+      if (!record || record.renter_organization_id !== organizationId) {
+        throw new NotFoundError("Rental not found in this organization");
+      }
+      const [machine, rentalCompany] = await Promise.all([
+        this.machineRepository.findById(record.machine_id),
+        this.organizationRepository.findById(record.rental_company_organization_id),
+      ]);
+      return toRental(record, {
+        machineAssetCode: machine?.asset_code ?? null,
+        rentalCompanyOrganizationName: rentalCompany?.name ?? null,
+      });
     }
-    if (record.rental_company_organization_id !== rentalCompanyOrganizationId) {
+
+    await this.permissionService.requirePermission(userId, organizationId, "rental.manage");
+    const record = await this.rentalRepository.findById(rentalId);
+    if (!record || record.rental_company_organization_id !== organizationId) {
       throw new NotFoundError("Rental not found in this organization");
     }
     return toRental(record);
@@ -249,6 +273,19 @@ export class RentalService {
     }
 
     const record = await this.rentalRepository.updateStatus(rentalId, newStatus);
+    if (record.renter_organization_id && (newStatus === "active" || newStatus === "completed")) {
+      await this.notify({
+        recipientOrganizationId: record.renter_organization_id,
+        type: newStatus === "active" ? "rental.active" : "rental.completed",
+        title: newStatus === "active" ? "Rental is now active" : "Rental completed",
+        message:
+          newStatus === "active"
+            ? "Your rental has become active."
+            : "Your rental has been marked completed.",
+        relatedResourceType: "rental",
+        relatedResourceId: record.id,
+      });
+    }
     return toRental(record);
   }
 

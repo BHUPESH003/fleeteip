@@ -7,6 +7,8 @@ import type {
 } from "../src/modules/organizations/domain/ports.js";
 import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
 import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
 import type {
   MachineRecord,
   MachineRepositoryPort,
@@ -34,11 +36,15 @@ const RC_ORG_ID = "org-rental-company";
 // organization's rental behind NotFoundError.
 const OTHER_RC_ORG_ID = "org-other-rental-company";
 const RENTER_ORG_ID = "org-renter";
+const OTHER_RENTER_ORG_ID = "org-other-renter";
 const MACHINE_ID = "machine-1";
 const RETIRED_MACHINE_ID = "machine-retired";
 
 function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "rental_company") {
   const membershipRepository: MembershipRepositoryPort = {
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",
@@ -53,7 +59,22 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
     },
   };
   const roleRepository: RoleRepositoryPort = {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["rental.manage"] : [],
@@ -65,6 +86,7 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
       [RC_ORG_ID]: organizationTypeCode,
       [OTHER_RC_ORG_ID]: "rental_company",
       [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
     }),
   );
 }
@@ -91,6 +113,7 @@ function fakeOrganizationTypeRepository(
         organization_type_id: `type-${organizationTypeCode}`,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
     },
@@ -103,8 +126,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -264,13 +294,42 @@ function fakeMaintenanceRepository(hasConflict = false): MaintenanceRepositoryPo
   };
 }
 
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient — this file isn't testing notification
+// behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
+}
+
 function buildService(machines: MachineRecord[] = [machine()], hasConflictingMaintenance = false) {
   return new RentalService(
     fakeRentalRepository(),
     fakeMachineRepository(machines),
-    fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
+    fakeOrganizationTypeRepository({
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+      [RC_ORG_ID]: "rental_company",
+    }),
     fakePermissionService(),
     fakeMaintenanceRepository(hasConflictingMaintenance),
+    fakeNotificationService(),
   );
 }
 
@@ -373,6 +432,31 @@ describe("RentalService", () => {
     );
   });
 
+  it("lets a Renter view a single rental of its own, resolving machine/company names it has no permission to look up itself", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const fetched = await service.getRental("user-2", RENTER_ORG_ID, rental.id);
+
+    expect(fetched.id).toBe(rental.id);
+    expect(fetched.machineAssetCode).toBe("EXC-001");
+    expect(fetched.rentalCompanyOrganizationName).toBe("Test Org");
+  });
+
+  it("hides another Renter's rental behind NotFoundError instead of the Rental Company branch's check", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+    await expect(service.getRental("user-2", OTHER_RENTER_ORG_ID, rental.id)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
   it("rejects editing terms once the rental is no longer confirmed", async () => {
     const service = buildService();
     const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
@@ -417,6 +501,7 @@ describe("RentalService", () => {
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
       { ...fakeMaintenanceRepository(), hasOverlappingMaintenance: async () => hasConflict },
+      fakeNotificationService(),
     );
     const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
     hasConflict = true;
@@ -462,6 +547,7 @@ describe("RentalService", () => {
       fakeOrganizationTypeRepository({ [RC_ORG_ID]: "renter" }),
       fakePermissionService("renter"),
       fakeMaintenanceRepository(),
+      fakeNotificationService(),
     );
     await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,

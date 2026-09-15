@@ -45,7 +45,13 @@ const STATUS_OPTIONS: { value: TransportStatus | ""; label: string }[] = [
 export default function TransportPage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const organizationType = currentMembership?.organization.organizationTypeCode;
   const canView = hasPermission("transport.manage");
+  // Rentals here are enrichment (machine code, client name, the per-rental
+  // picker) — ancillary to transport.manage, gated by a different permission
+  // a custom role may lack even while it has transport.manage.
+  const canListRentals =
+    organizationType === "renter" ? hasPermission("rental.respond") : hasPermission("rental.manage");
 
   const [records, setRecords] = useState<TransportRecord[] | null>(null);
   const [rentals, setRentals] = useState<Rental[] | null>(null);
@@ -60,7 +66,7 @@ export default function TransportPage() {
       try {
         const [recordList, rentalList] = await Promise.all([
           apiClient.listTransportRecords(organizationId) as Promise<TransportRecord[]>,
-          apiClient.listRentals(organizationId) as Promise<Rental[]>,
+          canListRentals ? (apiClient.listRentals(organizationId) as Promise<Rental[]>) : Promise.resolve([]),
         ]);
         setRecords(recordList);
         setRentals(rentalList);
@@ -68,7 +74,7 @@ export default function TransportPage() {
         setError(err instanceof Error ? err.message : "Failed to load transport records");
       }
     })();
-  }, [organizationId, canView]);
+  }, [organizationId, canView, canListRentals]);
 
   const rentalsById = useMemo(() => new Map((rentals ?? []).map((r) => [r.id, r])), [rentals]);
 

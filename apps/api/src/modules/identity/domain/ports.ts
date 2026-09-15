@@ -10,6 +10,7 @@ export interface UserRecord {
   email: string;
   password_hash: string;
   display_name: string;
+  status: string;
   created_at: Date | string;
 }
 
@@ -23,6 +24,9 @@ export interface UserRepositoryPort {
     passwordHash: string;
     displayName: string;
   }): Promise<PublicUserRecord>;
+  // Platform Admin only — see OrganizationRepositoryPort.listAllForPlatformAdmin.
+  listAllForPlatformAdmin(): Promise<PublicUserRecord[]>;
+  updateStatus(id: string, status: "active" | "suspended"): Promise<PublicUserRecord>;
 }
 
 export interface SessionRecord {

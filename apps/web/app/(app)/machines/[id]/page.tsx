@@ -57,8 +57,19 @@ const TABS = [
 export default function MachineDetailPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const organizationType = currentMembership?.organization.organizationTypeCode;
+  const canManage = organizationType === "rental_company";
+  // Utilization/logsheets, rental history, and renter names are enrichment,
+  // not the point of this page (equipment.manage is) — a role without the
+  // matching logsheet/rental/quotation permission still gets a fully working
+  // machine page, just with those sections falling back to "no data" (already
+  // handled: utilization ? ... : "No utilization data yet.", empty
+  // rentals/logsheets lists, renter name falling back to "Renter"/"—").
+  const canViewLogsheets = canManage ? hasPermission("logsheet.manage") : hasPermission("logsheet.respond");
+  const canListRentals = canManage ? hasPermission("rental.manage") : hasPermission("rental.respond");
+  const canListRenterOrgs = hasPermission("quotation.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,9 +79,11 @@ export default function MachineDetailPage() {
   async function load(orgId: string) {
     const [machines, utilization, rentals, renterOrgs] = await Promise.all([
       apiClient.listMachines(orgId) as Promise<Machine[]>,
-      apiClient.getMachineUtilization(orgId, id) as Promise<MachineUtilization>,
-      apiClient.listRentals(orgId) as Promise<Rental[]>,
-      apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
+      canViewLogsheets
+        ? (apiClient.getMachineUtilization(orgId, id) as Promise<MachineUtilization>)
+        : Promise.resolve(null),
+      canListRentals ? (apiClient.listRentals(orgId) as Promise<Rental[]>) : Promise.resolve([]),
+      canListRenterOrgs ? (apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>) : Promise.resolve([]),
     ]);
     const machine = machines.find((m) => m.id === id) ?? null;
     if (!machine) {
@@ -80,9 +93,10 @@ export default function MachineDetailPage() {
     const products = (await apiClient.listProducts()) as Product[];
     const product = products.find((p) => p.id === machine.productId) ?? null;
     const rental = currentRentalFor(machine.id, rentals);
-    const logsheets = rental
-      ? ((await apiClient.listLogsheetsForRental(orgId, rental.id)) as Logsheet[])
-      : [];
+    const logsheets =
+      rental && canViewLogsheets
+        ? ((await apiClient.listLogsheetsForRental(orgId, rental.id)) as Logsheet[])
+        : [];
     setData({
       machine,
       product,
@@ -102,7 +116,7 @@ export default function MachineDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load machine");
       }
     })();
-  }, [organizationId, id]);
+  }, [organizationId, id, canViewLogsheets, canListRentals, canListRenterOrgs]);
 
   async function handleMarkStatus(status: Machine["status"]) {
     if (!organizationId) return;

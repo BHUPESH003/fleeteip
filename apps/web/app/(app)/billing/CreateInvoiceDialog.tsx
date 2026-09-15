@@ -39,12 +39,23 @@ export function CreateInvoiceDialog({ open, onClose, organizationId, rentals, on
     const form = new FormData(formElement);
     const taxAmount = form.get("taxAmount");
     const adjustmentAmount = form.get("adjustmentAmount");
+    const billingPeriodStart = String(form.get("billingPeriodStart"));
+    const billingPeriodEnd = String(form.get("billingPeriodEnd"));
+    const dueDate = String(form.get("dueDate"));
+    if (billingPeriodEnd < billingPeriodStart) {
+      setError("Billing period end cannot be before the billing period start");
+      return;
+    }
+    if (dueDate < billingPeriodEnd) {
+      setError("Due date cannot be before the billing period ends");
+      return;
+    }
     try {
       await apiClient.createInvoice(organizationId, {
         rentalId: String(form.get("rentalId")),
-        billingPeriodStart: String(form.get("billingPeriodStart")),
-        billingPeriodEnd: String(form.get("billingPeriodEnd")),
-        dueDate: String(form.get("dueDate")),
+        billingPeriodStart,
+        billingPeriodEnd,
+        dueDate,
         taxAmount: taxAmount ? Number(taxAmount) : undefined,
         adjustmentAmount: adjustmentAmount ? Number(adjustmentAmount) : undefined,
         lineItems: lineItems.filter((item) => item.description),

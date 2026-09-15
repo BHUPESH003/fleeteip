@@ -27,6 +27,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/", group: "Overview" },
   { label: "Machines", href: "/machines", group: "Fleet", requiredPermissions: ["equipment.manage"] },
   { label: "Catalogue", href: "/catalogue", group: "Fleet", requiredPermissions: ["equipment.manage"] },
+  // Renter-only — a Rental Company never manages a Project directly, it only
+  // sees Project context threaded through Requirement/Quotation/Rental.
+  { label: "Projects", href: "/projects", group: "Overview", requiredPermissions: ["project.manage"] },
   // Same route, two headings: a Renter sees their own posted requirements
   // ("Requirements"); a Rental Company sees the marketplace-wide discover
   // list ("Open market"). Each is gated by the one permission that only
@@ -58,6 +61,12 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Rentals",
     href: "/rentals",
+    group: "Commercial",
+    requiredPermissions: ["rental.manage", "rental.respond"],
+  },
+  {
+    label: "Work Orders",
+    href: "/work-orders",
     group: "Commercial",
     requiredPermissions: ["rental.manage", "rental.respond"],
   },

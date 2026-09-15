@@ -47,7 +47,9 @@ const REQUIREMENTS: RequirementRecord[] = [
   {
     id: "requirement-1",
     renter_organization_id: RENTER_ORG_ID,
+    project_id: "project-1",
     product_subcategory_id: "subcategory-1",
+    boom_length: null,
     capacity: null,
     capacity_unit: null,
     quantity: 1,
@@ -56,6 +58,8 @@ const REQUIREMENTS: RequirementRecord[] = [
     requested_start_date: "2026-03-01",
     expected_duration_value: null,
     expected_duration_unit: null,
+    shift_pattern: null,
+    crew_requirement: null,
     shift_requirement: null,
     validity_date: "2026-02-15",
     status: "open",
@@ -87,11 +91,19 @@ const QUOTATIONS: CommercialQuotationRecord[] = [
     shift_structure: null,
     sunday_condition: null,
     fuel_norms: null,
+    fuel_scope: null,
     dehire_terms: null,
     operator_scope: null,
+    accommodation_scope: null,
+    working_hours: null,
+    working_days_per_week: null,
+    minimum_rental_period_value: null,
+    minimum_rental_period_unit: null,
+    gst_terms: null,
     notice_period_days: null,
     validity_date: "2026-04-01",
     commercial_notes: null,
+    company_terms: null,
     status: "sent",
     renter_accepted_at: null,
     created_at: new Date(),
@@ -130,6 +142,9 @@ const RENTALS: RentalRecord[] = [
 
 function fakePermissionService() {
   const membershipRepository: MembershipRepositoryPort = {
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",
@@ -144,7 +159,22 @@ function fakePermissionService() {
     },
   };
   const roleRepository: RoleRepositoryPort = {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID
@@ -190,8 +220,15 @@ function fakeOrganizationTypeRepository(): OrganizationRepositoryPort {
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");

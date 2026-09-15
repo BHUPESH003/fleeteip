@@ -4,17 +4,25 @@ import type { AuctionDetail } from "@fleetip/contracts/auction";
 import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
+import type { ResponsibleParty } from "@fleetip/contracts/quotation";
 import type { RateUnit } from "@fleetip/contracts/rental";
 import type { Requirement } from "@fleetip/contracts/rfq";
 import { Button, Dialog, EmptyState, Input, LoadingState, Select } from "@fleetip/ui";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { todayIsoDate } from "../../../lib/format";
 
 const RATE_UNIT_OPTIONS = [
   { value: "shift", label: "Per shift" },
   { value: "day", label: "Per day" },
   { value: "week", label: "Per week" },
   { value: "month", label: "Per month" },
+];
+
+const RESPONSIBLE_PARTY_OPTIONS = [
+  { value: "", label: "Not specified" },
+  { value: "client", label: "Client scope" },
+  { value: "company", label: "Company scope" },
 ];
 
 export interface CreateQuotationDialogProps {
@@ -149,6 +157,16 @@ export function CreateQuotationDialog({
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const endDate = form.get("endDate");
+    const startDate = String(form.get("startDate"));
+    const validityDate = String(form.get("validityDate"));
+    if (endDate && String(endDate) < startDate) {
+      setError("End date cannot be before the start date");
+      return;
+    }
+    if (validityDate > startDate) {
+      setError("Valid until date cannot be after the start date");
+      return;
+    }
     try {
       await apiClient.createQuotation(organizationId, {
         machineId: String(form.get("machineId")),
@@ -157,12 +175,28 @@ export function CreateQuotationDialog({
         ...(customerMode === "renter"
           ? { renterOrganizationId: String(form.get("renterOrganizationId")) }
           : { clientSnapshot: { name: String(form.get("clientName")) } }),
-        startDate: String(form.get("startDate")),
+        startDate,
         endDate: endDate ? String(endDate) : undefined,
         rate: Number(form.get("rate")),
         rateUnit: String(form.get("rateUnit")) as RateUnit,
-        validityDate: String(form.get("validityDate")),
+        validityDate,
+        fuelScope: form.get("fuelScope") ? (String(form.get("fuelScope")) as ResponsibleParty) : undefined,
+        accommodationScope: form.get("accommodationScope")
+          ? (String(form.get("accommodationScope")) as ResponsibleParty)
+          : undefined,
+        workingHours: form.get("workingHours") ? Number(form.get("workingHours")) : undefined,
+        workingDaysPerWeek: form.get("workingDaysPerWeek")
+          ? Number(form.get("workingDaysPerWeek"))
+          : undefined,
+        minimumRentalPeriodValue: form.get("minimumRentalPeriodValue")
+          ? Number(form.get("minimumRentalPeriodValue"))
+          : undefined,
+        minimumRentalPeriodUnit: form.get("minimumRentalPeriodUnit")
+          ? (String(form.get("minimumRentalPeriodUnit")) as RateUnit)
+          : undefined,
+        gstTerms: form.get("gstTerms") ? String(form.get("gstTerms")) : undefined,
         commercialNotes: form.get("commercialNotes") ? String(form.get("commercialNotes")) : undefined,
+        companyTerms: form.get("companyTerms") ? String(form.get("companyTerms")) : undefined,
       });
       formElement.reset();
       onCreated();
@@ -247,13 +281,49 @@ export function CreateQuotationDialog({
           <div className="flex flex-col gap-1 border-t border-border pt-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-meta">Schedule &amp; rate</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Input label="Start date" name="startDate" type="date" required defaultValue={requirement?.requestedStartDate} />
+              <Input
+                label="Start date"
+                name="startDate"
+                type="date"
+                min={todayIsoDate()}
+                required
+                defaultValue={requirement?.requestedStartDate}
+              />
               <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
               <Input label="Rate" name="rate" type="number" step="0.01" required defaultValue={prefilledRate ?? undefined} />
               <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
-              <Input label="Valid until" name="validityDate" type="date" required defaultValue={requirement?.validityDate} />
+              <Input
+                label="Valid until"
+                name="validityDate"
+                type="date"
+                min={todayIsoDate()}
+                required
+                defaultValue={requirement?.validityDate}
+              />
             </div>
-            <Input label="Commercial notes" name="commercialNotes" />
+          </div>
+
+          <div className="flex flex-col gap-1 border-t border-border pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-meta">
+              Working terms &amp; responsibilities
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Input label="Working hours / shift" name="workingHours" type="number" step="0.5" />
+              <Input label="Working days / week" name="workingDaysPerWeek" type="number" min={1} max={7} />
+              <Select label="Fuel scope" name="fuelScope" options={RESPONSIBLE_PARTY_OPTIONS} />
+              <Select label="Accommodation scope" name="accommodationScope" options={RESPONSIBLE_PARTY_OPTIONS} />
+              <Input label="Minimum rental period" name="minimumRentalPeriodValue" type="number" min={1} />
+              <Select label="Period unit" name="minimumRentalPeriodUnit" options={RATE_UNIT_OPTIONS} />
+            </div>
+            <Input label="GST terms" name="gstTerms" placeholder="e.g. GST extra @ 18%" />
+          </div>
+
+          <div className="flex flex-col gap-1 border-t border-border pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-meta">
+              Terms &amp; conditions
+            </p>
+            <Input label="Special / site conditions" name="commercialNotes" />
+            <Input label="Company-specific T&Cs" name="companyTerms" />
           </div>
 
           <div className="flex justify-end gap-2 pt-1">

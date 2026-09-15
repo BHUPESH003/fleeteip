@@ -15,7 +15,13 @@ export default function LogsheetDetailPage() {
   const rentalId = searchParams.get("rentalId");
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const organizationType = currentMembership?.organization.organizationTypeCode;
   const canView = hasPermission("logsheet.manage");
+  // The rental is enrichment for this logsheet's header, not the point of
+  // this page (logsheet.manage is) — a custom role without the rental
+  // permission still gets a working page, just with rental fields as "—".
+  const canGetRental =
+    organizationType === "renter" ? hasPermission("rental.respond") : hasPermission("rental.manage");
 
   const [logsheet, setLogsheet] = useState<Logsheet | null>(null);
   const [rental, setRental] = useState<Rental | null>(null);
@@ -28,7 +34,9 @@ export default function LogsheetDetailPage() {
       try {
         const [logsheets, rentalDetail] = await Promise.all([
           apiClient.listLogsheetsForRental(organizationId, rentalId) as Promise<Logsheet[]>,
-          apiClient.getRental(organizationId, rentalId) as Promise<Rental>,
+          canGetRental
+            ? (apiClient.getRental(organizationId, rentalId) as Promise<Rental | null>)
+            : Promise.resolve(null),
         ]);
         const found = logsheets.find((l) => l.id === id) ?? null;
         if (!found) {
@@ -41,7 +49,7 @@ export default function LogsheetDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load logsheet");
       }
     })();
-  }, [organizationId, rentalId, id]);
+  }, [organizationId, rentalId, id, canGetRental]);
 
   if (!organizationId) return <LoadingState label="Loading…" />;
 
@@ -68,14 +76,18 @@ export default function LogsheetDetailPage() {
 
   if (error) return <ErrorState message={error} />;
   if (notFound) return <EmptyState title="Logsheet not found" />;
-  if (!logsheet || !rental) return <LoadingState label="Loading logsheet…" />;
+  if (!logsheet) return <LoadingState label="Loading logsheet…" />;
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         breadcrumbs={[{ label: "Logsheets", href: "/logsheets" }, { label: formatDate(logsheet.logDate) }]}
         title={`Logsheet · ${formatDate(logsheet.logDate)}`}
-        description={`Rental ${rental.machineAssetCode ?? rental.machineId.slice(0, 8)} · ${rental.clientSnapshot?.name ?? "—"}`}
+        description={
+          rental
+            ? `Rental ${rental.machineAssetCode ?? rental.machineId.slice(0, 8)} · ${rental.clientSnapshot?.name ?? "—"}`
+            : "Rental details unavailable"
+        }
       />
 
       <div>
@@ -86,8 +98,8 @@ export default function LogsheetDetailPage() {
 
       <Card>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Field label="Machine" value={rental.machineAssetCode ?? "—"} mono />
-          <Field label="Rental" value={rental.clientSnapshot?.name ?? "—"} />
+          <Field label="Machine" value={rental?.machineAssetCode ?? "—"} mono />
+          <Field label="Rental" value={rental?.clientSnapshot?.name ?? "—"} />
           <Field label="Date" value={formatDate(logsheet.logDate)} mono />
           <Field label="Shift" value={logsheet.shift ?? "—"} />
           <Field label="Operating hours" value={logsheet.operatingHours != null ? String(logsheet.operatingHours) : "—"} mono />

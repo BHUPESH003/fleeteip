@@ -4,6 +4,7 @@ import type { Requirement } from "@fleetip/contracts/rfq";
 import { Button, Dialog, Input } from "@fleetip/ui";
 import { type FormEvent, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { todayIsoDate } from "../../../lib/format";
 
 export interface EditRequirementDialogProps {
   open: boolean;
@@ -27,16 +28,16 @@ export function EditRequirementDialog({
     event.preventDefault();
     setError(null);
     const form = new FormData(event.currentTarget);
-    const projectName = String(form.get("projectName") ?? "").trim();
-    const projectLocation = String(form.get("projectLocation") ?? "").trim();
     const quantity = Number(form.get("quantity"));
     const requestedStartDate = String(form.get("requestedStartDate") ?? "");
+    if (requestedStartDate < requirement.validityDate) {
+      setError("Requested start date cannot be before the requirement's validity date");
+      return;
+    }
 
     setSubmitting(true);
     try {
       const updated = await apiClient.updateRequirement(organizationId, requirement.id, {
-        ...(projectName !== (requirement.projectName ?? "") ? { projectName } : {}),
-        ...(projectLocation !== (requirement.projectLocation ?? "") ? { projectLocation } : {}),
         ...(quantity && quantity !== requirement.quantity ? { quantity } : {}),
         ...(requestedStartDate !== requirement.requestedStartDate ? { requestedStartDate } : {}),
       });
@@ -56,16 +57,6 @@ export function EditRequirementDialog({
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input
-            label="Project name"
-            name="projectName"
-            defaultValue={requirement.projectName ?? ""}
-          />
-          <Input
-            label="Project location"
-            name="projectLocation"
-            defaultValue={requirement.projectLocation ?? ""}
-          />
-          <Input
             label="Quantity"
             name="quantity"
             type="number"
@@ -77,6 +68,11 @@ export function EditRequirementDialog({
             label="Requested start date"
             name="requestedStartDate"
             type="date"
+            // The lower of "today" and the current value — so a requirement
+            // whose start date has already organically passed can still be
+            // saved unchanged (e.g. to bump quantity), while picking a new
+            // date still can't go into the past.
+            min={requirement.requestedStartDate < todayIsoDate() ? requirement.requestedStartDate : todayIsoDate()}
             defaultValue={requirement.requestedStartDate}
             required
           />

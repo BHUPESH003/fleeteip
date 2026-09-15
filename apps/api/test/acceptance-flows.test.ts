@@ -22,6 +22,7 @@ import type {
   RequirementRecord,
   RequirementRepositoryPort,
 } from "../src/modules/marketplace/rfq/domain/ports.js";
+import type { ProjectRecord, ProjectRepositoryPort } from "../src/modules/marketplace/project/domain/ports.js";
 import { QuotationResponseService } from "../src/modules/marketplace/quotation-response/application/quotation-response-service.js";
 import type {
   QuotationResponseRecord,
@@ -33,6 +34,8 @@ import type {
   CommercialQuotationRepositoryPort,
   QuotationOfferRecord,
   QuotationOfferRepositoryPort,
+  QuotationScopeItemRecord,
+  QuotationScopeItemRepositoryPort,
 } from "../src/modules/marketplace/commercial-quotation/domain/ports.js";
 import { AuctionService } from "../src/modules/marketplace/auction/application/auction-service.js";
 import {
@@ -79,6 +82,7 @@ const RC_ORG_ID = "org-rc";
 const RC2_ORG_ID = "org-rc-2";
 const THIRD_PARTY_ORG_ID = "org-third-party";
 const SUBCATEGORY_ID = "subcategory-1";
+const PROJECT_ID = "project-1";
 
 const ORG_TYPES: Record<string, OrganizationTypeCode> = {
   [RENTER_ORG_ID]: "renter",
@@ -101,6 +105,7 @@ function organizationRecord(id: string): OrganizationWithTypeRecord {
     organization_type_code: type,
     name: ORG_NAMES[id] ?? "Test Org",
     code: "TESTORG",
+    status: "active",
     created_at: new Date(),
   };
 }
@@ -115,6 +120,12 @@ function fakeOrganizationRepository(): OrganizationRepositoryPort {
     },
     findById: async (id) => (ORG_TYPES[id] ? organizationRecord(id) : undefined),
     findWithTypeById: async (id) => (ORG_TYPES[id] ? organizationRecord(id) : undefined),
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
     codeExists: async () => {
       throw new Error("not used in this test");
     },
@@ -132,6 +143,9 @@ function fakeMembershipRepository(): MembershipRepositoryPort {
     },
     listWithOrganizationByUserId: async () => [],
     listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    updateRole: async () => {
       throw new Error("not used in this test");
     },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
@@ -154,7 +168,22 @@ function fakeRoleRepository(): RoleRepositoryPort {
     "organization.manage",
   ];
   return {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) => (roleId === OWNER_ROLE_ID ? allPermissions : []),
   };
@@ -187,6 +216,43 @@ function fakeProductSubcategoryRepository(): ProductSubcategoryRepositoryPort {
   };
 }
 
+function fakeProjectRepository(): ProjectRepositoryPort {
+  const project: ProjectRecord = {
+    id: PROJECT_ID,
+    renter_organization_id: RENTER_ORG_ID,
+    project_code: "PRJ-2026-1",
+    project_type: "Bridge and Metro",
+    project_name: "Metro Bridge Foundation",
+    site_location: "Jaipur",
+    state: null,
+    district: null,
+    start_date: "2026-01-01",
+    end_date: null,
+    status: "active",
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+  return {
+    nextReferenceNumber: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async (id) => (id === PROJECT_ID ? project : undefined),
+    listByRenter: async () => [project],
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
+    search: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+}
+
 function fakeRequirementRepository(): RequirementRepositoryPort {
   const requirements = new Map<string, RequirementRecord>();
   let nextId = 1;
@@ -195,15 +261,19 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
       const record: RequirementRecord = {
         id: `requirement-${nextId++}`,
         renter_organization_id: input.renterOrganizationId,
+        project_id: input.projectId,
         product_subcategory_id: input.productSubcategoryId,
         capacity: input.capacity ?? null,
         capacity_unit: input.capacityUnit ?? null,
+        boom_length: input.boomLength ?? null,
         quantity: input.quantity,
         project_name: input.projectName ?? null,
         project_location: input.projectLocation ?? null,
         requested_start_date: input.requestedStartDate,
         expected_duration_value: input.expectedDurationValue ?? null,
         expected_duration_unit: input.expectedDurationUnit ?? null,
+        shift_pattern: input.shiftPattern ?? null,
+        crew_requirement: input.crewRequirement ?? null,
         shift_requirement: input.shiftRequirement ?? null,
         validity_date: input.validityDate,
         status: "open",
@@ -298,11 +368,19 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         shift_structure: input.shiftStructure ?? null,
         sunday_condition: input.sundayCondition ?? null,
         fuel_norms: input.fuelNorms ?? null,
+        fuel_scope: input.fuelScope ?? null,
         dehire_terms: input.dehireTerms ?? null,
         operator_scope: input.operatorScope ?? null,
+        accommodation_scope: input.accommodationScope ?? null,
+        working_hours: input.workingHours ?? null,
+        working_days_per_week: input.workingDaysPerWeek ?? null,
+        minimum_rental_period_value: input.minimumRentalPeriodValue ?? null,
+        minimum_rental_period_unit: input.minimumRentalPeriodUnit ?? null,
+        gst_terms: input.gstTerms ?? null,
         notice_period_days: input.noticePeriodDays ?? null,
         validity_date: input.validityDate,
         commercial_notes: input.commercialNotes ?? null,
+        company_terms: input.companyTerms ?? null,
         status: "draft",
         renter_accepted_at: null,
         created_at: new Date(),
@@ -361,6 +439,31 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
     },
     searchByRenter: async () => {
       throw new Error("not used in this test");
+    },
+  };
+}
+
+function fakeQuotationScopeItemRepository(): QuotationScopeItemRepositoryPort {
+  const items = new Map<string, QuotationScopeItemRecord>();
+  let nextId = 1;
+  return {
+    create: async (input) => {
+      const record: QuotationScopeItemRecord = {
+        id: `scope-item-${nextId++}`,
+        quotation_id: input.quotationId,
+        item: input.item,
+        responsible_party: input.responsibleParty,
+        notes: input.notes ?? null,
+        created_at: new Date(),
+      };
+      items.set(record.id, record);
+      return record;
+    },
+    findById: async (id) => items.get(id),
+    listByQuotation: async (quotationId) =>
+      [...items.values()].filter((i) => i.quotation_id === quotationId),
+    delete: async (id) => {
+      items.delete(id);
     },
   };
 }
@@ -558,6 +661,9 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
     findResult: async (auctionId) => results.get(auctionId),
     listEvents: async (auctionId) => events.filter((e) => e.auction_id === auctionId),
     listByOwnerOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    listAllForPlatformAdmin: async () => {
       throw new Error("not used in this test");
     },
     listByParticipantOrganization: async () => {
@@ -791,6 +897,7 @@ function buildHarness() {
     requirementRepository,
     productSubcategoryRepository,
     permissionService,
+    fakeProjectRepository(),
   );
   const quotationResponseService = new QuotationResponseService(
     quotationResponseRepository,
@@ -804,6 +911,7 @@ function buildHarness() {
     organizationRepository,
     permissionService,
     maintenanceRepository,
+    notificationService,
   );
   const auctionService = new AuctionService(
     auctionRepository,
@@ -815,6 +923,7 @@ function buildHarness() {
   const commercialQuotationService = new CommercialQuotationService(
     commercialQuotationRepository,
     quotationOfferRepository,
+    fakeQuotationScopeItemRepository(),
     machineRepository,
     fakeProductRepository(),
     organizationRepository,
@@ -822,6 +931,7 @@ function buildHarness() {
     quotationResponseRepository,
     auctionRepository,
     rentalService,
+    { createFromAward: async () => undefined },
     permissionService,
     notificationService,
   );
@@ -841,6 +951,7 @@ const FAR_FUTURE_VALIDITY = "2099-12-31";
 
 async function postRequirement(h: ReturnType<typeof buildHarness>) {
   return h.requirementService.createRequirement("user-renter", RENTER_ORG_ID, {
+    projectId: PROJECT_ID,
     productSubcategoryId: SUBCATEGORY_ID,
     quantity: 1,
     requestedStartDate: "2026-10-01",

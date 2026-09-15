@@ -26,6 +26,7 @@ export interface OrganizationsTable {
   organization_type_id: string;
   name: string;
   code: string;
+  status: Generated<string>;
   created_at: CreatedAt;
 }
 
@@ -34,12 +35,32 @@ export interface UsersTable {
   email: string;
   password_hash: string;
   display_name: string;
+  status: Generated<string>;
+  created_at: CreatedAt;
+}
+
+export interface StaffUsersTable {
+  id: Generated<string>;
+  email: string;
+  password_hash: string;
+  display_name: string;
+  created_at: CreatedAt;
+}
+
+export interface StaffSessionsTable {
+  id: Generated<string>;
+  staff_user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
   created_at: CreatedAt;
 }
 
 export interface RolesTable {
   id: Generated<string>;
   name: string;
+  // NULL = built-in/global role (only "owner"); non-null scopes the role
+  // (and every permission it grants) to exactly one organization.
+  organization_id: string | null;
   created_at: CreatedAt;
 }
 
@@ -60,6 +81,18 @@ export interface MembershipsTable {
   organization_id: string;
   role_id: string;
   status: string;
+  created_at: CreatedAt;
+}
+
+export interface OrganizationInvitesTable {
+  id: Generated<string>;
+  organization_id: string;
+  role_id: string;
+  token_hash: string;
+  invited_by_user_id: string | null;
+  status: string;
+  expires_at: Timestamp;
+  accepted_by_user_id: string | null;
   created_at: CreatedAt;
 }
 
@@ -95,6 +128,13 @@ export interface Database {
   quotation_reference_sequences: QuotationReferenceSequencesTable;
   commercial_quotations: CommercialQuotationsTable;
   quotation_offers: QuotationOffersTable;
+  quotation_scope_items: QuotationScopeItemsTable;
+  work_orders: WorkOrdersTable;
+  work_order_scope_items: WorkOrderScopeItemsTable;
+  work_order_reference_sequences: WorkOrderReferenceSequencesTable;
+  staff_users: StaffUsersTable;
+  staff_sessions: StaffSessionsTable;
+  organization_invites: OrganizationInvitesTable;
   maintenance_records: MaintenanceRecordsTable;
   transport_records: TransportRecordsTable;
   logsheets: LogsheetsTable;
@@ -103,6 +143,8 @@ export interface Database {
   payments: PaymentsTable;
   invoice_reference_sequences: InvoiceReferenceSequencesTable;
   notifications: NotificationsTable;
+  projects: ProjectsTable;
+  project_reference_sequences: ProjectReferenceSequencesTable;
 }
 
 export interface ProductCategoriesTable {
@@ -174,18 +216,43 @@ export interface RentalsTable {
   // reaches it via a raw sql template instead.
 }
 
+export interface ProjectsTable {
+  id: Generated<string>;
+  renter_organization_id: string;
+  project_code: string;
+  project_type: string;
+  project_name: string;
+  site_location: string;
+  state: string | null;
+  district: string | null;
+  start_date: string;
+  end_date: string | null;
+  status: string;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface ProjectReferenceSequencesTable {
+  organization_id: string;
+  next_value: Generated<number>;
+}
+
 export interface RequirementsTable {
   id: Generated<string>;
   renter_organization_id: string;
+  project_id: string;
   product_subcategory_id: string;
   capacity: number | null;
   capacity_unit: string | null;
+  boom_length: number | null;
   quantity: number;
   project_name: string | null;
   project_location: string | null;
   requested_start_date: string;
   expected_duration_value: number | null;
   expected_duration_unit: string | null;
+  shift_pattern: string | null;
+  crew_requirement: string | null;
   shift_requirement: string | null;
   validity_date: string;
   status: string;
@@ -278,15 +345,84 @@ export interface CommercialQuotationsTable {
   shift_structure: string | null;
   sunday_condition: string | null;
   fuel_norms: string | null;
+  fuel_scope: string | null;
   dehire_terms: string | null;
   operator_scope: string | null;
+  accommodation_scope: string | null;
+  working_hours: number | null;
+  working_days_per_week: number | null;
+  minimum_rental_period_value: number | null;
+  minimum_rental_period_unit: string | null;
+  gst_terms: string | null;
   notice_period_days: number | null;
   validity_date: string;
   commercial_notes: string | null;
+  company_terms: string | null;
   status: string;
   renter_accepted_at: Date | string | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
+}
+
+export interface QuotationScopeItemsTable {
+  id: Generated<string>;
+  quotation_id: string;
+  item: string;
+  responsible_party: string;
+  notes: string | null;
+  created_at: CreatedAt;
+}
+
+export interface WorkOrderReferenceSequencesTable {
+  organization_id: string;
+  next_value: Generated<number>;
+}
+
+export interface WorkOrdersTable {
+  id: Generated<string>;
+  reference_number: string;
+  quotation_id: string;
+  rental_id: string;
+  rental_company_organization_id: string;
+  renter_organization_id: string | null;
+  client_snapshot: unknown | null;
+  project_id: string | null;
+  machine_id: string;
+  start_date: string;
+  end_date: string | null;
+  rate: number;
+  rate_unit: string;
+  mobilization_charge: number | null;
+  demobilization_charge: number | null;
+  overtime_rate: number | null;
+  payment_terms: string | null;
+  shift_structure: string | null;
+  sunday_condition: string | null;
+  fuel_norms: string | null;
+  fuel_scope: string | null;
+  dehire_terms: string | null;
+  operator_scope: string | null;
+  accommodation_scope: string | null;
+  working_hours: number | null;
+  working_days_per_week: number | null;
+  minimum_rental_period_value: number | null;
+  minimum_rental_period_unit: string | null;
+  gst_terms: string | null;
+  notice_period_days: number | null;
+  commercial_notes: string | null;
+  company_terms: string | null;
+  status: string;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+export interface WorkOrderScopeItemsTable {
+  id: Generated<string>;
+  work_order_id: string;
+  item: string;
+  responsible_party: string;
+  notes: string | null;
+  created_at: CreatedAt;
 }
 
 export interface QuotationOffersTable {

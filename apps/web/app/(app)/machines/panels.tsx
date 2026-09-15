@@ -71,11 +71,16 @@ export function MaintenancePanel({ organizationId, machineId }: { organizationId
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const endDate = form.get("endDate");
+    const startDate = String(form.get("startDate"));
+    if (endDate && String(endDate) < startDate) {
+      setError("End date cannot be before the start date");
+      return;
+    }
     try {
       await apiClient.createMaintenance(organizationId, {
         machineId,
         maintenanceType: String(form.get("maintenanceType")) as MaintenanceType,
-        startDate: String(form.get("startDate")),
+        startDate,
         endDate: endDate ? String(endDate) : undefined,
         notes: form.get("notes") ? String(form.get("notes")) : undefined,
       });

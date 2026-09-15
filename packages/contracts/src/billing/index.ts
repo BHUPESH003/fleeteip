@@ -70,16 +70,27 @@ export const invoiceDetailSchema = z.object({
 });
 export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
 
-export const createInvoiceRequestSchema = z.object({
-  rentalId: z.string().uuid(),
-  billingPeriodStart: z.string().date(),
-  billingPeriodEnd: z.string().date(),
-  dueDate: z.string().date(),
-  taxAmount: z.number().nonnegative().optional(),
-  adjustmentAmount: z.number().optional(),
-  notes: z.string().min(1).max(2000).optional(),
-  lineItems: z.array(createInvoiceLineItemSchema).min(1),
-});
+export const createInvoiceRequestSchema = z
+  .object({
+    rentalId: z.string().uuid(),
+    billingPeriodStart: z.string().date(),
+    billingPeriodEnd: z.string().date(),
+    dueDate: z.string().date(),
+    taxAmount: z.number().nonnegative().optional(),
+    adjustmentAmount: z.number().optional(),
+    notes: z.string().min(1).max(2000).optional(),
+    lineItems: z.array(createInvoiceLineItemSchema).min(1),
+  })
+  // No "not in the past" rule on the billing period — invoicing a period
+  // that already happened (billing last month's rental) is the normal case.
+  .refine((data) => data.billingPeriodEnd >= data.billingPeriodStart, {
+    message: "Billing period end cannot be before the billing period start",
+    path: ["billingPeriodEnd"],
+  })
+  .refine((data) => data.dueDate >= data.billingPeriodEnd, {
+    message: "Due date cannot be before the billing period ends",
+    path: ["dueDate"],
+  });
 export type CreateInvoiceRequest = z.infer<typeof createInvoiceRequestSchema>;
 
 export const updateInvoiceStatusRequestSchema = z.object({

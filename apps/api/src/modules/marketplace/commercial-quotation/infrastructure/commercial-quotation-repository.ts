@@ -30,29 +30,47 @@ const QUOTATION_COLUMNS = [
   "shift_structure",
   "sunday_condition",
   "fuel_norms",
+  "fuel_scope",
   "dehire_terms",
   "operator_scope",
+  "accommodation_scope",
+  "working_hours",
+  "working_days_per_week",
+  "minimum_rental_period_value",
+  "minimum_rental_period_unit",
+  "gst_terms",
   "notice_period_days",
   "validity_date",
   "commercial_notes",
+  "company_terms",
   "status",
   "renter_accepted_at",
   "created_at",
   "updated_at",
 ] as const;
 
-// status/rate_unit/operator_scope/client_snapshot are plain DB-level types
+// status/rate_unit/operator_scope/client_snapshot/fuel_scope/
+// accommodation_scope/minimum_rental_period_unit are plain DB-level types
 // (text/jsonb) — this app is the only writer, always through the closed
 // contract enums (same reasoning as RentalRepository's toRentalRecord).
 function toQuotationRecord(
   row: Omit<
     CommercialQuotationRecord,
-    "status" | "rate_unit" | "operator_scope" | "client_snapshot"
+    | "status"
+    | "rate_unit"
+    | "operator_scope"
+    | "client_snapshot"
+    | "fuel_scope"
+    | "accommodation_scope"
+    | "minimum_rental_period_unit"
   > & {
     status: string;
     rate_unit: string;
     operator_scope: string | null;
     client_snapshot: unknown | null;
+    fuel_scope: string | null;
+    accommodation_scope: string | null;
+    minimum_rental_period_unit: string | null;
   },
 ): CommercialQuotationRecord {
   return row as CommercialQuotationRecord;
@@ -97,11 +115,19 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
         shift_structure: input.shiftStructure ?? null,
         sunday_condition: input.sundayCondition ?? null,
         fuel_norms: input.fuelNorms ?? null,
+        fuel_scope: input.fuelScope ?? null,
         dehire_terms: input.dehireTerms ?? null,
         operator_scope: input.operatorScope ?? null,
+        accommodation_scope: input.accommodationScope ?? null,
+        working_hours: input.workingHours ?? null,
+        working_days_per_week: input.workingDaysPerWeek ?? null,
+        minimum_rental_period_value: input.minimumRentalPeriodValue ?? null,
+        minimum_rental_period_unit: input.minimumRentalPeriodUnit ?? null,
+        gst_terms: input.gstTerms ?? null,
         notice_period_days: input.noticePeriodDays ?? null,
         validity_date: input.validityDate,
         commercial_notes: input.commercialNotes ?? null,
+        company_terms: input.companyTerms ?? null,
         status: "draft",
       })
       .returning(QUOTATION_COLUMNS)
@@ -153,12 +179,28 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
         ...(updates.shiftStructure !== undefined && { shift_structure: updates.shiftStructure }),
         ...(updates.sundayCondition !== undefined && { sunday_condition: updates.sundayCondition }),
         ...(updates.fuelNorms !== undefined && { fuel_norms: updates.fuelNorms }),
+        ...(updates.fuelScope !== undefined && { fuel_scope: updates.fuelScope }),
         ...(updates.dehireTerms !== undefined && { dehire_terms: updates.dehireTerms }),
         ...(updates.operatorScope !== undefined && { operator_scope: updates.operatorScope }),
+        ...(updates.accommodationScope !== undefined && {
+          accommodation_scope: updates.accommodationScope,
+        }),
+        ...(updates.workingHours !== undefined && { working_hours: updates.workingHours }),
+        ...(updates.workingDaysPerWeek !== undefined && {
+          working_days_per_week: updates.workingDaysPerWeek,
+        }),
+        ...(updates.minimumRentalPeriodValue !== undefined && {
+          minimum_rental_period_value: updates.minimumRentalPeriodValue,
+        }),
+        ...(updates.minimumRentalPeriodUnit !== undefined && {
+          minimum_rental_period_unit: updates.minimumRentalPeriodUnit,
+        }),
+        ...(updates.gstTerms !== undefined && { gst_terms: updates.gstTerms }),
         ...(updates.noticePeriodDays !== undefined && {
           notice_period_days: updates.noticePeriodDays,
         }),
         ...(updates.commercialNotes !== undefined && { commercial_notes: updates.commercialNotes }),
+        ...(updates.companyTerms !== undefined && { company_terms: updates.companyTerms }),
         // A direct term edit invalidates any prior Renter acceptance — see
         // setRenterAccepted below.
         renter_accepted_at: null,

@@ -43,6 +43,9 @@ const REQUIREMENT_ID = "requirement-1";
 
 function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "renter") {
   const membershipRepository: MembershipRepositoryPort = {
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",
@@ -57,7 +60,22 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
     },
   };
   const roleRepository: RoleRepositoryPort = {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["auction.manage", "auction.participate"] : [],
@@ -125,6 +143,7 @@ function fakeOrganizationTypeRepository(
         organization_type_id: `type-${organizationTypeCode}`,
         name: `Org ${id}`,
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
     },
@@ -137,8 +156,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: `Org ${id}`,
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -155,6 +181,8 @@ function fakeRequirementRepository(
       id: REQUIREMENT_ID,
       renter_organization_id: RENTER_ORG_ID,
       product_subcategory_id: "subcategory-1",
+      project_id: "project-1",
+      boom_length: null,
       capacity: null,
       capacity_unit: null,
       quantity: 1,
@@ -163,6 +191,8 @@ function fakeRequirementRepository(
       requested_start_date: "2026-03-01",
       expected_duration_value: null,
       expected_duration_unit: null,
+      shift_pattern: null,
+      crew_requirement: null,
       shift_requirement: null,
       validity_date: "2026-02-15",
       status: "open",
@@ -360,6 +390,9 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
             has_selected_participant: ownParticipants.some((p) => p.status === "selected"),
           };
         }),
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
     listByParticipantOrganization: async (organizationId) =>
       [...participants.values()]
         .filter((p) => p.rental_company_organization_id === organizationId)
@@ -428,6 +461,8 @@ describe("AuctionService", () => {
         id: REQUIREMENT_ID,
         renter_organization_id: RENTER_ORG_ID,
         product_subcategory_id: "subcategory-1",
+        project_id: "project-1",
+        boom_length: null,
         capacity: null,
         capacity_unit: null,
         quantity: 1,
@@ -436,6 +471,8 @@ describe("AuctionService", () => {
         requested_start_date: "2026-03-01",
         expected_duration_value: null,
         expected_duration_unit: null,
+        shift_pattern: null,
+        crew_requirement: null,
         shift_requirement: null,
         validity_date: "2026-02-15",
         status: "closed",

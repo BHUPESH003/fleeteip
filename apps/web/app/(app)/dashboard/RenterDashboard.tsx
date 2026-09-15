@@ -31,10 +31,20 @@ interface DashboardData {
 }
 
 export function RenterDashboard() {
-  const { session, currentMembership } = useSession();
+  const { session, currentMembership, hasPermission } = useSession();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const organizationId = currentMembership?.organizationId;
+
+  // This dashboard is a cross-domain summary, not one page "about" a single
+  // permission — a custom role missing any one of these still deserves a
+  // working page, just without that section's data (see docs/decisions.md,
+  // same fix as quotations/page.tsx's canListMachines).
+  const canListRequirements = hasPermission("rfq.manage");
+  const canListQuotations = hasPermission("quotation.respond");
+  const canListRentals = hasPermission("rental.respond");
+  const canListInvoices = hasPermission("billing.respond");
+  const canListAuctions = hasPermission("auction.manage");
 
   useEffect(() => {
     if (!organizationId) return;
@@ -50,24 +60,38 @@ export function RenterDashboard() {
           rentalCompanyOrgs,
           auctions,
         ] = await Promise.all([
-          apiClient.listRequirements(organizationId) as Promise<Requirement[]>,
-          apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
-          apiClient.listRentals(organizationId) as Promise<Rental[]>,
-          apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
+          canListRequirements
+            ? (apiClient.listRequirements(organizationId) as Promise<Requirement[]>)
+            : Promise.resolve([]),
+          canListQuotations
+            ? (apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>)
+            : Promise.resolve([]),
+          canListRentals
+            ? (apiClient.listRentals(organizationId) as Promise<Rental[]>)
+            : Promise.resolve([]),
+          canListInvoices
+            ? (apiClient.listInvoices(organizationId) as Promise<Invoice[]>)
+            : Promise.resolve([]),
           apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
-          apiClient.listRentalCompanyOrganizations(organizationId) as Promise<Organization[]>,
-          apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
+          canListQuotations
+            ? (apiClient.listRentalCompanyOrganizations(organizationId) as Promise<Organization[]>)
+            : Promise.resolve([]),
+          canListAuctions
+            ? (apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>)
+            : Promise.resolve([]),
         ]);
 
         const openRequirements = requirements.filter((r) => r.status === "open");
-        const responseLists = await Promise.all(
-          openRequirements.map(
-            (r) =>
-              apiClient.listResponsesForRequirement(organizationId, r.id) as Promise<
-                QuotationResponse[]
-              >,
-          ),
-        );
+        const responseLists = canListRequirements
+          ? await Promise.all(
+              openRequirements.map(
+                (r) =>
+                  apiClient.listResponsesForRequirement(organizationId, r.id) as Promise<
+                    QuotationResponse[]
+                  >,
+              ),
+            )
+          : [];
         const responseCounts = new Map(
           openRequirements.map((r, index) => {
             const responses = responseLists[index] ?? [];
@@ -152,51 +176,73 @@ export function RenterDashboard() {
     .filter((i) => i.status === "overdue" || daysUntil(i.dueDate) <= INVOICE_DUE_SOON_DAYS)
     .reduce((sum, i) => sum + (invoiceBalances.get(i.id) ?? 0), 0);
 
+  // Tiles for a section the caller can't see are omitted, not zeroed —
+  // "Open requirements: 0" would misreport "no permission" as "nothing open".
   const kpis: KpiTileData[] = [
-    {
-      label: "Open requirements",
-      value: String(openRequirements.length),
-      note: openRequirements.some((r) => daysUntil(r.validityDate) <= 1)
-        ? "1 validity ends soon"
-        : undefined,
-      noteTone: "warning",
-    },
-    {
-      label: "Responses in",
-      value: String(totalResponses),
-      note: totalInterested > 0 ? `${totalInterested} interested` : undefined,
-      noteTone: "success",
-    },
-    {
-      label: "To review",
-      value: String(toReview.length),
-      note: toReview.length > 0 ? "quotations sent to you" : undefined,
-      noteTone: "warning",
-    },
-    {
-      label: "Machines on rent",
-      value: String(activeRentals.length),
-      note: distinctProjects.size > 0 ? `across ${distinctProjects.size} projects` : undefined,
-    },
-    {
-      label: "Payable",
-      value: formatCurrencyINR(payableTotal),
-      note:
-        dueSoonTotal > 0
-          ? `${formatCurrencyINR(dueSoonTotal)} due within ${INVOICE_DUE_SOON_DAYS}d`
-          : undefined,
-      noteTone: "warning",
-    },
-    {
-      label: "Auctions",
-      value: String(auctions.length),
-      note:
-        auctionsNeedingSelection.length > 0
-          ? `${auctionsNeedingSelection.length} awaiting selection`
-          : undefined,
-      noteTone: "warning",
-      href: "/auctions",
-    },
+    ...(canListRequirements
+      ? [
+          {
+            label: "Open requirements",
+            value: String(openRequirements.length),
+            note: openRequirements.some((r) => daysUntil(r.validityDate) <= 1)
+              ? "1 validity ends soon"
+              : undefined,
+            noteTone: "warning" as const,
+          },
+          {
+            label: "Responses in",
+            value: String(totalResponses),
+            note: totalInterested > 0 ? `${totalInterested} interested` : undefined,
+            noteTone: "success" as const,
+          },
+        ]
+      : []),
+    ...(canListQuotations
+      ? [
+          {
+            label: "To review",
+            value: String(toReview.length),
+            note: toReview.length > 0 ? "quotations sent to you" : undefined,
+            noteTone: "warning" as const,
+          },
+        ]
+      : []),
+    ...(canListRentals
+      ? [
+          {
+            label: "Machines on rent",
+            value: String(activeRentals.length),
+            note: distinctProjects.size > 0 ? `across ${distinctProjects.size} projects` : undefined,
+          },
+        ]
+      : []),
+    ...(canListInvoices
+      ? [
+          {
+            label: "Payable",
+            value: formatCurrencyINR(payableTotal),
+            note:
+              dueSoonTotal > 0
+                ? `${formatCurrencyINR(dueSoonTotal)} due within ${INVOICE_DUE_SOON_DAYS}d`
+                : undefined,
+            noteTone: "warning" as const,
+          },
+        ]
+      : []),
+    ...(canListAuctions
+      ? [
+          {
+            label: "Auctions",
+            value: String(auctions.length),
+            note:
+              auctionsNeedingSelection.length > 0
+                ? `${auctionsNeedingSelection.length} awaiting selection`
+                : undefined,
+            noteTone: "warning" as const,
+            href: "/auctions",
+          },
+        ]
+      : []),
   ];
 
   const attention: AttentionItem[] = [
@@ -271,25 +317,27 @@ export function RenterDashboard() {
       <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.4fr_1fr]">
         <AttentionPanel title="Waiting on you" items={attention} />
         <div className="flex flex-col gap-3.5">
-          <Card>
-            <h2 className="mb-3 text-sm font-semibold text-ink">Requirement pipeline</h2>
-            <div className="flex flex-col gap-3">
-              {pipeline.map((stage) => (
-                <div key={stage.label} className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-xs text-ink-muted">{stage.label}</span>
-                    <span className="font-mono text-sm font-medium text-ink">{stage.count}</span>
+          {(canListRequirements || canListQuotations) && (
+            <Card>
+              <h2 className="mb-3 text-sm font-semibold text-ink">Requirement pipeline</h2>
+              <div className="flex flex-col gap-3">
+                {pipeline.map((stage) => (
+                  <div key={stage.label} className="flex flex-col gap-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-xs text-ink-muted">{stage.label}</span>
+                      <span className="font-mono text-sm font-medium text-ink">{stage.count}</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-xs bg-neutral-bg">
+                      <div
+                        className="h-full rounded-xs bg-info"
+                        style={{ width: `${(stage.count / maxStage) * 100}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-xs bg-neutral-bg">
-                    <div
-                      className="h-full rounded-xs bg-info"
-                      style={{ width: `${(stage.count / maxStage) * 100}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+                ))}
+              </div>
+            </Card>
+          )}
           <ActivityPanel items={activity} />
         </div>
       </div>

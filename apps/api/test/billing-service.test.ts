@@ -20,6 +20,8 @@ import type {
   PaymentRecord,
 } from "../src/modules/billing/domain/ports.js";
 import { BillingService } from "../src/modules/billing/application/billing-service.js";
+import { NotificationService } from "../src/modules/notification/application/notification-service.js";
+import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
@@ -30,6 +32,9 @@ const RENTAL_ID = "rental-1";
 
 function fakePermissionService(rcOrgType: OrganizationTypeCode = "rental_company") {
   const membershipRepository: MembershipRepositoryPort = {
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",
@@ -44,7 +49,22 @@ function fakePermissionService(rcOrgType: OrganizationTypeCode = "rental_company
     },
   };
   const roleRepository: RoleRepositoryPort = {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["billing.manage", "billing.respond"] : [],
@@ -82,8 +102,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -253,11 +280,36 @@ function fakeInvoiceRepository(): InvoiceRepositoryPort {
   };
 }
 
+// Every caller swallows notification failures (best-effort side effect), so
+// a throwing fake is sufficient — this file isn't testing notification
+// behavior itself.
+function fakeNotificationService(): NotificationService {
+  const throwingRepo: NotificationRepositoryPort = {
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return new NotificationService(throwingRepo, fakePermissionService());
+}
+
 function buildService(rentals: RentalRecord[] = [rental()]) {
   return new BillingService(
     fakeInvoiceRepository(),
     fakeRentalRepository(rentals),
     fakePermissionService(),
+    fakeNotificationService(),
   );
 }
 
@@ -281,6 +333,7 @@ describe("BillingService", () => {
       fakeInvoiceRepository(),
       fakeRentalRepository([rental()]),
       fakePermissionService("renter"),
+      fakeNotificationService(),
     );
     await expect(service.createInvoice("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,

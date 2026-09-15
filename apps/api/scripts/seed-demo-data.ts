@@ -72,6 +72,31 @@ async function main() {
   });
   console.log("Created 2 Rental Companies and 2 Renters.");
 
+  // --- Projects (each Renter's own grouping — Requirements now hang off one) ---
+  const metroProject = await container.projectService.createProject(
+    metroInfra.userId,
+    metroInfra.organizationId,
+    {
+      projectType: "Bridge and Metro",
+      projectName: "Metro Bridge Foundation",
+      siteLocation: "Jaipur",
+      state: "Rajasthan",
+      startDate: daysFromNow(9),
+    },
+  );
+  const desertProject = await container.projectService.createProject(
+    desertHighway.userId,
+    desertHighway.organizationId,
+    {
+      projectType: "Road",
+      projectName: "Highway Widening Phase 2",
+      siteLocation: "Udaipur",
+      state: "Rajasthan",
+      startDate: daysFromNow(19),
+    },
+  );
+  console.log("Created 1 Project per Renter.");
+
   // --- Catalogue lookups (seeded by migration 0005) ---
   const categories = await container.catalogueService.listCategories();
   const excavatorCategory = categories.find((c) => c.code === "EXCAVATOR")!;
@@ -125,12 +150,13 @@ async function main() {
     metroInfra.userId,
     metroInfra.organizationId,
     {
+      projectId: metroProject.id,
       productSubcategoryId: trackedExcavatorSub.id,
       quantity: 1,
-      projectName: "Metro Bridge Foundation",
-      projectLocation: "Jaipur",
       requestedStartDate: daysFromNow(10),
       validityDate: daysFromNow(7),
+      shiftPattern: "double",
+      crewRequirement: "one_crew_set",
       notes: "20T class tracked excavator needed for bridge foundation excavation.",
     },
   );
@@ -152,8 +178,19 @@ async function main() {
       rate: 6500,
       rateUnit: "day",
       validityDate: daysFromNow(9),
+      fuelScope: "company",
+      operatorScope: "with_operator",
+      workingHours: 8,
+      workingDaysPerWeek: 6,
+      gstTerms: "GST extra @ 18%",
       commercialNotes: "Includes operator and standard mobilization within Jaipur city limits.",
     },
+  );
+  await container.commercialQuotationService.addScopeItem(
+    apex.userId,
+    apex.organizationId,
+    quotation1.id,
+    { item: "Ground preparation", responsibleParty: "client", notes: "Site must be leveled before mobilization" },
   );
   await container.commercialQuotationService.sendQuotation(
     apex.userId,
@@ -172,6 +209,17 @@ async function main() {
     quotation1.id,
     offer1.id,
   );
+  // Accepting the Renter's own offer doesn't imply the Renter's final
+  // acceptance of the quotation — that's still a distinct, explicit step
+  // (see awardQuotation's renterAcceptedAt guard). Pre-existing seed-script
+  // gap: this call was missing, so awardQuotation below used to fail with
+  // "The Renter has not accepted this quotation yet" — found while
+  // verifying this phase's changes end to end.
+  await container.commercialQuotationService.acceptQuotation(
+    metroInfra.userId,
+    metroInfra.organizationId,
+    quotation1.id,
+  );
   await container.commercialQuotationService.awardQuotation(
     apex.userId,
     apex.organizationId,
@@ -186,12 +234,14 @@ async function main() {
     desertHighway.userId,
     desertHighway.organizationId,
     {
+      projectId: desertProject.id,
       productSubcategoryId: mobileCraneSub.id,
       quantity: 1,
-      projectName: "Highway Widening Phase 2",
-      projectLocation: "Udaipur",
       requestedStartDate: daysFromNow(20),
       validityDate: daysFromNow(18),
+      boomLength: 32,
+      shiftPattern: "single",
+      crewRequirement: "one_crew_set",
     },
   );
   const auction = await container.auctionService.createAuction(
@@ -228,6 +278,19 @@ async function main() {
     desertHighway.organizationId,
     auction.id,
   );
+  // The leading bid is not automatically the winner — the Requirement owner
+  // (auction.manage, the Renter) must explicitly select a participant before
+  // that participant may formalize a CommercialQuotation. Pre-existing
+  // seed-script gap: this call was missing, so createQuotation below used to
+  // fail with "Only the participant selected by the auction owner may
+  // formalize this quotation" — found while verifying this phase's changes
+  // end to end.
+  await container.auctionService.selectParticipant(
+    desertHighway.userId,
+    desertHighway.organizationId,
+    auction.id,
+    rhmParticipant.id,
+  );
   const quotation2 = await container.commercialQuotationService.createQuotation(
     rajasthanHeavy.userId,
     rajasthanHeavy.organizationId,
@@ -245,6 +308,15 @@ async function main() {
   await container.commercialQuotationService.sendQuotation(
     rajasthanHeavy.userId,
     rajasthanHeavy.organizationId,
+    quotation2.id,
+  );
+  // Auction participant selection is not commercial acceptance — the Renter
+  // must still explicitly accept these final terms (see awardQuotation's
+  // renterAcceptedAt guard, held identically for Path C). Pre-existing
+  // seed-script gap, same class as Journey 1's missing acceptQuotation call.
+  await container.commercialQuotationService.acceptQuotation(
+    desertHighway.userId,
+    desertHighway.organizationId,
     quotation2.id,
   );
   await container.commercialQuotationService.awardQuotation(

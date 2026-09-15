@@ -21,10 +21,12 @@ export const organizationSchema = z.object({
 });
 export type Organization = z.infer<typeof organizationSchema>;
 
-// ponytail: two fixed roles (owner/member) shared across org types, not
-// per-organization custom roles. Add custom roles when a real need for
-// finer-grained responsibilities appears.
-export const roleNameSchema = z.enum(["owner", "member"]);
+// Role names are no longer a fixed global enum — every organization gets
+// its own "member" role (and can create further custom roles) with
+// whatever permission set its owner assigns. "owner" is the one built-in
+// role every organization has from creation, always full access,
+// immutable — see roleSchema's isBuiltin flag.
+export const roleNameSchema = z.string().trim().min(1).max(60);
 export type RoleName = z.infer<typeof roleNameSchema>;
 
 export const permissionCodeSchema = z.enum([
@@ -47,6 +49,7 @@ export const permissionCodeSchema = z.enum([
   "transport.respond",
   "logsheet.respond",
   "catalogue.manage",
+  "project.manage",
 ]);
 export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationTypeCode[]> = {
   "organization.manage": ["rental_company", "renter"],
@@ -85,6 +88,12 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
   // is scoped to rental_company (not a real platform-admin tier) as a known,
   // documented limitation of the current two-org-type authorization model.
   "catalogue.manage": ["rental_company"],
+  // A Project belongs to the Renter organization — see docs/rental-domain-design.md
+  // and packages/contracts/src/project/index.ts. A Rental Company never manages
+  // a Project directly; it only ever sees Project context threaded through
+  // Requirement/Quotation/Rental (denormalized read fields), same pattern as
+  // machineAssetCode on a Renter-facing Rental.
+  "project.manage": ["renter"],
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;
@@ -118,24 +127,101 @@ export const organizationMemberSchema = z.object({
   userId: z.string().uuid(),
   email: z.string().email(),
   displayName: z.string(),
+  roleId: z.string().uuid(),
   roleName: roleNameSchema,
   status: membershipStatusSchema,
   createdAt: z.string().datetime(),
 });
 export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
 
-// The invited user must already hold a FleetIP account (looked up by email)
-// — there is no email-sending infrastructure in this codebase yet to
-// support inviting someone who doesn't. See
-// docs/frontend-backend-gap-report.md for this documented limitation.
-export const inviteMemberRequestSchema = z.object({
-  email: z.string().email(),
-  roleName: roleNameSchema,
+// --- Invites: a link-based route into an organization, replacing the old
+// email-lookup "invite" (which created a membership nothing ever
+// activated). No email is required to create one — the owner shares the
+// link however they like; email delivery is a future addition on top of
+// the same token, not a different mechanism. ---
+
+export const inviteStatusSchema = z.enum(["pending", "accepted", "revoked"]);
+export type InviteStatus = z.infer<typeof inviteStatusSchema>;
+
+export const createInviteRequestSchema = z.object({
+  roleId: z.string().uuid(),
 });
-export type InviteMemberRequest = z.infer<typeof inviteMemberRequestSchema>;
+export type CreateInviteRequest = z.infer<typeof createInviteRequestSchema>;
+
+export const organizationInviteSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  roleName: roleNameSchema,
+  status: inviteStatusSchema,
+  expiresAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+});
+export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
+
+// The raw token is returned exactly once, at creation — never stored in
+// plaintext, never retrievable again (same discipline as a session token).
+export const createInviteResponseSchema = z.object({
+  invite: organizationInviteSchema,
+  token: z.string(),
+  link: z.string(),
+});
+export type CreateInviteResponse = z.infer<typeof createInviteResponseSchema>;
+
+// Shown to a visitor who may not be signed in yet — deliberately minimal,
+// never leaks anything about the organization beyond its name/type.
+export const invitePreviewSchema = z.object({
+  organizationName: z.string(),
+  organizationTypeCode: organizationTypeCodeSchema,
+  roleName: roleNameSchema,
+  status: inviteStatusSchema,
+  expired: z.boolean(),
+});
+export type InvitePreview = z.infer<typeof invitePreviewSchema>;
+
+// Only required when the visitor has no existing session — accepting while
+// already logged in needs no body at all (the server uses the caller's own
+// session, never a client-supplied identity).
+export const acceptInviteRequestSchema = z
+  .object({
+    email: z.string().email().optional(),
+    password: z.string().min(8).optional(),
+    displayName: z.string().min(1).optional(),
+  })
+  .refine(
+    (data) =>
+      (!data.email && !data.password && !data.displayName) ||
+      (data.email && data.password && data.displayName),
+    { message: "Provide email, password, and displayName together, or none of them" },
+  );
+export type AcceptInviteRequest = z.infer<typeof acceptInviteRequestSchema>;
 
 export const roleWithPermissionsSchema = z.object({
+  id: z.string().uuid(),
   roleName: roleNameSchema,
+  // Built-in roles ("owner") are always full-access and can't be created,
+  // edited, or deleted through the API — only an organization's own roles
+  // (its "member" and any further custom roles) can be.
+  isBuiltin: z.boolean(),
   permissions: z.array(permissionCodeSchema),
 });
 export type RoleWithPermissions = z.infer<typeof roleWithPermissionsSchema>;
+
+// --- Custom roles: create/edit/delete an organization's own roles, and
+// move a member between roles. "owner" is never a valid target here — see
+// roleWithPermissionsSchema.isBuiltin. ---
+
+export const createRoleRequestSchema = z.object({
+  name: roleNameSchema,
+  permissions: z.array(permissionCodeSchema),
+});
+export type CreateRoleRequest = z.infer<typeof createRoleRequestSchema>;
+
+// Always a full replace of both fields — the caller sends the complete
+// desired state, never a partial patch.
+export const updateRoleRequestSchema = createRoleRequestSchema;
+export type UpdateRoleRequest = z.infer<typeof updateRoleRequestSchema>;
+
+export const updateMemberRoleRequestSchema = z.object({
+  roleId: z.string().uuid(),
+});
+export type UpdateMemberRoleRequest = z.infer<typeof updateMemberRoleRequestSchema>;

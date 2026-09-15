@@ -33,7 +33,7 @@ export class NotificationService {
   }
 
   async list(userId: string, organizationId: string): Promise<NotificationListResponse> {
-    await this.permissionService.requirePermission(userId, organizationId, "organization.manage");
+    await this.permissionService.requireActiveMembership(userId, organizationId);
     const [records, unreadCount] = await Promise.all([
       this.notificationRepository.listByOrganization(organizationId),
       this.notificationRepository.countUnread(organizationId),
@@ -46,13 +46,13 @@ export class NotificationService {
     organizationId: string,
     notificationId: string,
   ): Promise<Notification | undefined> {
-    await this.permissionService.requirePermission(userId, organizationId, "organization.manage");
+    await this.permissionService.requireActiveMembership(userId, organizationId);
     const record = await this.notificationRepository.markRead(notificationId, organizationId);
     return record ? toNotification(record) : undefined;
   }
 
   async markAllRead(userId: string, organizationId: string): Promise<void> {
-    await this.permissionService.requirePermission(userId, organizationId, "organization.manage");
+    await this.permissionService.requireActiveMembership(userId, organizationId);
     await this.notificationRepository.markAllRead(organizationId);
   }
 }

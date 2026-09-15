@@ -1,6 +1,7 @@
 import {
   createCommercialQuotationRequestSchema,
   createQuotationOfferRequestSchema,
+  createQuotationScopeItemRequestSchema,
   updateCommercialQuotationTermsRequestSchema,
 } from "@fleetip/contracts/quotation";
 import type { FastifyInstance } from "fastify";
@@ -185,6 +186,48 @@ export async function commercialQuotationRoutes(fastify: FastifyInstance): Promi
         request.params.quotationId,
         request.params.offerId,
       );
+    },
+  );
+
+  fastify.get<{ Params: { organizationId: string; quotationId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/scope-items",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.commercialQuotationService.listScopeItems(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; quotationId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/scope-items",
+    async (request, reply) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(createQuotationScopeItemRequestSchema, request.body);
+      const item = await container.commercialQuotationService.addScopeItem(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+        body,
+      );
+      reply.code(201);
+      return item;
+    },
+  );
+
+  fastify.delete<{ Params: { organizationId: string; quotationId: string; scopeItemId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/scope-items/:scopeItemId",
+    async (request, reply) => {
+      const userId = await getAuthenticatedUserId(request);
+      await container.commercialQuotationService.removeScopeItem(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+        request.params.scopeItemId,
+      );
+      reply.code(204);
     },
   );
 }

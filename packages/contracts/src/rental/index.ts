@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPastIsoDate } from "../shared/dates.js";
 
 // FleetIP recommendation, not extracted from legacy — the source schema has
 // no reliable status vocabulary (every status-like legacy column is a bare
@@ -97,6 +98,14 @@ export const createRentalRequestSchema = z
   .refine((data) => Boolean(data.renterOrganizationId) !== Boolean(data.clientSnapshot), {
     message: "Provide exactly one of renterOrganizationId or clientSnapshot",
     path: ["renterOrganizationId"],
+  })
+  .refine((data) => !isPastIsoDate(data.startDate), {
+    message: "Start date cannot be in the past",
+    path: ["startDate"],
+  })
+  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
   });
 export type CreateRentalRequest = z.infer<typeof createRentalRequestSchema>;
 

@@ -21,10 +21,15 @@ import type {
 import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
 import type {
-  InviteMemberRequest,
+  AcceptInviteRequest,
+  CreateInviteResponse,
+  CreateRoleRequest,
+  InvitePreview,
   Organization,
   OrganizationMember,
+  RoleName,
   RoleWithPermissions,
+  UpdateRoleRequest,
 } from "@fleetip/contracts/organization";
 import type {
   CreateMaintenanceRequest,
@@ -36,7 +41,9 @@ import type {
   CommercialQuotation,
   CreateCommercialQuotationRequest,
   CreateQuotationOfferRequest,
+  CreateQuotationScopeItemRequest,
   QuotationOffer,
+  QuotationScopeItem,
   QuotationResponse,
   SubmitQuotationResponseRequest,
   UpdateCommercialQuotationTermsRequest,
@@ -52,6 +59,12 @@ import type {
   Requirement,
   UpdateRequirementRequest,
 } from "@fleetip/contracts/rfq";
+import type {
+  CreateProjectRequest,
+  Project,
+  UpdateProjectRequest,
+} from "@fleetip/contracts/project";
+import type { WorkOrder, WorkOrderScopeItem, WorkOrderStatus } from "@fleetip/contracts/work-order";
 import type { SearchResult } from "@fleetip/contracts/search";
 import type {
   CreateTransportRequest,
@@ -142,14 +155,40 @@ export const apiClient = {
     apiRequest<OrganizationMember[]>(`/organizations/${organizationId}/members`, {
       method: "GET",
     }),
-  inviteMember: (organizationId: string, input: InviteMemberRequest) =>
-    apiRequest<OrganizationMember>(`/organizations/${organizationId}/members`, {
+  createInvite: (organizationId: string, roleId: string) =>
+    apiRequest<CreateInviteResponse>(`/organizations/${organizationId}/invites`, {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify({ roleId }),
+    }),
+  updateMemberRole: (organizationId: string, membershipId: string, roleId: string) =>
+    apiRequest<OrganizationMember>(`/organizations/${organizationId}/members/${membershipId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ roleId }),
     }),
   listRolesAndPermissions: (organizationId: string) =>
     apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/roles`, {
       method: "GET",
+    }),
+  createRole: (organizationId: string, input: CreateRoleRequest) =>
+    apiRequest<RoleWithPermissions>(`/organizations/${organizationId}/roles`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateRole: (organizationId: string, roleId: string, input: UpdateRoleRequest) =>
+    apiRequest<RoleWithPermissions>(`/organizations/${organizationId}/roles/${roleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteRole: (organizationId: string, roleId: string) =>
+    apiRequest<void>(`/organizations/${organizationId}/roles/${roleId}`, { method: "DELETE" }),
+
+  // --- Public invite-link flow (may be called with no session at all) ---
+  getInvitePreview: (token: string) =>
+    apiRequest<InvitePreview>(`/invites/${token}`, { method: "GET" }),
+  acceptInvite: (token: string, newAccount?: AcceptInviteRequest) =>
+    apiRequest<{ organizationId: string; roleName: RoleName }>(`/invites/${token}/accept`, {
+      method: "POST",
+      ...(newAccount ? { body: JSON.stringify(newAccount) } : {}),
     }),
 
   listProductCategories: () =>
@@ -255,6 +294,33 @@ export const apiClient = {
       }).toString()}`,
       { method: "GET" },
     ),
+
+  // --- Project ---
+  listProjects: (organizationId: string) =>
+    apiRequest<Project[]>(`/organizations/${organizationId}/projects`, { method: "GET" }),
+  getProject: (organizationId: string, projectId: string) =>
+    apiRequest<Project>(`/organizations/${organizationId}/projects/${projectId}`, {
+      method: "GET",
+    }),
+  createProject: (organizationId: string, input: CreateProjectRequest) =>
+    apiRequest<Project>(`/organizations/${organizationId}/projects`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProject: (organizationId: string, projectId: string, input: UpdateProjectRequest) =>
+    apiRequest<Project>(`/organizations/${organizationId}/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  updateProjectStatus: (
+    organizationId: string,
+    projectId: string,
+    status: "completed" | "cancelled",
+  ) =>
+    apiRequest<Project>(`/organizations/${organizationId}/projects/${projectId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 
   // --- RFQ (Requirement) ---
   listRequirements: (organizationId: string) =>
@@ -388,6 +454,50 @@ export const apiClient = {
       `/organizations/${organizationId}/quotations/${quotationId}/offers/${offerId}/accept`,
       { method: "POST" },
     ),
+  listScopeItems: (organizationId: string, quotationId: string) =>
+    apiRequest<QuotationScopeItem[]>(
+      `/organizations/${organizationId}/quotations/${quotationId}/scope-items`,
+      { method: "GET" },
+    ),
+  addScopeItem: (
+    organizationId: string,
+    quotationId: string,
+    input: CreateQuotationScopeItemRequest,
+  ) =>
+    apiRequest<QuotationScopeItem>(
+      `/organizations/${organizationId}/quotations/${quotationId}/scope-items`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  removeScopeItem: (organizationId: string, quotationId: string, scopeItemId: string) =>
+    apiRequest<void>(
+      `/organizations/${organizationId}/quotations/${quotationId}/scope-items/${scopeItemId}`,
+      { method: "DELETE" },
+    ),
+
+  // --- Work Order (the finalized commercial order, auto-created on award) ---
+  listWorkOrders: (organizationId: string) =>
+    apiRequest<WorkOrder[]>(`/organizations/${organizationId}/work-orders`, { method: "GET" }),
+  getWorkOrder: (organizationId: string, workOrderId: string) =>
+    apiRequest<WorkOrder>(`/organizations/${organizationId}/work-orders/${workOrderId}`, {
+      method: "GET",
+    }),
+  getWorkOrderByQuotationId: (organizationId: string, quotationId: string) =>
+    apiRequest<WorkOrder | null>(
+      `/organizations/${organizationId}/quotations/${quotationId}/work-order`,
+      { method: "GET" },
+    ),
+  listWorkOrderScopeItems: (organizationId: string, workOrderId: string) =>
+    apiRequest<WorkOrderScopeItem[]>(
+      `/organizations/${organizationId}/work-orders/${workOrderId}/scope-items`,
+      { method: "GET" },
+    ),
+  updateWorkOrderStatus: (organizationId: string, workOrderId: string, status: WorkOrderStatus) =>
+    apiRequest<WorkOrder>(`/organizations/${organizationId}/work-orders/${workOrderId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  workOrderPrintUrl: (organizationId: string, workOrderId: string) =>
+    `${API_URL}/organizations/${organizationId}/work-orders/${workOrderId}/print`,
 
   // --- Auction ---
   listAuctionsForOrganization: (organizationId: string) =>

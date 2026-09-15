@@ -17,17 +17,64 @@ import type {
   RequirementRecord,
   RequirementRepositoryPort,
 } from "../src/modules/marketplace/rfq/domain/ports.js";
+import type { ProjectRecord, ProjectRepositoryPort } from "../src/modules/marketplace/project/domain/ports.js";
 import { RequirementService } from "../src/modules/marketplace/rfq/application/requirement-service.js";
-import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RENTER_ORG_ID = "org-renter";
 const OTHER_RENTER_ORG_ID = "org-other-renter";
 const RC_ORG_ID = "org-rental-company";
 const SUBCATEGORY_ID = "subcategory-1";
+const PROJECT_ID = "project-1";
+
+function fakeProjectRepository(
+  projects: ProjectRecord[] = [
+    {
+      id: PROJECT_ID,
+      renter_organization_id: RENTER_ORG_ID,
+      project_code: "PRJ-2026-1",
+      project_type: "Bridge and Metro",
+      project_name: "Metro Bridge Foundation",
+      site_location: "Jaipur",
+      state: null,
+      district: null,
+      start_date: "2026-03-01",
+      end_date: null,
+      status: "active",
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
+  ],
+): ProjectRepositoryPort {
+  return {
+    nextReferenceNumber: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async (id) => projects.find((p) => p.id === id),
+    listByRenter: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    updateFields: async () => {
+      throw new Error("not used in this test");
+    },
+    search: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+}
 
 function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "renter") {
   const membershipRepository: MembershipRepositoryPort = {
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
     findActiveMembership: async (): Promise<ActiveMembershipRecord | undefined> => ({
       id: "membership-1",
       status: "active",
@@ -42,7 +89,22 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
     },
   };
   const roleRepository: RoleRepositoryPort = {
-    findByName: async (name) => ({ id: OWNER_ROLE_ID, name }),
+    findByName: async (name) => ({ id: OWNER_ROLE_ID, name, organization_id: null }),
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["rfq.manage", "rfq.respond"] : [],
@@ -80,8 +142,15 @@ function fakeOrganizationTypeRepository(
         organization_type_code: organizationTypeCode,
         name: "Test Org",
         code: "TESTORG",
+        status: "active",
         created_at: new Date(),
       };
+    },
+    listAllForPlatformAdmin: async () => {
+      throw new Error("not used in this test");
+    },
+    updateStatus: async () => {
+      throw new Error("not used in this test");
     },
     codeExists: async () => {
       throw new Error("not used in this test");
@@ -129,15 +198,19 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
       const record: RequirementRecord = {
         id: `requirement-${nextId++}`,
         renter_organization_id: input.renterOrganizationId,
+        project_id: input.projectId,
         product_subcategory_id: input.productSubcategoryId,
         capacity: input.capacity ?? null,
         capacity_unit: input.capacityUnit ?? null,
+        boom_length: input.boomLength ?? null,
         quantity: input.quantity,
         project_name: input.projectName ?? null,
         project_location: input.projectLocation ?? null,
         requested_start_date: input.requestedStartDate,
         expected_duration_value: input.expectedDurationValue ?? null,
         expected_duration_unit: input.expectedDurationUnit ?? null,
+        shift_pattern: input.shiftPattern ?? null,
+        crew_requirement: input.crewRequirement ?? null,
         shift_requirement: input.shiftRequirement ?? null,
         validity_date: input.validityDate,
         status: "open",
@@ -195,10 +268,12 @@ function buildService(subcategories?: ProductSubcategoryRecord[]) {
     fakeRequirementRepository(),
     fakeProductSubcategoryRepository(subcategories),
     fakePermissionService(),
+    fakeProjectRepository(),
   );
 }
 
 const baseInput = {
+  projectId: PROJECT_ID,
   productSubcategoryId: SUBCATEGORY_ID,
   quantity: 1,
   requestedStartDate: "2026-03-01",
@@ -223,14 +298,61 @@ describe("RequirementService", () => {
     expect(requirement.renterOrganizationId).toBe(RENTER_ORG_ID);
   });
 
+  // The caller never supplies projectName/projectLocation at all (removed
+  // from CreateRequirementRequest — projectId is the sole input) — this
+  // snapshot still matters for the cross-tenant Open Market view, which has
+  // no access to the Renter's own Project records. See docs/decisions.md.
+  it("snapshots the resolved project's own name and location onto the requirement", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    expect(requirement.projectName).toBe("Metro Bridge Foundation");
+    expect(requirement.projectLocation).toBe("Jaipur");
+  });
+
   it("rejects requirement management for a Rental Company organization", async () => {
     const service = new RequirementService(
       fakeRequirementRepository(),
       fakeProductSubcategoryRepository(),
       fakePermissionService("rental_company"),
+      fakeProjectRepository(),
     );
     await expect(service.createRequirement("user-1", RENTER_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,
+    );
+  });
+
+  it("rejects creating a requirement against a project in a different organization", async () => {
+    const service = buildService();
+    await expect(
+      service.createRequirement("user-1", OTHER_RENTER_ORG_ID, baseInput),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("rejects creating a requirement against a non-active project", async () => {
+    const service = new RequirementService(
+      fakeRequirementRepository(),
+      fakeProductSubcategoryRepository(),
+      fakePermissionService(),
+      fakeProjectRepository([
+        {
+          id: PROJECT_ID,
+          renter_organization_id: RENTER_ORG_ID,
+          project_code: "PRJ-2026-1",
+          project_type: "Bridge and Metro",
+          project_name: "Metro Bridge Foundation",
+          site_location: "Jaipur",
+          state: null,
+          district: null,
+          start_date: "2026-03-01",
+          end_date: null,
+          status: "completed",
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]),
+    );
+    await expect(service.createRequirement("user-1", RENTER_ORG_ID, baseInput)).rejects.toThrow(
+      ValidationError,
     );
   });
 
@@ -258,6 +380,19 @@ describe("RequirementService", () => {
     });
     expect(updated.projectName).toBe("Metro Line 3");
     expect(updated.quantity).toBe(2);
+  });
+
+  it("rejects moving the requested start date before the requirement's own validity date", async () => {
+    const service = buildService();
+    const requirement = await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    // baseInput's validityDate is 2026-02-15 — moving requestedStartDate to
+    // 2026-02-01 (only field in the payload) must still be checked against
+    // it, even though validityDate itself isn't part of this update.
+    await expect(
+      service.updateRequirement("user-1", RENTER_ORG_ID, requirement.id, {
+        requestedStartDate: "2026-02-01",
+      }),
+    ).rejects.toThrow(ValidationError);
   });
 
   it("rejects editing requirement fields once it is no longer open", async () => {
@@ -304,6 +439,7 @@ describe("RequirementService", () => {
       requirementRepository,
       fakeProductSubcategoryRepository(),
       fakePermissionService(),
+      fakeProjectRepository(),
     );
     await service.createRequirement("user-1", RENTER_ORG_ID, baseInput);
 
@@ -311,6 +447,7 @@ describe("RequirementService", () => {
       requirementRepository,
       fakeProductSubcategoryRepository(),
       fakePermissionService("rental_company"),
+      fakeProjectRepository(),
     );
     const discovered = await rentalCompanyService.discoverRequirements("user-2", RC_ORG_ID);
     expect(discovered).toHaveLength(1);

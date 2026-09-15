@@ -1,10 +1,12 @@
 "use client";
 
 import type {
+  CreateInviteResponse,
   OrganizationMember,
   PermissionCode,
   RoleWithPermissions,
 } from "@fleetip/contracts/organization";
+import { PERMISSION_ORGANIZATION_TYPES } from "@fleetip/contracts/organization";
 import {
   Badge,
   Button,
@@ -62,11 +64,6 @@ const PERMISSION_GROUPS: { label: string; codes: PermissionCode[] }[] = [
   { label: "Billing", codes: ["billing.manage", "billing.respond"] },
 ];
 
-const ROLE_OPTIONS = [
-  { value: "member", label: "Member" },
-  { value: "owner", label: "Owner" },
-];
-
 const MEMBER_STATUS_MAP: StatusMap = {
   active: { label: "active", tone: "success" },
   invited: { label: "invited", tone: "warning" },
@@ -79,17 +76,29 @@ export default function SettingsPage() {
   const [tab, setTab] = useState(searchParams.get("tab") ?? "organization");
 
   const organizationId = currentMembership?.organizationId;
+  const organizationTypeCode = currentMembership?.organization.organizationTypeCode;
   const canManageMembers = hasPermission("membership.manage");
   const canManageOrganization = hasPermission("organization.manage");
 
   const [members, setMembers] = useState<OrganizationMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [memberRoleError, setMemberRoleError] = useState<string | null>(null);
+  const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   const [roles, setRoles] = useState<RoleWithPermissions[] | null>(null);
   const [rolesError, setRolesError] = useState<string | null>(null);
+
+  const [roleDialogOpen, setRoleDialogOpen] = useState(false);
+  const [editingRole, setEditingRole] = useState<RoleWithPermissions | null>(null);
+  const [roleDialogError, setRoleDialogError] = useState<string | null>(null);
+  const [roleDialogSubmitting, setRoleDialogSubmitting] = useState(false);
+  const [selectedPermissions, setSelectedPermissions] = useState<Set<PermissionCode>>(new Set());
 
   async function loadMembers(orgId: string) {
     try {
@@ -99,24 +108,56 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadRoles(orgId: string) {
+    try {
+      setRoles((await apiClient.listRolesAndPermissions(orgId)) as RoleWithPermissions[]);
+    } catch (err) {
+      setRolesError(err instanceof Error ? err.message : "Failed to load roles");
+    }
+  }
+
   useEffect(() => {
     if (!organizationId || tab !== "members" || !canManageMembers || members || membersError)
       return;
     void loadMembers(organizationId);
   }, [organizationId, tab, canManageMembers, members, membersError]);
 
+  // Both the Members tab (role picker per member) and the Roles & access
+  // tab need the role list — fetched once, shared by both. Only an
+  // organization.manage holder can list it; a membership.manage-only role
+  // (a custom role could exist without organization.manage) simply won't
+  // get a role picker — see docs/decisions.md.
   useEffect(() => {
-    if (!organizationId || tab !== "roles" || !canManageOrganization || roles || rolesError) return;
-    void (async () => {
-      try {
-        setRoles(
-          (await apiClient.listRolesAndPermissions(organizationId)) as RoleWithPermissions[],
-        );
-      } catch (err) {
-        setRolesError(err instanceof Error ? err.message : "Failed to load roles");
-      }
-    })();
+    if (
+      !organizationId ||
+      (tab !== "members" && tab !== "roles") ||
+      !canManageOrganization ||
+      roles ||
+      rolesError
+    )
+      return;
+    void loadRoles(organizationId);
   }, [organizationId, tab, canManageOrganization, roles, rolesError]);
+
+  async function handleMemberRoleChange(membershipId: string, roleId: string) {
+    if (!organizationId) return;
+    setMemberRoleError(null);
+    setUpdatingMemberId(membershipId);
+    try {
+      const updated = (await apiClient.updateMemberRole(
+        organizationId,
+        membershipId,
+        roleId,
+      )) as OrganizationMember;
+      setMembers(
+        (current) => current?.map((m) => (m.id === membershipId ? updated : m)) ?? current,
+      );
+    } catch (err) {
+      setMemberRoleError(err instanceof Error ? err.message : "Failed to change this member's role");
+    } finally {
+      setUpdatingMemberId(null);
+    }
+  }
 
   async function handleInviteSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -125,21 +166,114 @@ export default function SettingsPage() {
     const form = new FormData(event.currentTarget);
     setInviteSubmitting(true);
     try {
-      await apiClient.inviteMember(organizationId, {
-        email: String(form.get("email") ?? ""),
-        roleName: String(form.get("roleName") ?? "member") as "owner" | "member",
-      });
-      setInviteOpen(false);
-      await loadMembers(organizationId);
+      const roleId = String(form.get("roleId") ?? "");
+      const result = (await apiClient.createInvite(organizationId, roleId)) as CreateInviteResponse;
+      setInviteLink(result.link);
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Failed to invite member");
+      setInviteError(err instanceof Error ? err.message : "Failed to create invite link");
     } finally {
       setInviteSubmitting(false);
     }
   }
 
+  async function handleCopyInviteLink() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2000);
+    } catch {
+      // ponytail: clipboard access can be denied by the browser; the link
+      // text is still visible and selectable, so this is a soft failure.
+    }
+  }
+
+  function closeInviteDialog() {
+    setInviteOpen(false);
+    setInviteError(null);
+    setInviteLink(null);
+    setInviteCopied(false);
+  }
+
+  function openCreateRoleDialog() {
+    setEditingRole(null);
+    setSelectedPermissions(new Set());
+    setRoleDialogError(null);
+    setRoleDialogOpen(true);
+  }
+
+  function openEditRoleDialog(role: RoleWithPermissions) {
+    setEditingRole(role);
+    setSelectedPermissions(new Set(role.permissions));
+    setRoleDialogError(null);
+    setRoleDialogOpen(true);
+  }
+
+  function closeRoleDialog() {
+    setRoleDialogOpen(false);
+    setEditingRole(null);
+    setRoleDialogError(null);
+  }
+
+  function togglePermission(code: PermissionCode) {
+    setSelectedPermissions((current) => {
+      const next = new Set(current);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
+  async function handleRoleDialogSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId) return;
+    setRoleDialogError(null);
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
+    const permissions = Array.from(selectedPermissions);
+    setRoleDialogSubmitting(true);
+    try {
+      if (editingRole) {
+        await apiClient.updateRole(organizationId, editingRole.id, { name, permissions });
+      } else {
+        await apiClient.createRole(organizationId, { name, permissions });
+      }
+      setRoles(null);
+      setRolesError(null);
+      await loadRoles(organizationId);
+      closeRoleDialog();
+    } catch (err) {
+      setRoleDialogError(err instanceof Error ? err.message : "Failed to save this role");
+    } finally {
+      setRoleDialogSubmitting(false);
+    }
+  }
+
+  async function handleDeleteRole(role: RoleWithPermissions) {
+    if (!organizationId) return;
+    if (!window.confirm(`Delete the "${role.roleName}" role? This can't be undone.`)) return;
+    try {
+      await apiClient.deleteRole(organizationId, role.id);
+      setRoles((current) => current?.filter((r) => r.id !== role.id) ?? current);
+    } catch (err) {
+      setRolesError(err instanceof Error ? err.message : "Failed to delete this role");
+    }
+  }
+
   if (!session || !currentMembership) return null;
   const { organization, roleName, permissions } = currentMembership;
+
+  // A permission only ever applies to certain organization types (see
+  // PERMISSION_ORGANIZATION_TYPES) — a custom role for a Renter offering
+  // equipment.manage (rental_company-only) could never do anything with it.
+  const assignablePermissionGroups = PERMISSION_GROUPS.map((group) => ({
+    ...group,
+    codes: group.codes.filter((code) =>
+      organizationTypeCode ? PERMISSION_ORGANIZATION_TYPES[code].includes(organizationTypeCode) : false,
+    ),
+  })).filter((group) => group.codes.length > 0);
+
+  const inviteRoleOptions = (roles ?? []).map((role) => ({ value: role.id, label: role.roleName }));
 
   return (
     <div className="flex flex-col gap-4">
@@ -205,40 +339,55 @@ export default function SettingsPage() {
             ) : !members ? (
               <LoadingState label="Loading members…" />
             ) : (
-              <Table>
-                <Thead>
-                  <Tr>
-                    <Th>User</Th>
-                    <Th>Role</Th>
-                    <Th>Status</Th>
-                    <Th>Member since</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {members.map((member) => (
-                    <Tr key={member.id}>
-                      <Td>
-                        <div className="flex flex-col">
-                          <span className="font-medium text-ink">{member.displayName}</span>
-                          <span className="text-xs text-meta">{member.email}</span>
-                        </div>
-                      </Td>
-                      <Td className="capitalize">{member.roleName}</Td>
-                      <Td>
-                        <StatusBadge status={member.status} map={MEMBER_STATUS_MAP} />
-                      </Td>
-                      <Td className="font-mono">{formatDate(member.createdAt)}</Td>
+              <>
+                {memberRoleError && <p className="mb-2 text-sm text-danger">{memberRoleError}</p>}
+                <Table>
+                  <Thead>
+                    <Tr>
+                      <Th>User</Th>
+                      <Th>Role</Th>
+                      <Th>Status</Th>
+                      <Th>Member since</Th>
                     </Tr>
-                  ))}
-                </Tbody>
-              </Table>
+                  </Thead>
+                  <Tbody>
+                    {members.map((member) => (
+                      <Tr key={member.id}>
+                        <Td>
+                          <div className="flex flex-col">
+                            <span className="font-medium text-ink">{member.displayName}</span>
+                            <span className="text-xs text-meta">{member.email}</span>
+                          </div>
+                        </Td>
+                        <Td className="capitalize">
+                          {roles ? (
+                            <Select
+                              aria-label={`Role for ${member.displayName}`}
+                              options={inviteRoleOptions}
+                              value={member.roleId}
+                              disabled={updatingMemberId === member.id}
+                              onChange={(e) => void handleMemberRoleChange(member.id, e.target.value)}
+                            />
+                          ) : (
+                            member.roleName
+                          )}
+                        </Td>
+                        <Td>
+                          <StatusBadge status={member.status} map={MEMBER_STATUS_MAP} />
+                        </Td>
+                        <Td className="font-mono">{formatDate(member.createdAt)}</Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </>
             )}
           </Card>
           {canManageMembers && (
             <p className="text-xs text-meta-light">
-              Inviting requires the invitee to already have a FleetIP account (looked up by email) —
-              there is no email-delivery/signup-invite flow yet. See the frontend/backend gap
-              report.
+              Generate a link and share it with whoever you want to invite — they don&apos;t need a
+              FleetIP account first. Sharing by email isn&apos;t automated yet, so send the link
+              yourself for now. Changing a member&apos;s role here takes effect immediately.
             </p>
           )}
         </div>
@@ -279,7 +428,14 @@ export default function SettingsPage() {
           </Card>
 
           <Card>
-            <h2 className="mb-2 text-sm font-semibold text-ink">All roles in this organization</h2>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-ink">All roles in this organization</h2>
+              {canManageOrganization && (
+                <Button size="sm" variant="secondary" onClick={openCreateRoleDialog}>
+                  New role
+                </Button>
+              )}
+            </div>
             {!canManageOrganization ? (
               <EmptyState
                 title="Not available to your role"
@@ -292,17 +448,37 @@ export default function SettingsPage() {
             ) : (
               <div className="flex flex-col gap-3">
                 {roles.map((role) => (
-                  <div key={role.roleName} className="border-b border-border pb-3 last:border-0">
-                    <Badge tone="neutral" className="mb-1.5 capitalize">
-                      {role.roleName}
-                    </Badge>
-                    <div className="flex flex-wrap gap-1.5">
-                      {role.permissions.map((code) => (
-                        <Badge key={code} tone="neutral">
-                          {code}
-                        </Badge>
-                      ))}
+                  <div
+                    key={role.id}
+                    className="flex items-start justify-between gap-3 border-b border-border pb-3 last:border-0"
+                  >
+                    <div>
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        <Badge tone="neutral">{role.roleName}</Badge>
+                        {role.isBuiltin && <Badge tone="info">built-in</Badge>}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {role.permissions.length === 0 ? (
+                          <span className="text-xs text-meta-light">No permissions granted</span>
+                        ) : (
+                          role.permissions.map((code) => (
+                            <Badge key={code} tone="neutral">
+                              {code}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
                     </div>
+                    {!role.isBuiltin && (
+                      <div className="flex shrink-0 gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => openEditRoleDialog(role)}>
+                          Edit
+                        </Button>
+                        <Button size="sm" variant="secondary" onClick={() => void handleDeleteRole(role)}>
+                          Delete
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -326,28 +502,91 @@ export default function SettingsPage() {
         </Card>
       )}
 
+      <Dialog open={inviteOpen} onClose={closeInviteDialog} title="Invite member">
+        {inviteLink ? (
+          <div className="flex flex-col gap-4 text-left">
+            <p className="text-xs text-meta">
+              Share this link with the person you&apos;re inviting. It works whether or not they
+              already have a FleetIP account, and expires in 7 days.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={inviteLink} onFocus={(e) => e.currentTarget.select()} />
+              <Button type="button" variant="secondary" onClick={() => void handleCopyInviteLink()}>
+                {inviteCopied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" onClick={closeInviteDialog}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4 text-left">
+            {inviteError && <p className="text-sm text-danger">{inviteError}</p>}
+            <p className="text-xs text-meta">
+              Generates a one-time link for this role. Anyone with the link can join your
+              organization — share it only with who you intend to invite.
+            </p>
+            {inviteRoleOptions.length === 0 ? (
+              <p className="text-sm text-meta-light">
+                No roles are available to invite into yet — visit Roles &amp; access to create one
+                (requires organization.manage).
+              </p>
+            ) : (
+              <Select label="Role" name="roleId" options={inviteRoleOptions} />
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="secondary" onClick={closeInviteDialog}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={inviteSubmitting || inviteRoleOptions.length === 0}>
+                {inviteSubmitting ? "Generating…" : "Generate invite link"}
+              </Button>
+            </div>
+          </form>
+        )}
+      </Dialog>
+
       <Dialog
-        open={inviteOpen}
-        onClose={() => {
-          setInviteOpen(false);
-          setInviteError(null);
-        }}
-        title="Invite member"
+        open={roleDialogOpen}
+        onClose={closeRoleDialog}
+        title={editingRole ? `Edit "${editingRole.roleName}"` : "New role"}
       >
-        <form onSubmit={handleInviteSubmit} className="flex flex-col gap-4 text-left">
-          {inviteError && <p className="text-sm text-danger">{inviteError}</p>}
-          <p className="text-xs text-meta">
-            The invitee must already have a FleetIP account — invites aren&apos;t sent by email yet,
-            this adds an existing user to your organization directly.
-          </p>
-          <Input label="Email" name="email" type="email" required />
-          <Select label="Role" name="roleName" options={ROLE_OPTIONS} defaultValue="member" />
+        <form onSubmit={handleRoleDialogSubmit} className="flex flex-col gap-4 text-left">
+          {roleDialogError && <p className="text-sm text-danger">{roleDialogError}</p>}
+          <Input label="Role name" name="name" defaultValue={editingRole?.roleName} required />
+          <div>
+            <span className="mb-1.5 block text-xs font-medium text-ink-muted">Permissions</span>
+            <div className="flex max-h-72 flex-col gap-3 overflow-y-auto rounded-control border border-border-strong p-3">
+              {assignablePermissionGroups.map((group) => (
+                <div key={group.label}>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-meta">
+                    {group.label}
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {group.codes.map((code) => (
+                      <label key={code} className="flex items-center gap-2 text-sm text-ink">
+                        <input
+                          type="checkbox"
+                          checked={selectedPermissions.has(code)}
+                          onChange={() => togglePermission(code)}
+                          className="h-3.5 w-3.5 rounded-xs border-border-strong accent-accent"
+                        />
+                        {code}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="secondary" onClick={() => setInviteOpen(false)}>
+            <Button type="button" variant="secondary" onClick={closeRoleDialog}>
               Cancel
             </Button>
-            <Button type="submit" disabled={inviteSubmitting}>
-              {inviteSubmitting ? "Inviting…" : "Invite member"}
+            <Button type="submit" disabled={roleDialogSubmitting}>
+              {roleDialogSubmitting ? "Saving…" : editingRole ? "Save changes" : "Create role"}
             </Button>
           </div>
         </form>
