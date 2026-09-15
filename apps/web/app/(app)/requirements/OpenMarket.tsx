@@ -38,6 +38,7 @@ interface Loaded {
   activeAuctions: Map<string, Auction>;
   subcategoriesById: Map<string, ProductSubcategory>;
   stockedSubcategoryIds: Set<string>;
+  machineCountBySubcategory: Map<string, number>;
 }
 
 export function OpenMarket({
@@ -98,11 +99,14 @@ export function OpenMarket({
       ]);
 
       const productsById = new Map(products.map((p) => [p.id, p]));
-      const stockedSubcategoryIds = new Set(
-        machines
-          .map((m) => productsById.get(m.productId)?.productSubcategoryId)
-          .filter((id): id is string => Boolean(id)),
-      );
+      const subcategoryIdsByMachine = machines
+        .map((m) => productsById.get(m.productId)?.productSubcategoryId)
+        .filter((id): id is string => Boolean(id));
+      const stockedSubcategoryIds = new Set(subcategoryIdsByMachine);
+      const machineCountBySubcategory = new Map<string, number>();
+      for (const id of subcategoryIdsByMachine) {
+        machineCountBySubcategory.set(id, (machineCountBySubcategory.get(id) ?? 0) + 1);
+      }
 
       setData({
         requirements,
@@ -110,6 +114,7 @@ export function OpenMarket({
         activeAuctions: new Map(auctionEntries.filter((e): e is readonly [string, Auction] => e !== null)),
         subcategoriesById: new Map(subcategoryLists.flat().map((s) => [s.id, s])),
         stockedSubcategoryIds,
+        machineCountBySubcategory,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load open market");
@@ -312,6 +317,15 @@ export function OpenMarket({
         const subcategoryName = req
           ? (data.subcategoriesById.get(req.productSubcategoryId)?.name ?? "requirement")
           : "requirement";
+        // Only meaningful for a role that can actually see the org's fleet
+        // (equipment.manage) — omitted rather than shown as "0" for anyone
+        // else, same as the "only equipment I stock" filter above.
+        const machineCount = req && canListMachines ? (data.machineCountBySubcategory.get(req.productSubcategoryId) ?? 0) : null;
+        // Locked to the requirement's own unit when it has one — see
+        // QuotationResponseService.submitResponse; the server enforces this
+        // regardless, this just avoids showing a picker whose choice would
+        // be silently overridden.
+        const lockedUnit = req?.expectedDurationUnit ?? null;
         return (
           <Dialog
             open={Boolean(respondingId)}
@@ -328,6 +342,12 @@ export function OpenMarket({
                       : ""}
                   </p>
                 )}
+                {machineCount != null && machineCount < req.quantity && (
+                  <p className="mb-3 text-sm text-warning">
+                    You have {machineCount} matching machine{machineCount === 1 ? "" : "s"} registered —
+                    this requirement needs {req.quantity}.
+                  </p>
+                )}
                 <form onSubmit={(e) => void handleRespond(e, req.id)} className="flex flex-col gap-3 text-left">
                   <div className="flex items-center gap-4">
                     <label className="flex items-center gap-2 text-sm text-ink-muted">
@@ -341,16 +361,24 @@ export function OpenMarket({
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Input label="Rate" name="indicativeRate" type="number" step="0.01" />
-                    <Select
-                      label="Unit"
-                      name="indicativeRateUnit"
-                      options={[
-                        { value: "shift", label: "Shift" },
-                        { value: "day", label: "Day" },
-                        { value: "week", label: "Week" },
-                        { value: "month", label: "Month" },
-                      ]}
-                    />
+                    {lockedUnit ? (
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs font-medium text-ink-muted">Unit</span>
+                        <p className="flex h-[34px] items-center text-sm text-ink capitalize">{lockedUnit}</p>
+                        <input type="hidden" name="indicativeRateUnit" value={lockedUnit} />
+                      </div>
+                    ) : (
+                      <Select
+                        label="Unit"
+                        name="indicativeRateUnit"
+                        options={[
+                          { value: "shift", label: "Shift" },
+                          { value: "day", label: "Day" },
+                          { value: "week", label: "Week" },
+                          { value: "month", label: "Month" },
+                        ]}
+                      />
+                    )}
                   </div>
                   <Input label="Notes" name="notes" />
                   <div className="flex justify-end gap-2 pt-1">

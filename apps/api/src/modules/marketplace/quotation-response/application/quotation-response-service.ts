@@ -63,7 +63,13 @@ export class QuotationResponseService {
       rentalCompanyOrganizationId,
       status: input.status,
       indicativeRate: input.indicativeRate,
-      indicativeRateUnit: input.indicativeRateUnit,
+      // Locked to the requirement's own expectedDurationUnit when it has
+      // one, never trusting the caller for it — otherwise responses to the
+      // same requirement can land in different units (e.g. 6000/day vs.
+      // 150000/month), making the Renter's "lowest"/"spread" comparison
+      // meaningless. Falls back to the caller's own choice only when the
+      // requirement didn't specify a unit to lock to.
+      indicativeRateUnit: requirement.expected_duration_unit ?? input.indicativeRateUnit,
       notes: input.notes,
     });
     if (isFirstResponse) {

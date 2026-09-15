@@ -288,6 +288,26 @@ describe("QuotationResponseService", () => {
     expect(response.indicativeRate).toBe(1200);
   });
 
+  it("locks the response's rate unit to the requirement's own expectedDurationUnit, ignoring the caller's choice", async () => {
+    const service = buildService([requirement({ expected_duration_unit: "month" })]);
+    const response = await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+      status: "interested",
+      indicativeRate: 1200,
+      indicativeRateUnit: "day",
+    });
+    expect(response.indicativeRateUnit).toBe("month");
+  });
+
+  it("falls back to the caller's chosen unit when the requirement has no expectedDurationUnit", async () => {
+    const service = buildService();
+    const response = await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+      status: "interested",
+      indicativeRate: 1200,
+      indicativeRateUnit: "day",
+    });
+    expect(response.indicativeRateUnit).toBe("day");
+  });
+
   it("upserts on resubmission instead of creating a duplicate", async () => {
     const responseRepository = fakeQuotationResponseRepository();
     const service = new QuotationResponseService(

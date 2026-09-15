@@ -319,6 +319,45 @@ overlays the page regardless of scroll position, so the scroll problem doesn't e
 stack vertically (`flex-col`), which is what `Input`/`Select`'s `mb-3` was already meant for — the
 misalignment doesn't exist there either. `Card` import was dropped as no longer used in this file.
 
+## Open Market response: rate unit could float freely, quantity vs. stock had no signal
+
+Client raised two questions from a screenshot of the response dialog:
+
+**"Do we allow the user to change the unit of rate while responding — is this a good approach?"**
+No — checked, and it was a live bug, not just a design smell. The Requirement detail page's "Lowest
+indicative"/"Rate spread"/"Lowest" badge all compared `indicativeRate` as a raw number across every
+Rental Company's response, with zero unit normalization: one company quoting 6000/day and another
+quoting 150000/month would show the 150000 as "not lowest" even though its per-day equivalent is
+actually cheaper. Client chose to lock the response's unit to the requirement's own
+`expectedDurationUnit` rather than normalize the comparison math. Implemented in
+`QuotationResponseService.submitResponse`: when the requirement specifies a duration unit, that value
+is used unconditionally, server-side, ignoring whatever the caller submitted — never trusting the
+client for it, even though the frontend also hides the picker and shows the locked unit as read-only
+in that case. Falls back to the caller's own choice only when the requirement never specified a unit
+(so responses to that kind of requirement can still land in different units) — the requirement
+detail page's comparison stats account for this residual case by refusing to compute "lowest"/"spread"
+across a mixed-unit response set, showing "Mixed units" instead of a misleading number.
+
+**"The renter is asking for 3 machines but the rental company only has one — isn't there supposed to
+be a warning?"** Confirmed: no check existed, and more fundamentally `Requirement.quantity` isn't
+wired to anything downstream at all — `Rental`/`CommercialQuotation` are both single-machine records
+with no quantity concept, so there's no defined answer today for how a quantity > 1 requirement
+actually gets fulfilled (one quotation covering all of them vs. several separate ones). Client chose
+the lightweight fix, not designing real fulfillment tracking: the response dialog now shows the
+responding Rental Company their own registered machine count for that subcategory next to the form
+("You have 1 matching machine registered — this requirement needs 3") whenever it's short of the
+requirement's quantity — informational only, doesn't block submission. Gated behind
+`equipment.manage` like the existing "only equipment I stock" filter on this same page, for the same
+reason: a role that can't see the org's fleet gets no false "0" reading.
+
+**"Why do we need a 'Not interested' button — if a Rental Company isn't interested, they just won't
+respond?"** Answered, no code change: it does two real things today — it moves the requirement out of
+*that* company's own "Needs response" queue (`hasResponse` on the Open Market filters doesn't
+distinguish interested from not_interested), and it gives the Renter an explicit "seen and declined"
+signal in their response list, distinct from "no one's discovered it yet" — genuine market feedback a
+silent non-response can't provide. Left as-is; flagged as a legitimate simplification to cut later if
+wanted, not a bug.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

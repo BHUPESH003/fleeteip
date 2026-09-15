@@ -127,7 +127,18 @@ export default function RequirementDetailPage() {
     activity,
   } = data;
   const interested = responses.filter((r) => r.status === "interested");
-  const rates = interested.map((r) => r.indicativeRate).filter((r): r is number => r != null);
+  // "Lowest"/"spread" only mean something when every response is quoted in
+  // the same unit — comparing 6000/day against 150000/month as raw numbers
+  // is meaningless. Submitting a response now locks indicativeRateUnit to
+  // the requirement's own expectedDurationUnit when it has one, so this
+  // mismatch shouldn't come up in practice — but a requirement with no
+  // expectedDurationUnit still leaves the unit to each responder's choice.
+  const rateUnits = new Set(interested.map((r) => r.indicativeRateUnit).filter(Boolean));
+  const mixedRateUnits = rateUnits.size > 1;
+  const commonRateUnit = rateUnits.size === 1 ? [...rateUnits][0] : null;
+  const rates = mixedRateUnits
+    ? []
+    : interested.map((r) => r.indicativeRate).filter((r): r is number => r != null);
   const lowestRate = rates.length ? Math.min(...rates) : null;
   const rateSpreadPct =
     rates.length > 1
@@ -240,8 +251,14 @@ export default function RequirementDetailPage() {
               value={String(interested.length)}
               note={`${responses.length - interested.length} not interested`}
             />
-            <Stat label="Rate spread" value={rateSpreadPct != null ? `${rateSpreadPct}%` : "—"} />
-            <Stat label="Lowest indicative" value={lowestRate != null ? String(lowestRate) : "—"} />
+            <Stat
+              label="Rate spread"
+              value={rateSpreadPct != null ? `${rateSpreadPct}%` : mixedRateUnits ? "Mixed units" : "—"}
+            />
+            <Stat
+              label="Lowest indicative"
+              value={lowestRate != null ? `${lowestRate} / ${commonRateUnit}` : mixedRateUnits ? "Mixed units" : "—"}
+            />
           </div>
 
           <Card padding={responses.length === 0 ? "md" : "none"}>
