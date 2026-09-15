@@ -149,21 +149,33 @@ export class RentalService {
     return toRental(record);
   }
 
-  async getRental(
-    userId: string,
-    rentalCompanyOrganizationId: string,
-    rentalId: string,
-  ): Promise<Rental> {
-    await this.permissionService.requirePermission(
-      userId,
-      rentalCompanyOrganizationId,
-      "rental.manage",
-    );
-    const record = await this.rentalRepository.findById(rentalId);
-    if (!record) {
-      throw new NotFoundError("Rental not found");
+  // Single-rental lookup — mirrors listRentals' organization-type branch,
+  // which this was missing entirely (a Renter has no rental.manage on any
+  // organization, rental_company-only per PERMISSION_ORGANIZATION_TYPES, so
+  // this always 404'd for a Renter regardless of role/permissions — not a
+  // custom-role edge case, every Renter viewing a Transport/Logsheet detail
+  // page for their own rental hit this).
+  async getRental(userId: string, organizationId: string, rentalId: string): Promise<Rental> {
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      await this.permissionService.requirePermission(userId, organizationId, "rental.respond");
+      const record = await this.rentalRepository.findById(rentalId);
+      if (!record || record.renter_organization_id !== organizationId) {
+        throw new NotFoundError("Rental not found in this organization");
+      }
+      const [machine, rentalCompany] = await Promise.all([
+        this.machineRepository.findById(record.machine_id),
+        this.organizationRepository.findById(record.rental_company_organization_id),
+      ]);
+      return toRental(record, {
+        machineAssetCode: machine?.asset_code ?? null,
+        rentalCompanyOrganizationName: rentalCompany?.name ?? null,
+      });
     }
-    if (record.rental_company_organization_id !== rentalCompanyOrganizationId) {
+
+    await this.permissionService.requirePermission(userId, organizationId, "rental.manage");
+    const record = await this.rentalRepository.findById(rentalId);
+    if (!record || record.rental_company_organization_id !== organizationId) {
       throw new NotFoundError("Rental not found in this organization");
     }
     return toRental(record);

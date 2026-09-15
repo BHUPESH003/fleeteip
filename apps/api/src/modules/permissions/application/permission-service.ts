@@ -55,4 +55,18 @@ export class PermissionService {
       throw new ForbiddenError();
     }
   }
+
+  // Weaker than requirePermission — for data that belongs to the member
+  // themselves within the organization (e.g. their own notifications
+  // inbox), not to a specific manage/respond capability. Still respects
+  // organization suspension; never checks a permission code against the
+  // role, so it doesn't matter which (if any) permissions a custom role
+  // grants — every active member passes.
+  async requireActiveMembership(userId: string, organizationId: string): Promise<void> {
+    const membership = await this.membershipRepository.findActiveMembership(userId, organizationId);
+    if (!membership) throw new ForbiddenError();
+
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!organization || organization.status === "suspended") throw new ForbiddenError();
+  }
 }

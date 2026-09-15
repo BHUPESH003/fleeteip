@@ -36,6 +36,7 @@ const RC_ORG_ID = "org-rental-company";
 // organization's rental behind NotFoundError.
 const OTHER_RC_ORG_ID = "org-other-rental-company";
 const RENTER_ORG_ID = "org-renter";
+const OTHER_RENTER_ORG_ID = "org-other-renter";
 const MACHINE_ID = "machine-1";
 const RETIRED_MACHINE_ID = "machine-retired";
 
@@ -85,6 +86,7 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
       [RC_ORG_ID]: organizationTypeCode,
       [OTHER_RC_ORG_ID]: "rental_company",
       [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
     }),
   );
 }
@@ -320,7 +322,11 @@ function buildService(machines: MachineRecord[] = [machine()], hasConflictingMai
   return new RentalService(
     fakeRentalRepository(),
     fakeMachineRepository(machines),
-    fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
+    fakeOrganizationTypeRepository({
+      [RENTER_ORG_ID]: "renter",
+      [OTHER_RENTER_ORG_ID]: "renter",
+      [RC_ORG_ID]: "rental_company",
+    }),
     fakePermissionService(),
     fakeMaintenanceRepository(hasConflictingMaintenance),
     fakeNotificationService(),
@@ -422,6 +428,31 @@ describe("RentalService", () => {
     const service = buildService();
     const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
     await expect(service.getRental("user-2", OTHER_RC_ORG_ID, rental.id)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it("lets a Renter view a single rental of its own, resolving machine/company names it has no permission to look up itself", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+
+    const fetched = await service.getRental("user-2", RENTER_ORG_ID, rental.id);
+
+    expect(fetched.id).toBe(rental.id);
+    expect(fetched.machineAssetCode).toBe("EXC-001");
+    expect(fetched.rentalCompanyOrganizationName).toBe("Test Org");
+  });
+
+  it("hides another Renter's rental behind NotFoundError instead of the Rental Company branch's check", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, {
+      ...baseInput,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+    await expect(service.getRental("user-2", OTHER_RENTER_ORG_ID, rental.id)).rejects.toThrow(
       NotFoundError,
     );
   });

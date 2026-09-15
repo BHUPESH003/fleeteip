@@ -179,4 +179,42 @@ describe("PermissionService", () => {
       false,
     );
   });
+
+  it("requireActiveMembership passes for any active member, even one with a permissionless role", async () => {
+    const membership = { id: "m7", status: "active", role_id: MEMBER_ROLE_ID };
+    const service = new PermissionService(
+      fakeMembershipRepository(membership),
+      fakeRoleRepository(),
+      fakeOrganizationRepository(),
+    );
+
+    await expect(
+      service.requireActiveMembership("user-7", "org-1"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("requireActiveMembership rejects a caller with no active membership", async () => {
+    const service = new PermissionService(
+      fakeMembershipRepository(undefined),
+      fakeRoleRepository(),
+      fakeOrganizationRepository(),
+    );
+
+    await expect(service.requireActiveMembership("user-8", "org-1")).rejects.toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("requireActiveMembership rejects once the organization is suspended", async () => {
+    const membership = { id: "m9", status: "active", role_id: OWNER_ROLE_ID };
+    const service = new PermissionService(
+      fakeMembershipRepository(membership),
+      fakeRoleRepository(),
+      fakeOrganizationRepository("rental_company", "suspended"),
+    );
+
+    await expect(service.requireActiveMembership("user-9", "org-1")).rejects.toThrow(
+      ForbiddenError,
+    );
+  });
 });

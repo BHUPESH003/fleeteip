@@ -142,6 +142,69 @@ authorization model despite the UI implying `member` was a usable, lesser role.
   degrades to disabled). Today only the built-in `"owner"` role ever holds both, so this doesn't yet
   bite in practice; revisit if a real "team admin without org admin" role is ever needed.
 
+## Custom roles exposed a systemic gap: ancillary permissions blocking whole pages
+
+Client-reported, with screenshots: a member whose custom role held real, meaningful permissions
+(`quotation.manage`, `rental.manage`, `rfq.respond`, `auction.participate`) still hit
+`403`s and a page-blocking "You do not have permission to perform this action" banner on Quotations,
+plus a silently-broken notification bell everywhere. Root cause was two independent, real bugs that
+custom roles made visible for the first time — previously every real user was either "owner" (every
+permission, nothing ever missing) or entirely absent, so "has permission A but not B" had no live
+path to hit:
+
+- **Notifications required `organization.manage`.** A member's own organization's notifications are
+  a personal/team inbox, not admin configuration — requiring the broadest admin permission just to
+  see them meant no one but an owner (or a custom role deliberately granted the whole org) ever could.
+  Fixed with a new, weaker `PermissionService.requireActiveMembership` (any active member, any role,
+  still respects org suspension) used by `NotificationService.list`/`markRead`/`markAllRead` instead
+  of `requirePermission(..., "organization.manage")`.
+- **`RentalService.getRental` had no Renter branch at all** — it always required `rental.manage`,
+  which is `rental_company`-only per `PERMISSION_ORGANIZATION_TYPES`, so it was literally impossible
+  for any Renter to ever succeed, regardless of role or permissions. This wasn't a custom-role edge
+  case — every Renter viewing `/transport/:id` or `/logsheets/:id` for their own rental hit it. Fixed
+  to branch by the caller's own organization type, mirroring `listRentals`'s existing branch: a
+  rental_company caller needs `rental.manage`, a renter caller needs `rental.respond` and gets the
+  machine/rental-company names resolved server-side (same "look up server-side, don't grant the
+  underlying permission" shape `listRentals` already used).
+
+Beyond those two, a broader frontend pattern was audited and fixed across 16 pages: several pages
+fetch multiple resources via `Promise.all`, where one resource requires a **different** backend
+permission than the page's actual purpose. Previously this was invisible (the caller was always
+either fully-permissioned or fully absent); with custom roles it's now a first-class scenario. A
+role with `quotation.manage` but not `equipment.manage` would have the *whole* Quotations page's
+`Promise.all` reject on the ancillary `listMachines` call, setting a page-level error and blocking
+everything — including the parts the role genuinely has permission for.
+
+Fix applied uniformly: each ancillary call is gated behind the actual `hasPermission(...)` check for
+the permission it needs (never assumed from the page's own primary permission), defaulting to an
+empty result (`Promise.resolve([])` / `null`) when absent, with the render already tolerant (or made
+tolerant) of that absence — `?? "—"` placeholders, omitted KPI tiles/cards rather than misleading
+zeros, matching the pattern already established in this codebase for missing machine-asset-code
+lookups. Files fixed: `quotations/page.tsx`, `quotations/[id]/page.tsx`, `maintenance/page.tsx`,
+`maintenance/[id]/page.tsx`, `transport/page.tsx`, `transport/[id]/page.tsx`, `logsheets/page.tsx`,
+`logsheets/[id]/page.tsx`, `catalogue/page.tsx`, `catalogue/products/[id]/page.tsx`,
+`machines/page.tsx`, `machines/[id]/page.tsx`, `billing/page.tsx`, `rentals/[id]/page.tsx`,
+`requirements/[id]/page.tsx`, `requirements/OpenMarket.tsx`, `auctions/page.tsx`,
+`dashboard/RentalCompanyDashboard.tsx`, `dashboard/RenterDashboard.tsx`. The two dashboards (the
+app's home pages) needed the most care: each aggregates 5+ independently-permissioned sections with
+no single "primary" permission, so KPI tiles and cards for a section the caller can't see are
+**omitted**, not zeroed — "Machines: 0" would misreport "no permission" as "no fleet."
+
+Two agent-caught regressions along the way, worth naming: (1) `transport/[id]/page.tsx` and
+`logsheets/[id]/page.tsx` originally gated loading on `if (!record || !rental)` — with `rental`
+permission-gated to always `null`, that would have hung on "Loading…" forever instead of rendering;
+fixed to gate only on the page's own primary resource. (2) `auctions/page.tsx`'s rental-company
+participant panel doesn't `return` early on its ancillary-call error, so the old code would have
+shown a spurious error banner *alongside* an otherwise fully-working, already-rendered auction detail
+— fixed the same way as the others (gate the call, don't let it throw) rather than suppressing the
+error display, which would have hidden a genuine failure elsewhere.
+
+**Lesson for future pages** (recorded in matha as a danger zone): before writing `Promise.all([...])`
+across multiple `apiClient` calls, check whether every call requires the *same* backend permission as
+the page's own primary purpose. If not, gate the mismatched one behind its own `hasPermission(...)`
+check with a graceful empty/null fallback — never assume a page's own permission covers every
+resource it happens to also fetch.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.
