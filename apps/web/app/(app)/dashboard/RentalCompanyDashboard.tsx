@@ -245,7 +245,7 @@ export function RentalCompanyDashboard() {
         state: `Overdue ${overdueDays}d`,
         tone: "danger",
         actionLabel: "Record",
-        href: "/billing",
+        href: `/billing?invoiceId=${invoice.id}`,
       };
     }),
     ...awaitingAcceptance.map((q): AttentionItem => ({
@@ -255,7 +255,7 @@ export function RentalCompanyDashboard() {
       state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
       tone: "warning",
       actionLabel: "Follow up",
-      href: "/quotations",
+      href: `/quotations/${q.id}`,
     })),
     ...maintenanceMachines.map((m): AttentionItem => ({
       ref: m.assetCode,
@@ -264,7 +264,7 @@ export function RentalCompanyDashboard() {
       state: "Blocking",
       tone: "danger",
       actionLabel: "Update",
-      href: "/machines",
+      href: `/machines/${m.id}`,
     })),
     ...rentals
       .filter(
@@ -281,7 +281,7 @@ export function RentalCompanyDashboard() {
         state: `${daysUntil(r.endDate as string)}d`,
         tone: "warning",
         actionLabel: "Plan",
-        href: "/rentals",
+        href: `/rentals/${r.id}`,
       })),
     ...auctionsSelected.map((a): AttentionItem => ({
       ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,

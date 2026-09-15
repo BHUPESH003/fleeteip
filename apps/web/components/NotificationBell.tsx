@@ -11,15 +11,19 @@ import { useInterval } from "../lib/use-interval";
 
 const UNREAD_POLL_INTERVAL_MS = 25_000;
 
-// No per-id detail route exists for these resources yet — link to the
-// list page that already shows them rather than inventing new routes just
-// for notification click-through.
+// Every resource type a notify() call actually sets relatedResourceType to
+// (see docs/decisions.md) gets a real deep link — most have a plain [id]
+// detail route; Auction and Billing invoices don't have one (they're
+// selected via a query param on their list page instead).
 const ROUTE_BY_RESOURCE_TYPE: Record<string, (id: string) => string> = {
-  requirement: () => "/requirements",
-  quotation: () => "/quotations",
-  auction: () => "/auctions",
+  requirement: (id) => `/requirements/${id}`,
+  quotation: (id) => `/quotations/${id}`,
+  auction: (id) => `/auctions?auctionId=${id}`,
   rental: (id) => `/rentals/${id}`,
   machine: (id) => `/machines/${id}`,
+  transport: (id) => `/transport/${id}`,
+  work_order: (id) => `/work-orders/${id}`,
+  invoice: (id) => `/billing?invoiceId=${id}`,
 };
 
 export function NotificationBell() {

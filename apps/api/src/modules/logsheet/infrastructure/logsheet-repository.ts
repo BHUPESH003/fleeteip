@@ -65,6 +65,11 @@ export class LogsheetRepository implements LogsheetRepositoryPort {
     return row as LogsheetRecord;
   }
 
+  async findById(id: string) {
+    const row = await this.db.selectFrom("logsheets").selectAll().where("id", "=", id).executeTakeFirst();
+    return row as LogsheetRecord | undefined;
+  }
+
   async findByRentalAndDate(rentalId: string, logDate: string) {
     const row = await this.db
       .selectFrom("logsheets")

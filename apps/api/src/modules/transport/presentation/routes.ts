@@ -18,6 +18,20 @@ export async function transportRoutes(fastify: FastifyInstance): Promise<void> {
     },
   );
 
+  // Notification/dashboard deep links land here with only the transport
+  // record's own id, no rentalId in hand yet.
+  fastify.get<{ Params: { organizationId: string; id: string } }>(
+    "/organizations/:organizationId/transport-records/:id",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.transportService.getTransportById(
+        userId,
+        request.params.organizationId,
+        request.params.id,
+      );
+    },
+  );
+
   fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
     "/organizations/:organizationId/rentals/:rentalId/transport",
     async (request, reply) => {

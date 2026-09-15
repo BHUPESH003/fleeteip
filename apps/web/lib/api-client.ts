@@ -606,6 +606,12 @@ export const apiClient = {
         method: "GET",
       },
     ),
+  // For a notification/dashboard deep link, which only has the transport
+  // record's own id, not its rentalId.
+  getTransportRecordById: (organizationId: string, id: string) =>
+    apiRequest<TransportRecord>(`/organizations/${organizationId}/transport-records/${id}`, {
+      method: "GET",
+    }),
   createTransport: (organizationId: string, rentalId: string, input: CreateTransportRequest) =>
     apiRequest<TransportRecord>(`/organizations/${organizationId}/rentals/${rentalId}/transport`, {
       method: "POST",
@@ -625,6 +631,10 @@ export const apiClient = {
   // --- Logsheets + Utilization ---
   listLogsheets: (organizationId: string) =>
     apiRequest<Logsheet[]>(`/organizations/${organizationId}/logsheets`, { method: "GET" }),
+  // For a notification/dashboard deep link, which only has the logsheet's
+  // own id, not its rentalId.
+  getLogsheetById: (organizationId: string, id: string) =>
+    apiRequest<Logsheet>(`/organizations/${organizationId}/logsheets/${id}`, { method: "GET" }),
   listLogsheetsForRental: (organizationId: string, rentalId: string) =>
     apiRequest<Logsheet[]>(`/organizations/${organizationId}/rentals/${rentalId}/logsheets`, {
       method: "GET",

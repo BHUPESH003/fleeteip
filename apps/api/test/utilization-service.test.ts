@@ -224,6 +224,9 @@ function fakeLogsheetRepository(totals: UtilizationTotals): LogsheetRepositoryPo
     submit: async () => {
       throw new Error("not used in this test");
     },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
     findByRentalAndDate: async () => {
       throw new Error("not used in this test");
     },

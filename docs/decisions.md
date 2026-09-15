@@ -358,6 +358,67 @@ signal in their response list, distinct from "no one's discovered it yet" — ge
 silent non-response can't provide. Left as-is; flagged as a legitimate simplification to cut later if
 wanted, not a bug.
 
+## Notifications and dashboard "Waiting on you" links landed on list pages, not the item itself
+
+Client-reported, portal-wide: clicking a notification, or an item in a dashboard's "Waiting on
+you" panel, opened the base list route (`/requirements`, `/quotations`, `/billing`, `/machines`,
+`/rentals`) instead of the specific record it was about. Audited every source of these links:
+
+- `NotificationBell.tsx`'s `ROUTE_BY_RESOURCE_TYPE` had a comment claiming "No per-id detail route
+  exists for these resources yet" for `requirement`/`quotation`/`auction` — stale; `/requirements/[id]`
+  and `/quotations/[id]` detail pages both exist now (added earlier this session/phase). Fixed those
+  three, and found the map was also silently missing three resource types real `notify()` calls
+  actually emit — `invoice`, `work_order`, `transport` — which meant clicking those notifications did
+  *nothing at all* (not even a wrong page), since a missing map entry short-circuits navigation
+  entirely. Added all three.
+- `RenterDashboard.tsx`/`RentalCompanyDashboard.tsx`'s "Waiting on you" (`attention`) items had the
+  identical bug for quotations, invoices, requirements, machines, and rentals — only the two
+  auction-related items (added later) were already correctly parametrized. Fixed all of them to the
+  specific record's own link.
+
+Two resource types have no `[id]` detail page at all, so "the exact same bug" isn't fixable the same
+way for them:
+
+- **Auction** — no detail route; `/auctions` already supports selecting one via
+  `?auctionId=`/`?requirementId=` query params (used correctly by the auction-related attention
+  items already). Notification links now use the same convention.
+- **Invoice/Billing** — no detail route *and* no existing query-param convention at all (a flat list
+  with expand-in-place rows, `InvoiceRow`). Added one: `billing/page.tsx` now reads `?invoiceId=`,
+  auto-expands the matching row and highlights it — the closest equivalent an expand-in-place list
+  can offer to a real detail page.
+
+**Transport was a deeper gap, not just a wrong href**: its `[id]` page required a `rentalId` query
+param to load at all (`listTransportForRental` + client-side filter by id — there was no
+get-transport-by-id capability, an explicitly documented limitation in the page's own dead-end
+`EmptyState` for exactly this case). A notification only carries the transport record's own id, so
+this class of link could never work without fixing that underlying gap first. Added it properly, the
+same shape every other single-resource lookup in this codebase already has:
+`TransportRepositoryPort.findById`, `TransportService.getTransportById` (branches by organization
+type — rental_company via `transport.manage`/ownership, renter via `transport.respond`/counterparty,
+mirroring `listByRental`), and `GET /organizations/:organizationId/transport-records/:id`. The detail
+page now resolves its own `rentalId` from the record when the query param is absent, instead of
+refusing to load.
+
+**Bonus bug caught in the same file while fixing that**: `transport/[id]/page.tsx`'s own permission
+gate was `hasPermission("transport.manage")` unconditionally — `transport.manage` is
+rental_company-only per `PERMISSION_ORGANIZATION_TYPES`, so this page was already unconditionally
+unreachable for every Renter regardless of role, the identical "wrong org-type's permission checked"
+bug class as the `getRental`/notifications fixes earlier this session. Fixed to branch by organization
+type like `canGetRental` right next to it already did.
+
+Given that, audited every other `[id]` page's own top-level `hasPermission(...)` gate (not just its
+ancillary-data gates, which had already been swept earlier) for the same single-org-type mistake.
+Found one more, structurally identical down to the same dead-end `EmptyState` wording:
+`logsheets/[id]/page.tsx` — `canView` was hardcoded to `hasPermission("logsheet.manage")`
+(rental_company-only), unconditionally blocking every Renter, even though `LogsheetService.listByRental`
+already correctly branches (`logsheet.respond` for a renter counterparty). Fixed the same way as
+Transport: `LogsheetRepositoryPort.findById`, `LogsheetService.getLogsheetById`, a new
+`GET /organizations/:organizationId/logsheets/:id` route, and the frontend gate + rentalId resolution
+fixed to match. `maintenance/[id]/page.tsx`'s equivalent gate was checked too and found correct as-is —
+every `MaintenanceService` method requires `maintenance.manage` with no renter-facing counterpart at
+all (no `maintenance.respond` permission exists), so Maintenance is genuinely rental-company-internal
+by design, not a bug.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

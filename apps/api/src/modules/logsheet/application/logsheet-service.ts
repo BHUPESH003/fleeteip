@@ -94,6 +94,32 @@ export class LogsheetService {
     return records.map(toLogsheet);
   }
 
+  // A logsheet's own id, with no rentalId already in hand — the
+  // notification/dashboard "deep link" case, same shape as
+  // TransportService.getTransportById.
+  async getLogsheetById(userId: string, organizationId: string, logsheetId: string): Promise<Logsheet> {
+    const record = await this.logsheetRepository.findById(logsheetId);
+    if (!record) {
+      throw new NotFoundError("Logsheet not found");
+    }
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      await this.permissionService.requirePermission(userId, organizationId, "logsheet.respond");
+      const rental = await this.rentalRepository.findById(record.rental_id);
+      if (!rental || rental.renter_organization_id !== organizationId) {
+        throw new NotFoundError("Logsheet not found for this organization");
+      }
+      return toLogsheet(record);
+    }
+
+    await this.permissionService.requirePermission(userId, organizationId, "logsheet.manage");
+    const rental = await this.rentalRepository.findById(record.rental_id);
+    if (!rental || rental.rental_company_organization_id !== organizationId) {
+      throw new NotFoundError("Logsheet not found in this organization");
+    }
+    return toLogsheet(record);
+  }
+
   // Standalone Logsheets screen — every logsheet across the Rental
   // Company's own fleet of rentals.
   async listByOrganization(

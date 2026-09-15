@@ -19,36 +19,58 @@ const PROGRESSION: TransportStatus[] = ["planned", "dispatched", "delivered"];
 export default function TransportDetailPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const rentalId = searchParams.get("rentalId");
+  const rentalIdParam = searchParams.get("rentalId");
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
-  const canView = hasPermission("transport.manage");
+  // rental_company uses transport.manage, renter uses transport.respond —
+  // same organization-type branch as the service's listByRental/
+  // getTransportById. A flat hasPermission("transport.manage") here used to
+  // lock every Renter out of this page unconditionally.
+  const canView =
+    organizationType === "renter" ? hasPermission("transport.respond") : hasPermission("transport.manage");
   // Rental detail here is enrichment (machine code, client name) — ancillary
-  // to transport.manage, gated by a different permission a custom role may
-  // lack even while it has transport.manage.
+  // to transport.manage/.respond, gated by a different permission a custom
+  // role may lack even while it has transport access.
   const canGetRental =
     organizationType === "renter" ? hasPermission("rental.respond") : hasPermission("rental.manage");
 
   const [record, setRecord] = useState<TransportRecord | null>(null);
+  // Resolved rentalId — either straight from the query param (linked from
+  // Transport → a rental, or a Rental's own Transport tab), or discovered
+  // from the record itself when a notification/dashboard link only has the
+  // transport record's own id.
+  const [rentalId, setRentalId] = useState<string | null>(rentalIdParam);
   const [rental, setRental] = useState<Rental | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   async function load() {
-    if (!organizationId || !rentalId) return;
+    if (!organizationId) return;
     try {
-      const [records, rentalDetail] = await Promise.all([
-        apiClient.listTransportForRental(organizationId, rentalId) as Promise<TransportRecord[]>,
-        canGetRental ? (apiClient.getRental(organizationId, rentalId) as Promise<Rental>) : Promise.resolve(null),
-      ]);
-      const found = records.find((r) => r.id === id) ?? null;
-      if (!found) {
-        setNotFound(true);
-        return;
+      let found: TransportRecord | null;
+      let resolvedRentalId = rentalIdParam;
+      if (rentalIdParam) {
+        const records = (await apiClient.listTransportForRental(
+          organizationId,
+          rentalIdParam,
+        )) as TransportRecord[];
+        found = records.find((r) => r.id === id) ?? null;
+        if (!found) {
+          setNotFound(true);
+          return;
+        }
+      } else {
+        found = (await apiClient.getTransportRecordById(organizationId, id)) as TransportRecord;
+        resolvedRentalId = found.rentalId;
       }
       setRecord(found);
-      setRental(rentalDetail);
+      setRentalId(resolvedRentalId);
+      setRental(
+        resolvedRentalId && canGetRental
+          ? ((await apiClient.getRental(organizationId, resolvedRentalId)) as Rental)
+          : null,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load transport record");
     }
@@ -56,7 +78,7 @@ export default function TransportDetailPage() {
 
   useEffect(() => {
     void load();
-  }, [organizationId, rentalId, id, canGetRental]);
+  }, [organizationId, rentalIdParam, id, canGetRental]);
 
   async function handleStatus(status: TransportStatus) {
     if (!organizationId || !rentalId || !record) return;
@@ -79,18 +101,6 @@ export default function TransportDetailPage() {
         title="You don't have permission to view transport"
         description="Transport is managed by the rental company side of a rental."
       />
-    );
-  }
-
-  if (!rentalId) {
-    return (
-      <div className="flex flex-col gap-4">
-        <PageHeader breadcrumbs={[{ label: "Transport", href: "/transport" }]} title="Transport record" />
-        <EmptyState
-          title="This link is missing its rental"
-          description="A standalone transport record can't be looked up by id alone — there's no get-transport-by-id endpoint, only per-rental listing. Open it from Transport → pick a rental, or from a Rental's Transport tab."
-        />
-      </div>
     );
   }
 
