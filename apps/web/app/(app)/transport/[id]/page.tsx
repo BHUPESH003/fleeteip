@@ -22,7 +22,13 @@ export default function TransportDetailPage() {
   const rentalId = searchParams.get("rentalId");
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const organizationType = currentMembership?.organization.organizationTypeCode;
   const canView = hasPermission("transport.manage");
+  // Rental detail here is enrichment (machine code, client name) — ancillary
+  // to transport.manage, gated by a different permission a custom role may
+  // lack even while it has transport.manage.
+  const canGetRental =
+    organizationType === "renter" ? hasPermission("rental.respond") : hasPermission("rental.manage");
 
   const [record, setRecord] = useState<TransportRecord | null>(null);
   const [rental, setRental] = useState<Rental | null>(null);
@@ -34,7 +40,7 @@ export default function TransportDetailPage() {
     try {
       const [records, rentalDetail] = await Promise.all([
         apiClient.listTransportForRental(organizationId, rentalId) as Promise<TransportRecord[]>,
-        apiClient.getRental(organizationId, rentalId) as Promise<Rental>,
+        canGetRental ? (apiClient.getRental(organizationId, rentalId) as Promise<Rental>) : Promise.resolve(null),
       ]);
       const found = records.find((r) => r.id === id) ?? null;
       if (!found) {
@@ -50,7 +56,7 @@ export default function TransportDetailPage() {
 
   useEffect(() => {
     void load();
-  }, [organizationId, rentalId, id]);
+  }, [organizationId, rentalId, id, canGetRental]);
 
   async function handleStatus(status: TransportStatus) {
     if (!organizationId || !rentalId || !record) return;
@@ -97,7 +103,9 @@ export default function TransportDetailPage() {
       />
     );
   }
-  if (!record || !rental) return <LoadingState label="Loading transport record…" />;
+  // `rental` may legitimately stay null when the caller's role lacks
+  // rental.manage/rental.respond (custom role) — only `record` gates loading.
+  if (!record) return <LoadingState label="Loading transport record…" />;
 
   const isCancelled = record.status === "cancelled";
   const currentIndex = PROGRESSION.indexOf(record.status);
@@ -105,11 +113,11 @@ export default function TransportDetailPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        breadcrumbs={[{ label: "Transport", href: "/transport" }, { label: `${record.leg} · ${rental.machineAssetCode ?? ""}` }]}
+        breadcrumbs={[{ label: "Transport", href: "/transport" }, { label: `${record.leg} · ${rental?.machineAssetCode ?? ""}` }]}
         title={`Transport · ${record.leg === "mobilization" ? "Mobilization" : "Demobilization"}`}
-        description={`Rental ${rental.machineAssetCode ?? rental.machineId.slice(0, 8)} · ${rental.clientSnapshot?.name ?? "—"}`}
+        description={`Rental ${rental?.machineAssetCode ?? rental?.machineId.slice(0, 8) ?? "—"} · ${rental?.clientSnapshot?.name ?? "—"}`}
         actions={
-          <Link href={`/rentals/${rental.id}?tab=transport`} className="text-xs font-medium text-accent-text">
+          <Link href={`/rentals/${rentalId}?tab=transport`} className="text-xs font-medium text-accent-text">
             Open rental →
           </Link>
         }
@@ -154,8 +162,8 @@ export default function TransportDetailPage() {
 
       <Card>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Field label="Machine" value={rental.machineAssetCode ?? "—"} mono />
-          <Field label="Rental" value={rental.clientSnapshot?.name ?? "—"} />
+          <Field label="Machine" value={rental?.machineAssetCode ?? "—"} mono />
+          <Field label="Rental" value={rental?.clientSnapshot?.name ?? "—"} />
           <Field label="Leg" value={record.leg} />
           <Field label="Pickup" value={record.pickupLocation ?? "—"} />
           <Field label="Destination" value={record.destination ?? "—"} />

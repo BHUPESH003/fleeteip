@@ -42,8 +42,13 @@ interface Loaded {
 export default function RequirementDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  // Counterparty names / linked quotations are enrichment, not the point of
+  // this page (rfq.manage is) — a role without quotation.respond still gets
+  // a fully working requirement view, just without rental-company names or
+  // linked-quotation links resolved.
+  const canRespondToQuotations = hasPermission("quotation.respond");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,12 +56,20 @@ export default function RequirementDetailPage() {
 
   async function load(orgId: string) {
     const requirement = (await apiClient.getRequirement(orgId, id)) as Requirement;
+    // listRentalCompanyOrganizations and listQuotations need quotation.respond
+    // (used only to resolve counterparty names / linked quotations below);
+    // listProductCategories is an open read, listNotifications needs no
+    // specific permission — neither is gated.
     const [categories, responses, rentalCompanyOrgs, quotations, notifications] = await Promise.all(
       [
         apiClient.listProductCategories() as Promise<ProductCategory[]>,
         apiClient.listResponsesForRequirement(orgId, id) as Promise<QuotationResponse[]>,
-        apiClient.listRentalCompanyOrganizations(orgId) as Promise<Organization[]>,
-        apiClient.listQuotations(orgId) as Promise<CommercialQuotation[]>,
+        canRespondToQuotations
+          ? (apiClient.listRentalCompanyOrganizations(orgId) as Promise<Organization[]>)
+          : Promise.resolve([]),
+        canRespondToQuotations
+          ? (apiClient.listQuotations(orgId) as Promise<CommercialQuotation[]>)
+          : Promise.resolve([]),
         apiClient.listNotifications(orgId) as Promise<NotificationListResponse>,
       ],
     );
@@ -94,7 +107,7 @@ export default function RequirementDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load requirement");
       }
     })();
-  }, [organizationId, id]);
+  }, [organizationId, id, canRespondToQuotations]);
 
   async function handleClose() {
     if (!organizationId) return;

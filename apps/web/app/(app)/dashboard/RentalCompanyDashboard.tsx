@@ -32,10 +32,20 @@ interface DashboardData {
 }
 
 export function RentalCompanyDashboard() {
-  const { session, currentMembership } = useSession();
+  const { session, currentMembership, hasPermission } = useSession();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const organizationId = currentMembership?.organizationId;
+
+  // This dashboard is a cross-domain summary, not one page "about" a single
+  // permission — a custom role missing any one of these still deserves a
+  // working page, just without that section's data (see docs/decisions.md,
+  // same fix as quotations/page.tsx's canListMachines).
+  const canListMachines = hasPermission("equipment.manage");
+  const canListRentals = hasPermission("rental.manage");
+  const canListQuotations = hasPermission("quotation.manage");
+  const canListInvoices = hasPermission("billing.manage");
+  const canListAuctions = hasPermission("auction.participate");
 
   useEffect(() => {
     if (!organizationId) return;
@@ -52,14 +62,26 @@ export function RentalCompanyDashboard() {
           products,
           auctions,
         ] = await Promise.all([
-          apiClient.listMachines(organizationId) as Promise<Machine[]>,
-          apiClient.listRentals(organizationId) as Promise<Rental[]>,
-          apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>,
-          apiClient.listInvoices(organizationId) as Promise<Invoice[]>,
+          canListMachines
+            ? (apiClient.listMachines(organizationId) as Promise<Machine[]>)
+            : Promise.resolve([]),
+          canListRentals
+            ? (apiClient.listRentals(organizationId) as Promise<Rental[]>)
+            : Promise.resolve([]),
+          canListQuotations
+            ? (apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>)
+            : Promise.resolve([]),
+          canListInvoices
+            ? (apiClient.listInvoices(organizationId) as Promise<Invoice[]>)
+            : Promise.resolve([]),
           apiClient.listNotifications(organizationId) as Promise<NotificationListResponse>,
-          apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
+          canListQuotations
+            ? (apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>)
+            : Promise.resolve([]),
           apiClient.listProducts() as Promise<Product[]>,
-          apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>,
+          canListAuctions
+            ? (apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>)
+            : Promise.resolve([]),
         ]);
 
         const unpaidInvoices = invoices.filter(
@@ -147,49 +169,69 @@ export function RentalCompanyDashboard() {
     org.clientSnapshot?.name ||
     "Renter";
 
+  // Tiles for a section the caller can't see are omitted, not zeroed —
+  // "Machines: 0" would misreport "no permission" as "no fleet".
   const kpis: KpiTileData[] = [
-    {
-      label: "Machines",
-      value: String(machines.length),
-      note: `${retiredMachines.length} retired`,
-    },
-    {
-      label: "Available",
-      value: String(availableMachines.length),
-      note: "derived: no active rental",
-      noteTone: "success",
-    },
-    {
-      label: "On rent",
-      value: String(onRentCount),
-      note: `${Math.round((onRentCount / totalMachines) * 100)}% of fleet`,
-    },
-    {
-      label: "Maintenance",
-      value: String(maintenanceMachines.length),
-      note: maintenanceMachines.length > 0 ? "unavailable while in maintenance" : undefined,
-      noteTone: "warning",
-    },
-    {
-      label: "Quotations open",
-      value: String(quotationsOpen.length),
-      note: `${awaitingAcceptance.length} awaiting acceptance`,
-      noteTone: awaitingAcceptance.length > 0 ? "warning" : undefined,
-    },
-    {
-      label: "Outstanding",
-      value: formatCurrencyINR(outstandingTotal),
-      note: overdueTotal > 0 ? `${formatCurrencyINR(overdueTotal)} overdue` : undefined,
-      noteTone: "danger",
-    },
-    {
-      label: "Auctions",
-      value: String(auctions.length),
-      note:
-        auctionsSelected.length > 0 ? `${auctionsSelected.length} selected — proceed` : undefined,
-      noteTone: "success",
-      href: "/auctions",
-    },
+    ...(canListMachines
+      ? [
+          {
+            label: "Machines",
+            value: String(machines.length),
+            note: `${retiredMachines.length} retired`,
+          },
+          {
+            label: "Available",
+            value: String(availableMachines.length),
+            note: "derived: no active rental",
+            noteTone: "success" as const,
+          },
+          {
+            label: "On rent",
+            value: String(onRentCount),
+            note: `${Math.round((onRentCount / totalMachines) * 100)}% of fleet`,
+          },
+          {
+            label: "Maintenance",
+            value: String(maintenanceMachines.length),
+            note: maintenanceMachines.length > 0 ? "unavailable while in maintenance" : undefined,
+            noteTone: "warning" as const,
+          },
+        ]
+      : []),
+    ...(canListQuotations
+      ? [
+          {
+            label: "Quotations open",
+            value: String(quotationsOpen.length),
+            note: `${awaitingAcceptance.length} awaiting acceptance`,
+            noteTone: awaitingAcceptance.length > 0 ? ("warning" as const) : undefined,
+          },
+        ]
+      : []),
+    ...(canListInvoices
+      ? [
+          {
+            label: "Outstanding",
+            value: formatCurrencyINR(outstandingTotal),
+            note: overdueTotal > 0 ? `${formatCurrencyINR(overdueTotal)} overdue` : undefined,
+            noteTone: "danger" as const,
+          },
+        ]
+      : []),
+    ...(canListAuctions
+      ? [
+          {
+            label: "Auctions",
+            value: String(auctions.length),
+            note:
+              auctionsSelected.length > 0
+                ? `${auctionsSelected.length} selected — proceed`
+                : undefined,
+            noteTone: "success" as const,
+            href: "/auctions",
+          },
+        ]
+      : []),
   ];
 
   const attention: AttentionItem[] = [
@@ -289,15 +331,17 @@ export function RentalCompanyDashboard() {
       <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.4fr_1fr]">
         <AttentionPanel title="Requires attention" items={attention} />
         <div className="flex flex-col gap-3.5">
-          <Card>
-            <div className="mb-3 flex items-baseline gap-2">
-              <h2 className="text-sm font-semibold text-ink">Fleet availability</h2>
-              <span className="text-xs text-meta-light">
-                derived from machine status + active rentals
-              </span>
-            </div>
-            <Meter segments={fleetMix} />
-          </Card>
+          {canListMachines && (
+            <Card>
+              <div className="mb-3 flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-ink">Fleet availability</h2>
+                <span className="text-xs text-meta-light">
+                  derived from machine status + active rentals
+                </span>
+              </div>
+              <Meter segments={fleetMix} />
+            </Card>
+          )}
           <ActivityPanel items={activity} />
         </div>
       </div>

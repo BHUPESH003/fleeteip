@@ -548,6 +548,12 @@ function RentalCompanyAuctionPanel({
   requirement: Requirement;
   highlightedAuctionId: string | null;
 }) {
+  const { hasPermission } = useSession();
+  // The requirement's owner name is enrichment (quotation.manage), not this
+  // panel's own purpose (auction.participate) — a role missing it shouldn't
+  // turn a successfully-loaded auction into a page-level error banner (see
+  // docs/decisions.md, same fix as quotations/page.tsx's canListMachines).
+  const canListRenterOrgs = hasPermission("quotation.manage");
   const requirementId = requirement.id;
   const [auction, setAuction] = useState<Auction | null>(null);
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
@@ -581,7 +587,9 @@ function RentalCompanyAuctionPanel({
         setDetail(null);
       }
       const [renterOrgs, notifications] = await Promise.all([
-        apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>,
+        canListRenterOrgs
+          ? (apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>)
+          : Promise.resolve([]),
         apiClient.listNotifications(organizationId),
       ]);
       setOwnerName(renterOrgs.find((o) => o.id === found!.createdByOrganizationId)?.name ?? null);
@@ -600,7 +608,7 @@ function RentalCompanyAuctionPanel({
     } finally {
       setLoading(false);
     }
-  }, [organizationId, requirementId, highlightedAuctionId]);
+  }, [organizationId, requirementId, highlightedAuctionId, canListRenterOrgs]);
 
   useEffect(() => {
     void load();

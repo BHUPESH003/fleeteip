@@ -66,7 +66,7 @@ export default function ProductDetailPage() {
       subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null;
     const category = categories.find((c) => c.id === subcategory?.productCategoryId) ?? null;
     const ownMachines =
-      canSeeOwnFleet && organizationId
+      canSeeOwnFleet && hasPermission("equipment.manage") && organizationId
         ? ((await apiClient.listMachines(organizationId)) as Machine[]).filter(
             (m) => m.productId === id,
           )

@@ -40,11 +40,16 @@ interface Loaded {
 }
 
 export default function QuotationsPage() {
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
+  // Machine names are enrichment, not the point of this page (quotation.manage
+  // is) — a role without equipment.manage still gets a fully working page,
+  // just without asset codes resolved (already handled: `machine?.assetCode
+  // ?? "—"`). Gating the fetch itself also skips a request that would 403.
+  const canListMachines = hasPermission("equipment.manage");
 
   const requirementIdParam = searchParams.get("requirementId");
   const sourceAuctionIdParam = searchParams.get("sourceAuctionId");
@@ -61,7 +66,7 @@ export default function QuotationsPage() {
       const quotations = (await apiClient.listQuotations(orgId)) as CommercialQuotation[];
       if (orgType === "rental_company") {
         const [machines, renterOrgs] = await Promise.all([
-          apiClient.listMachines(orgId) as Promise<Machine[]>,
+          canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
           apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
         ]);
         setData({
@@ -88,7 +93,7 @@ export default function QuotationsPage() {
 
   useEffect(() => {
     if (organizationId && organizationType) void load(organizationId, organizationType);
-  }, [organizationId, organizationType]);
+  }, [organizationId, organizationType, canListMachines]);
 
   useEffect(() => {
     if (quotationIdParam) router.replace(`/quotations/${quotationIdParam}`);

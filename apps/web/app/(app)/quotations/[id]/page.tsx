@@ -180,9 +180,15 @@ function ScopeItemsCard({
 
 export default function QuotationDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
+  // Machine/product lookups are enrichment, not the point of this page
+  // (quotation.manage is) — a role without equipment.manage still gets a
+  // fully working page, just without the machine resolved (machineLabel/
+  // machineAssetCode already fall back to the server-resolved quotation
+  // fields below). Gating the fetch itself also skips a request that would 403.
+  const canListMachines = hasPermission("equipment.manage");
 
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -200,10 +206,11 @@ export default function QuotationDetailPage() {
     let counterpartyName = quotation.clientSnapshot?.name ?? "Counterparty";
 
     if (orgType === "rental_company") {
-      // Machine/product lookups need equipment.manage (Rental Company
-      // only); resolving the renter's name needs quotation.manage.
+      // Machine lookup needs equipment.manage (Rental Company only);
+      // resolving the renter's name needs quotation.manage. listProducts is
+      // an open read, but it's only useful here paired with the machine.
       const [machines, products, renterOrgs] = await Promise.all([
-        apiClient.listMachines(orgId) as Promise<Machine[]>,
+        canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
         apiClient.listProducts() as Promise<Product[]>,
         apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
       ]);
@@ -241,7 +248,7 @@ export default function QuotationDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load quotation");
       }
     })();
-  }, [organizationId, organizationType, id]);
+  }, [organizationId, organizationType, id, canListMachines]);
 
   useEffect(() => {
     if (!organizationId || data?.quotation.status !== "awarded") return;

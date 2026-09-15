@@ -188,10 +188,14 @@ function InvoiceRow({
 }
 
 export default function BillingPage() {
-  const { currentMembership } = useSession();
+  const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
   const canManage = organizationType === "rental_company";
+  // Rental labels are enrichment, not the point of this page (billing.manage/
+  // .respond is) — a role without rental.manage/.respond still gets a fully
+  // working invoice list, just with rentalLabel() falling back to "—".
+  const canListRentals = canManage ? hasPermission("rental.manage") : hasPermission("rental.respond");
 
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [rentals, setRentals] = useState<Rental[]>([]);
@@ -204,7 +208,7 @@ export default function BillingPage() {
     try {
       const [invoiceList, rentalList] = await Promise.all([
         apiClient.listInvoices(orgId) as Promise<Invoice[]>,
-        apiClient.listRentals(orgId) as Promise<Rental[]>,
+        canListRentals ? (apiClient.listRentals(orgId) as Promise<Rental[]>) : Promise.resolve([]),
       ]);
       setInvoices(invoiceList);
       setRentals(rentalList);
@@ -215,7 +219,7 @@ export default function BillingPage() {
 
   useEffect(() => {
     if (organizationId) void load(organizationId);
-  }, [organizationId]);
+  }, [organizationId, canListRentals]);
 
   const rentalById = useMemo(() => new Map(rentals.map((r) => [r.id, r])), [rentals]);
 

@@ -27,6 +27,7 @@ import Link from "next/link";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { daysUntil, formatDate } from "../../../lib/format";
+import { useSession } from "../../../lib/session-context";
 import { RESPONSE_STATUS_MAP, validityTone } from "./shared";
 
 type Filter = "needs_response" | "responded" | "in_auction" | "closed";
@@ -46,6 +47,14 @@ export function OpenMarket({
   organizationId: string;
   highlightedRequirementId: string | null;
 }) {
+  const { hasPermission } = useSession();
+  // stockedSubcategoryIds (the "only equipment I stock" filter) is
+  // enrichment, not the point of this page (rfq.respond is) — a role
+  // without equipment.manage still gets a fully working open market, just
+  // with an empty stocked set, same as a rental company with no fleet yet
+  // (the checkbox then simply yields no matches via the existing EmptyState).
+  const canListMachines = hasPermission("equipment.manage");
+
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("needs_response");
@@ -57,7 +66,7 @@ export function OpenMarket({
       const [requirements, categories, machines, products] = await Promise.all([
         apiClient.discoverRequirements(organizationId) as Promise<Requirement[]>,
         apiClient.listProductCategories() as Promise<ProductCategory[]>,
-        apiClient.listMachines(organizationId) as Promise<Machine[]>,
+        canListMachines ? (apiClient.listMachines(organizationId) as Promise<Machine[]>) : Promise.resolve([]),
         apiClient.listProducts() as Promise<Product[]>,
       ]);
       const subcategoryLists = await Promise.all(
@@ -109,7 +118,7 @@ export function OpenMarket({
 
   useEffect(() => {
     void load();
-  }, [organizationId]);
+  }, [organizationId, canListMachines]);
 
   useEffect(() => {
     if (highlightedRequirementId) setRespondingId(highlightedRequirementId);

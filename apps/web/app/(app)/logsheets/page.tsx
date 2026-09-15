@@ -36,7 +36,13 @@ import { LogsheetPanel } from "../rentals/panels";
 export default function LogsheetsPage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const organizationType = currentMembership?.organization.organizationTypeCode;
   const canView = hasPermission("logsheet.manage");
+  // Rentals here are enrichment for the table/picker, not the point of this
+  // page (logsheet.manage is) — a custom role without the rental permission
+  // still gets a working page, just with rental columns falling back to "—".
+  const canListRentals =
+    organizationType === "renter" ? hasPermission("rental.respond") : hasPermission("rental.manage");
 
   const [logsheets, setLogsheets] = useState<Logsheet[] | null>(null);
   const [rentals, setRentals] = useState<Rental[] | null>(null);
@@ -51,7 +57,7 @@ export default function LogsheetsPage() {
       try {
         const [logsheetList, rentalList] = await Promise.all([
           apiClient.listLogsheets(organizationId) as Promise<Logsheet[]>,
-          apiClient.listRentals(organizationId) as Promise<Rental[]>,
+          canListRentals ? (apiClient.listRentals(organizationId) as Promise<Rental[]>) : Promise.resolve([]),
         ]);
         setLogsheets(logsheetList);
         setRentals(rentalList);
@@ -59,7 +65,7 @@ export default function LogsheetsPage() {
         setError(err instanceof Error ? err.message : "Failed to load logsheets");
       }
     })();
-  }, [organizationId, canView]);
+  }, [organizationId, canView, canListRentals]);
 
   const rentalsById = useMemo(() => new Map((rentals ?? []).map((r) => [r.id, r])), [rentals]);
 
