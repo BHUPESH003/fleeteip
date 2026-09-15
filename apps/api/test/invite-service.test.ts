@@ -6,7 +6,7 @@ import type {
   OrganizationInviteRecord,
   OrganizationRepositoryPort,
 } from "../src/modules/organizations/domain/ports.js";
-import type { RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
+import type { RoleRecord, RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
 import { PermissionService } from "../src/modules/permissions/application/permission-service.js";
 import { AuthService } from "../src/modules/identity/application/auth-service.js";
 import type {
@@ -87,12 +87,32 @@ function fakeMembershipRepository(activeMembers: Set<string>): MembershipReposit
         ? { id: "membership-existing", status: "active", role_id: OWNER_ROLE_ID }
         : undefined,
     listByOrganization: async () => [],
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
 function fakeRoleRepository(): RoleRepositoryPort {
+  const roles: RoleRecord[] = [
+    { id: OWNER_ROLE_ID, name: "owner", organization_id: null },
+    { id: MEMBER_ROLE_ID, name: "member", organization_id: ORG_ID },
+    { id: "role-other-org", name: "member", organization_id: "org-someone-else" },
+  ];
   return {
-    findByName: async (name) => ({ id: name === "owner" ? OWNER_ROLE_ID : MEMBER_ROLE_ID, name }),
+    findByName: async (name) => roles.find((r) => r.name === name && r.organization_id === null),
+    findById: async (id) => roles.find((r) => r.id === id),
+    listForOrganization: async (organizationId) =>
+      roles.filter((r) => r.organization_id === null || r.organization_id === organizationId),
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId) => roleId === OWNER_ROLE_ID,
     listPermissionCodesByRoleId: async (roleId) =>
       roleId === OWNER_ROLE_ID ? ["organization.manage", "membership.manage"] : [],
@@ -215,7 +235,7 @@ function buildService(
 describe("InviteService.createInvite", () => {
   it("creates a pending, shareable invite for a caller with membership.manage", async () => {
     const { inviteService, invites } = buildService();
-    const result = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const result = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
     expect(result.invite.status).toBe("pending");
     expect(result.invite.roleName).toBe("member");
     expect(result.link).toBe(`${WEB_ORIGIN}/invite/${result.token}`);
@@ -224,16 +244,23 @@ describe("InviteService.createInvite", () => {
 
   it("rejects a caller without membership.manage", async () => {
     const { inviteService } = buildService({ activeMembers: new Set() });
-    await expect(inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member")).rejects.toThrow(
+    await expect(inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID)).rejects.toThrow(
       ForbiddenError,
     );
+  });
+
+  it("rejects inviting into a role that belongs to a different organization", async () => {
+    const { inviteService } = buildService();
+    await expect(
+      inviteService.createInvite(OWNER_USER_ID, ORG_ID, "role-other-org"),
+    ).rejects.toThrow(NotFoundError);
   });
 });
 
 describe("InviteService.getPreview", () => {
   it("returns organization/role context for a pending invite", async () => {
     const { inviteService } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
     const preview = await inviteService.getPreview(token);
     expect(preview).toEqual({
       organizationName: "Apex Equipment Rentals",
@@ -246,7 +273,7 @@ describe("InviteService.getPreview", () => {
 
   it("flags an expired invite instead of hiding it", async () => {
     const { inviteService, invites } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
     invites[0]!.expires_at = new Date(Date.now() - 1000);
     const preview = await inviteService.getPreview(token);
     expect(preview.expired).toBe(true);
@@ -261,7 +288,7 @@ describe("InviteService.getPreview", () => {
 describe("InviteService.accept", () => {
   it("creates a brand-new account and an active membership, without a redundant organization", async () => {
     const { inviteService, users, activeMembers } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
 
     const result = await inviteService.accept(token, {
       newAccount: {
@@ -280,7 +307,7 @@ describe("InviteService.accept", () => {
 
   it("accepts for an already logged-in existing user, issuing no new session", async () => {
     const { inviteService, activeMembers } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
 
     const result = await inviteService.accept(token, { existingUserId: "user-existing" });
 
@@ -290,7 +317,7 @@ describe("InviteService.accept", () => {
 
   it("rejects a new-account accept missing required fields", async () => {
     const { inviteService } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
     await expect(
       inviteService.accept(token, { newAccount: { email: "", password: "", displayName: "" } }),
     ).rejects.toThrow(ValidationError);
@@ -305,7 +332,7 @@ describe("InviteService.accept", () => {
 
   it("rejects accepting an already-accepted invite", async () => {
     const { inviteService } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
     await inviteService.accept(token, { existingUserId: "user-first" });
 
     await expect(
@@ -315,7 +342,7 @@ describe("InviteService.accept", () => {
 
   it("rejects accepting an expired invite", async () => {
     const { inviteService, invites } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
     invites[0]!.expires_at = new Date(Date.now() - 1000);
 
     await expect(
@@ -325,7 +352,7 @@ describe("InviteService.accept", () => {
 
   it("rejects a user who already belongs to the organization", async () => {
     const { inviteService } = buildService();
-    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, "member");
+    const { token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
 
     await expect(
       inviteService.accept(token, { existingUserId: OWNER_USER_ID }),

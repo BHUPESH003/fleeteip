@@ -84,12 +84,30 @@ function fakeMembershipRepository(): MembershipRepositoryPort {
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
 function fakeRoleRepository(): RoleRepositoryPort {
   return {
     findByName: async () => {
+      throw new Error("not used in this test");
+    },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
       throw new Error("not used in this test");
     },
     hasPermission: async () => {

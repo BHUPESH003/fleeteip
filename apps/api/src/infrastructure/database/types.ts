@@ -58,6 +58,9 @@ export interface StaffSessionsTable {
 export interface RolesTable {
   id: Generated<string>;
   name: string;
+  // NULL = built-in/global role (only "owner"); non-null scopes the role
+  // (and every permission it grants) to exactly one organization.
+  organization_id: string | null;
   created_at: CreatedAt;
 }
 

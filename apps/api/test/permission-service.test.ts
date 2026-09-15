@@ -24,13 +24,33 @@ function fakeMembershipRepository(
     listByOrganization: async () => {
       throw new Error("not used in this test");
     },
+    updateRole: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
 function fakeRoleRepository(): RoleRepositoryPort {
   return {
     findByName: async (name) =>
-      name === "owner" ? { id: OWNER_ROLE_ID, name } : { id: MEMBER_ROLE_ID, name },
+      name === "owner"
+        ? { id: OWNER_ROLE_ID, name, organization_id: null }
+        : { id: MEMBER_ROLE_ID, name, organization_id: "org-1" },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
+    listForOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    create: async () => {
+      throw new Error("not used in this test");
+    },
+    update: async () => {
+      throw new Error("not used in this test");
+    },
+    delete: async () => {
+      throw new Error("not used in this test");
+    },
     hasPermission: async (roleId, permissionCode) =>
       roleId === OWNER_ROLE_ID &&
       (permissionCode === "organization.manage" || permissionCode === "equipment.manage"),

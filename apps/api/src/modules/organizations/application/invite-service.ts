@@ -58,12 +58,17 @@ export class InviteService {
   async createInvite(
     userId: string,
     organizationId: string,
-    roleName: RoleName,
+    roleId: string,
   ): Promise<CreateInviteResponse> {
     await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
 
-    const role = await this.roleRepository.findByName(roleName);
-    if (!role) throw new NotFoundError("Role not found");
+    // A role is either this organization's own, or the built-in "owner" —
+    // never another organization's role (same check OrganizationService
+    // .updateMemberRole makes before moving a member onto a role).
+    const role = await this.roleRepository.findById(roleId);
+    if (!role || (role.organization_id !== null && role.organization_id !== organizationId)) {
+      throw new NotFoundError("Role not found");
+    }
 
     // Same shape as a session token (32 random bytes, sha256-hashed for
     // storage — hashSessionToken is generic, not session-specific) but its
@@ -78,7 +83,7 @@ export class InviteService {
     });
 
     return {
-      invite: toInvite(record, roleName),
+      invite: toInvite(record, role.name),
       token,
       link: `${this.webOrigin}/invite/${token}`,
     };

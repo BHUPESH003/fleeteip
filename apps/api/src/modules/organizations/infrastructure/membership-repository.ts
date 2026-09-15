@@ -77,6 +77,7 @@ export class MembershipRepository implements MembershipRepositoryPort {
         "memberships.user_id as user_id",
         "users.email as email",
         "users.display_name as display_name",
+        "memberships.role_id as role_id",
         "roles.name as role_name",
         "memberships.status as status",
         "memberships.created_at as created_at",
@@ -84,5 +85,14 @@ export class MembershipRepository implements MembershipRepositoryPort {
       .where("memberships.organization_id", "=", organizationId)
       .orderBy("memberships.created_at", "asc")
       .execute();
+  }
+
+  updateRole(membershipId: string, roleId: string) {
+    return this.db
+      .updateTable("memberships")
+      .set({ role_id: roleId })
+      .where("id", "=", membershipId)
+      .returning(["id", "user_id", "organization_id", "role_id", "status", "created_at"])
+      .executeTakeFirstOrThrow();
   }
 }

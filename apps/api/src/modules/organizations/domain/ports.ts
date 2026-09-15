@@ -78,6 +78,7 @@ export interface OrganizationMemberRow {
   user_id: string;
   email: string;
   display_name: string;
+  role_id: string;
   role_name: string;
   status: string;
   created_at: Date | string;
@@ -137,4 +138,5 @@ export interface MembershipRepositoryPort {
     organizationId: string,
   ): Promise<ActiveMembershipRecord | undefined>;
   listByOrganization(organizationId: string): Promise<OrganizationMemberRow[]>;
+  updateRole(membershipId: string, roleId: string): Promise<MembershipRecord>;
 }

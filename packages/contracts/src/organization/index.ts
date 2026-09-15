@@ -21,10 +21,12 @@ export const organizationSchema = z.object({
 });
 export type Organization = z.infer<typeof organizationSchema>;
 
-// ponytail: two fixed roles (owner/member) shared across org types, not
-// per-organization custom roles. Add custom roles when a real need for
-// finer-grained responsibilities appears.
-export const roleNameSchema = z.enum(["owner", "member"]);
+// Role names are no longer a fixed global enum — every organization gets
+// its own "member" role (and can create further custom roles) with
+// whatever permission set its owner assigns. "owner" is the one built-in
+// role every organization has from creation, always full access,
+// immutable — see roleSchema's isBuiltin flag.
+export const roleNameSchema = z.string().trim().min(1).max(60);
 export type RoleName = z.infer<typeof roleNameSchema>;
 
 export const permissionCodeSchema = z.enum([
@@ -125,6 +127,7 @@ export const organizationMemberSchema = z.object({
   userId: z.string().uuid(),
   email: z.string().email(),
   displayName: z.string(),
+  roleId: z.string().uuid(),
   roleName: roleNameSchema,
   status: membershipStatusSchema,
   createdAt: z.string().datetime(),
@@ -141,7 +144,7 @@ export const inviteStatusSchema = z.enum(["pending", "accepted", "revoked"]);
 export type InviteStatus = z.infer<typeof inviteStatusSchema>;
 
 export const createInviteRequestSchema = z.object({
-  roleName: roleNameSchema,
+  roleId: z.string().uuid(),
 });
 export type CreateInviteRequest = z.infer<typeof createInviteRequestSchema>;
 
@@ -193,7 +196,32 @@ export const acceptInviteRequestSchema = z
 export type AcceptInviteRequest = z.infer<typeof acceptInviteRequestSchema>;
 
 export const roleWithPermissionsSchema = z.object({
+  id: z.string().uuid(),
   roleName: roleNameSchema,
+  // Built-in roles ("owner") are always full-access and can't be created,
+  // edited, or deleted through the API — only an organization's own roles
+  // (its "member" and any further custom roles) can be.
+  isBuiltin: z.boolean(),
   permissions: z.array(permissionCodeSchema),
 });
 export type RoleWithPermissions = z.infer<typeof roleWithPermissionsSchema>;
+
+// --- Custom roles: create/edit/delete an organization's own roles, and
+// move a member between roles. "owner" is never a valid target here — see
+// roleWithPermissionsSchema.isBuiltin. ---
+
+export const createRoleRequestSchema = z.object({
+  name: roleNameSchema,
+  permissions: z.array(permissionCodeSchema),
+});
+export type CreateRoleRequest = z.infer<typeof createRoleRequestSchema>;
+
+// Always a full replace of both fields — the caller sends the complete
+// desired state, never a partial patch.
+export const updateRoleRequestSchema = createRoleRequestSchema;
+export type UpdateRoleRequest = z.infer<typeof updateRoleRequestSchema>;
+
+export const updateMemberRoleRequestSchema = z.object({
+  roleId: z.string().uuid(),
+});
+export type UpdateMemberRoleRequest = z.infer<typeof updateMemberRoleRequestSchema>;

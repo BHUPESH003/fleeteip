@@ -23,11 +23,13 @@ import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/c
 import type {
   AcceptInviteRequest,
   CreateInviteResponse,
+  CreateRoleRequest,
   InvitePreview,
   Organization,
   OrganizationMember,
   RoleName,
   RoleWithPermissions,
+  UpdateRoleRequest,
 } from "@fleetip/contracts/organization";
 import type {
   CreateMaintenanceRequest,
@@ -153,15 +155,32 @@ export const apiClient = {
     apiRequest<OrganizationMember[]>(`/organizations/${organizationId}/members`, {
       method: "GET",
     }),
-  createInvite: (organizationId: string, roleName: RoleName) =>
+  createInvite: (organizationId: string, roleId: string) =>
     apiRequest<CreateInviteResponse>(`/organizations/${organizationId}/invites`, {
       method: "POST",
-      body: JSON.stringify({ roleName }),
+      body: JSON.stringify({ roleId }),
+    }),
+  updateMemberRole: (organizationId: string, membershipId: string, roleId: string) =>
+    apiRequest<OrganizationMember>(`/organizations/${organizationId}/members/${membershipId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ roleId }),
     }),
   listRolesAndPermissions: (organizationId: string) =>
     apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/roles`, {
       method: "GET",
     }),
+  createRole: (organizationId: string, input: CreateRoleRequest) =>
+    apiRequest<RoleWithPermissions>(`/organizations/${organizationId}/roles`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateRole: (organizationId: string, roleId: string, input: UpdateRoleRequest) =>
+    apiRequest<RoleWithPermissions>(`/organizations/${organizationId}/roles/${roleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteRole: (organizationId: string, roleId: string) =>
+    apiRequest<void>(`/organizations/${organizationId}/roles/${roleId}`, { method: "DELETE" }),
 
   // --- Public invite-link flow (may be called with no session at all) ---
   getInvitePreview: (token: string) =>

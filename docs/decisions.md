@@ -98,6 +98,50 @@ elsewhere as never used for auth/tenancy/ownership. Two organizations named iden
 design; every tenant-scoped query and permission check keys on `organization_id` (a UUID), never on
 name. This was a deliberate original decision, not a gap this pass introduced or needed to close.
 
+## Per-organization custom roles (replaces the fixed global owner/member split)
+
+Client feedback, verified in the running app: an invited "member" had a role picker and a status
+badge, but literally nothing to do — `member` had zero permissions seeded, ever, across every
+migration, and there was no endpoint or UI anywhere to grant it any. "Owner or nothing" was the real
+authorization model despite the UI implying `member` was a usable, lesser role.
+
+- **`roles.organization_id`** is now nullable: `NULL` marks a built-in, global role (only `"owner"` —
+  always full access, never created/edited/deleted through the API); a real organization id scopes a
+  role, and everything it grants, to exactly one organization. Enforced with a composite unique
+  constraint (`organization_id`, `name`) plus a partial unique index so two builtin roles can never
+  share a name (Postgres treats every `NULL` as distinct, so the composite constraint alone doesn't
+  cover that case).
+- **The old global `"member"` role is retired**, not kept alongside the new model: migration `0027`
+  gives every existing organization its own `"member"` role (empty permissions — no behavior change
+  for existing tenants), repoints every membership and pending invite that referenced the old row,
+  then deletes it outright. `AuthService.signup` does the same for every new organization from now
+  on — one mechanism, not two.
+- **Full CRUD on an organization's own roles** (`organization.manage`): create with a name +
+  permission set, edit both together (always a full replace, never a partial patch), delete (blocked
+  with `409` if a member or a pending invite still references it — the same `ON DELETE RESTRICT`
+  foreign keys as before, translated to a friendly error instead of a raw DB failure). The built-in
+  `"owner"` role rejects edit/delete with `400`, independent of and in addition to the FK protection.
+- **Moving a member between roles** (`membership.manage`, `PATCH /organizations/:id/members/:id`) is
+  how a member is promoted to `"owner"` or onto a custom role — this is the direct fix for "give
+  access to the invited member." Refuses to leave an organization with zero active owners (verified
+  live: demoting an organization's sole owner correctly `409`s; demoting one of *two* owners
+  correctly succeeds).
+- **A permission code is only ever valid for the organization types `PERMISSION_ORGANIZATION_TYPES`
+  says it applies to** — creating or editing a role with an inapplicable code (e.g. `equipment.manage`,
+  rental_company-only, for a Renter's custom role) is rejected at role-save time with `400`, not
+  silently granted and never enforced.
+- **Invites now carry a `roleId`, not a `roleName` enum** — `createInviteRequestSchema`/
+  `RoleName` changed from a fixed `z.enum(["owner","member"])` to a validated free-form string, since
+  role names are no longer fixed. Verified live end-to-end: an owner creates a custom role with real
+  permissions, invites a brand-new visitor straight into it, and the accepted account has that access
+  immediately — no separate promotion step required.
+- **Known limitation, deliberately not addressed here**: listing/creating/editing roles is gated on
+  `organization.manage`, while inviting and moving members between roles is gated on
+  `membership.manage` — a custom role holding `membership.manage` but not `organization.manage` could
+  invite/reassign members but couldn't see which roles exist to pick from (the client-side dropdown
+  degrades to disabled). Today only the built-in `"owner"` role ever holds both, so this doesn't yet
+  bite in practice; revisit if a real "team admin without org admin" role is ever needed.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

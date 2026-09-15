@@ -82,6 +82,15 @@ export class AuthService {
       status: "active",
     });
 
+    // Every organization gets its own starting "member" role — empty
+    // permissions, same as the old shared global one, but editable from day
+    // one via Settings > Roles & access instead of being a global dead end.
+    await this.roleRepository.create({
+      organizationId: organization.id,
+      name: "member",
+      permissionCodes: [],
+    });
+
     return this.issueSession(user);
   }
 
@@ -164,7 +173,7 @@ export class AuthService {
       id: row.id,
       userId: user.id,
       organizationId: row.organization_id,
-      roleName: row.role_name as "owner" | "member",
+      roleName: row.role_name,
       status: row.status as "active" | "invited" | "suspended",
       createdAt: new Date(row.created_at).toISOString(),
       // The role grants a fixed set of codes, but a permission is only ever
