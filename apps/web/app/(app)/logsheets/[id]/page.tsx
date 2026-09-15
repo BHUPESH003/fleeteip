@@ -12,14 +12,20 @@ import { useSession } from "../../../../lib/session-context";
 export default function LogsheetDetailPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const rentalId = searchParams.get("rentalId");
+  const rentalIdParam = searchParams.get("rentalId");
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
-  const canView = hasPermission("logsheet.manage");
+  // rental_company uses logsheet.manage, renter uses logsheet.respond — same
+  // organization-type branch as the service's listByRental/getLogsheetById.
+  // A flat hasPermission("logsheet.manage") here used to lock every Renter
+  // out of this page unconditionally.
+  const canView =
+    organizationType === "renter" ? hasPermission("logsheet.respond") : hasPermission("logsheet.manage");
   // The rental is enrichment for this logsheet's header, not the point of
-  // this page (logsheet.manage is) — a custom role without the rental
-  // permission still gets a working page, just with rental fields as "—".
+  // this page (logsheet.manage/.respond is) — a custom role without the
+  // rental permission still gets a working page, just with rental fields as
+  // "—".
   const canGetRental =
     organizationType === "renter" ? hasPermission("rental.respond") : hasPermission("rental.manage");
 
@@ -29,27 +35,36 @@ export default function LogsheetDetailPage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    if (!organizationId || !rentalId) return;
+    if (!organizationId) return;
     void (async () => {
       try {
-        const [logsheets, rentalDetail] = await Promise.all([
-          apiClient.listLogsheetsForRental(organizationId, rentalId) as Promise<Logsheet[]>,
-          canGetRental
-            ? (apiClient.getRental(organizationId, rentalId) as Promise<Rental | null>)
-            : Promise.resolve(null),
-        ]);
-        const found = logsheets.find((l) => l.id === id) ?? null;
-        if (!found) {
-          setNotFound(true);
-          return;
+        let found: Logsheet | null;
+        let resolvedRentalId = rentalIdParam;
+        if (rentalIdParam) {
+          const logsheets = (await apiClient.listLogsheetsForRental(
+            organizationId,
+            rentalIdParam,
+          )) as Logsheet[];
+          found = logsheets.find((l) => l.id === id) ?? null;
+          if (!found) {
+            setNotFound(true);
+            return;
+          }
+        } else {
+          found = (await apiClient.getLogsheetById(organizationId, id)) as Logsheet;
+          resolvedRentalId = found.rentalId;
         }
         setLogsheet(found);
-        setRental(rentalDetail);
+        setRental(
+          resolvedRentalId && canGetRental
+            ? ((await apiClient.getRental(organizationId, resolvedRentalId)) as Rental)
+            : null,
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load logsheet");
       }
     })();
-  }, [organizationId, rentalId, id, canGetRental]);
+  }, [organizationId, rentalIdParam, id, canGetRental]);
 
   if (!organizationId) return <LoadingState label="Loading…" />;
 
@@ -59,18 +74,6 @@ export default function LogsheetDetailPage() {
         title="You don't have permission to view logsheets"
         description="Logsheets are recorded by the rental company side of a rental."
       />
-    );
-  }
-
-  if (!rentalId) {
-    return (
-      <div className="flex flex-col gap-4">
-        <PageHeader breadcrumbs={[{ label: "Logsheets", href: "/logsheets" }]} title="Logsheet" />
-        <EmptyState
-          title="This link is missing its rental"
-          description="A standalone logsheet can't be looked up by id alone — there's no get-logsheet-by-id endpoint, only per-rental listing. Open it from Logsheets → pick a rental, or from a Rental's Logsheets tab."
-        />
-      </div>
     );
   }
 

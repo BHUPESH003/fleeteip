@@ -15,6 +15,20 @@ export async function logsheetRoutes(fastify: FastifyInstance): Promise<void> {
     },
   );
 
+  // Notification/dashboard deep links land here with only the logsheet's
+  // own id, no rentalId in hand yet.
+  fastify.get<{ Params: { organizationId: string; id: string } }>(
+    "/organizations/:organizationId/logsheets/:id",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.logsheetService.getLogsheetById(
+        userId,
+        request.params.organizationId,
+        request.params.id,
+      );
+    },
+  );
+
   fastify.put<{ Params: { organizationId: string; rentalId: string } }>(
     "/organizations/:organizationId/rentals/:rentalId/logsheets",
     async (request) => {

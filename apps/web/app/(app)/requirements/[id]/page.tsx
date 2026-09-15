@@ -53,6 +53,24 @@ export default function RequirementDetailPage() {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // rentalCompanyOrganizationIds this session has just requested a
+  // quotation from — swaps that response row's button for confirmation
+  // instead of re-navigating away, so it stays put next to the response.
+  const [requestedFrom, setRequestedFrom] = useState<Set<string>>(new Set());
+  // Separate from `error` deliberately — that one renders as a full-page
+  // ErrorState, too disruptive for one row's action failing.
+  const [requestQuotationError, setRequestQuotationError] = useState<string | null>(null);
+
+  async function handleRequestQuotation(rentalCompanyOrganizationId: string) {
+    if (!organizationId) return;
+    setRequestQuotationError(null);
+    try {
+      await apiClient.requestQuotation(organizationId, id, rentalCompanyOrganizationId);
+      setRequestedFrom((prev) => new Set(prev).add(rentalCompanyOrganizationId));
+    } catch (err) {
+      setRequestQuotationError(err instanceof Error ? err.message : "Failed to request a quotation");
+    }
+  }
 
   async function load(orgId: string) {
     const requirement = (await apiClient.getRequirement(orgId, id)) as Requirement;
@@ -127,7 +145,18 @@ export default function RequirementDetailPage() {
     activity,
   } = data;
   const interested = responses.filter((r) => r.status === "interested");
-  const rates = interested.map((r) => r.indicativeRate).filter((r): r is number => r != null);
+  // "Lowest"/"spread" only mean something when every response is quoted in
+  // the same unit — comparing 6000/day against 150000/month as raw numbers
+  // is meaningless. Submitting a response now locks indicativeRateUnit to
+  // the requirement's own expectedDurationUnit when it has one, so this
+  // mismatch shouldn't come up in practice — but a requirement with no
+  // expectedDurationUnit still leaves the unit to each responder's choice.
+  const rateUnits = new Set(interested.map((r) => r.indicativeRateUnit).filter(Boolean));
+  const mixedRateUnits = rateUnits.size > 1;
+  const commonRateUnit = rateUnits.size === 1 ? [...rateUnits][0] : null;
+  const rates = mixedRateUnits
+    ? []
+    : interested.map((r) => r.indicativeRate).filter((r): r is number => r != null);
   const lowestRate = rates.length ? Math.min(...rates) : null;
   const rateSpreadPct =
     rates.length > 1
@@ -240,9 +269,17 @@ export default function RequirementDetailPage() {
               value={String(interested.length)}
               note={`${responses.length - interested.length} not interested`}
             />
-            <Stat label="Rate spread" value={rateSpreadPct != null ? `${rateSpreadPct}%` : "—"} />
-            <Stat label="Lowest indicative" value={lowestRate != null ? String(lowestRate) : "—"} />
+            <Stat
+              label="Rate spread"
+              value={rateSpreadPct != null ? `${rateSpreadPct}%` : mixedRateUnits ? "Mixed units" : "—"}
+            />
+            <Stat
+              label="Lowest indicative"
+              value={lowestRate != null ? `${lowestRate} / ${commonRateUnit}` : mixedRateUnits ? "Mixed units" : "—"}
+            />
           </div>
+
+          {requestQuotationError && <p className="text-sm text-danger">{requestQuotationError}</p>}
 
           <Card padding={responses.length === 0 ? "md" : "none"}>
             {responses.length === 0 ? (
@@ -297,13 +334,18 @@ export default function RequirementDetailPage() {
                               >
                                 Open {linkedQuotation.referenceNumber}
                               </Link>
+                            ) : requestedFrom.has(response.rentalCompanyOrganizationId) ? (
+                              <span className="text-xs text-meta">Requested</span>
                             ) : (
-                              <Link
-                                href={`/quotations?requirementId=${requirement.id}`}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleRequestQuotation(response.rentalCompanyOrganizationId)
+                                }
                                 className="text-xs font-medium text-accent-text"
                               >
                                 Request quotation
-                              </Link>
+                              </button>
                             ))}
                         </Td>
                       </Tr>

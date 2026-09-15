@@ -331,6 +331,7 @@ function fakeQuotationResponseRepository(
       indicative_rate: 1200,
       indicative_rate_unit: "day",
       notes: null,
+      quotation_requested_at: null,
       created_at: new Date(),
       updated_at: new Date(),
     },
@@ -345,6 +346,12 @@ function fakeQuotationResponseRepository(
     },
     findById: async (id) => responses.find((r) => r.id === id),
     listByRequirement: async () => {
+      throw new Error("not used in this test");
+    },
+    markQuotationRequested: async () => {
+      throw new Error("not used in this test");
+    },
+    listRequestedByRentalCompanyOrganization: async () => {
       throw new Error("not used in this test");
     },
   };
@@ -871,7 +878,7 @@ function buildRentalService(machines: MachineRecord[] = [machine()]) {
   };
 }
 
-function buildService(machines: MachineRecord[] = [machine()]) {
+function buildService(machines: MachineRecord[] = [machine()], requirements?: RequirementRecord[]) {
   const { rentalService } = buildRentalService(machines);
   return new CommercialQuotationService(
     fakeCommercialQuotationRepository(),
@@ -880,7 +887,7 @@ function buildService(machines: MachineRecord[] = [machine()]) {
     fakeMachineRepository(machines),
     fakeProductRepository(),
     fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
-    fakeRequirementRepository(),
+    fakeRequirementRepository(requirements),
     fakeQuotationResponseRepository(),
     fakeAuctionRepository(),
     rentalService,
@@ -934,6 +941,30 @@ describe("CommercialQuotationService", () => {
     });
     expect(quotation.requirementId).toBe(OPEN_REQUIREMENT_ID);
     expect(quotation.quotationResponseId).toBe(RESPONSE_ID);
+  });
+
+  it("locks the quotation's rate unit to the requirement's own expectedDurationUnit, ignoring the caller's choice", async () => {
+    const service = buildService([machine()], [requirement({ expected_duration_unit: "month" })]);
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      rateUnit: "day",
+    });
+    expect(quotation.rateUnit).toBe("month");
+  });
+
+  it("falls back to the caller's chosen rate unit when the requirement has no expectedDurationUnit", async () => {
+    const service = buildService([machine()], [requirement()]);
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      rateUnit: "day",
+    });
+    expect(quotation.rateUnit).toBe("day");
   });
 
   it("rejects quoting against a requirement that is not open", async () => {
@@ -1263,6 +1294,38 @@ describe("CommercialQuotationService", () => {
     expect(rejected.status).toBe("rejected");
   });
 
+  it("hides a draft quotation from the Renter party — not yet a real offer", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+    expect(quotation.status).toBe("draft");
+    await expect(service.getQuotation("user-2", RENTER_ORG_ID, quotation.id)).rejects.toThrow(
+      NotFoundError,
+    );
+    const list = await service.listQuotationsForRenter("user-2", RENTER_ORG_ID);
+    expect(list).toHaveLength(0);
+    // The drafting Rental Company itself still sees it fine.
+    const asRentalCompany = await service.getQuotation("user-1", RC_ORG_ID, quotation.id);
+    expect(asRentalCompany.status).toBe("draft");
+  });
+
+  it("reveals a quotation to the Renter once it's actually sent", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    const asRenter = await service.getQuotation("user-2", RENTER_ORG_ID, quotation.id);
+    expect(asRenter.status).toBe("sent");
+    const list = await service.listQuotationsForRenter("user-2", RENTER_ORG_ID);
+    expect(list).toHaveLength(1);
+  });
+
   it("hides a quotation from an organization that isn't a party to it", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
@@ -1278,6 +1341,7 @@ describe("CommercialQuotationService", () => {
       clientSnapshot: undefined,
       renterOrganizationId: RENTER_ORG_ID,
     });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
 
     const asRenter = await service.getQuotation("user-2", RENTER_ORG_ID, quotation.id);
     expect(asRenter.machineAssetCode).toBe("EXC-001");
@@ -1290,11 +1354,12 @@ describe("CommercialQuotationService", () => {
 
   it("resolves machine info on the Renter's own quotations list", async () => {
     const service = buildService();
-    await service.createQuotation("user-1", RC_ORG_ID, {
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
       ...pathBInput,
       clientSnapshot: undefined,
       renterOrganizationId: RENTER_ORG_ID,
     });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
 
     const list = await service.listQuotationsForRenter("user-2", RENTER_ORG_ID);
     expect(list).toHaveLength(1);
@@ -1374,7 +1439,7 @@ describe("CommercialQuotationService", () => {
       expect(items[0]?.item).toBe("Wire rope");
     });
 
-    it("lets the Renter party read scope items too", async () => {
+    it("lets the Renter party read scope items too, once the quotation is sent", async () => {
       const service = buildService();
       const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
         ...pathBInput,
@@ -1385,6 +1450,7 @@ describe("CommercialQuotationService", () => {
         item: "Ground preparation",
         responsibleParty: "company",
       });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
       const items = await service.listScopeItems("user-2", RENTER_ORG_ID, quotation.id);
       expect(items).toHaveLength(1);
     });

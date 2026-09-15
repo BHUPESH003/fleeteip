@@ -253,7 +253,7 @@ export function RenterDashboard() {
       state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
       tone: "warning",
       actionLabel: "Open",
-      href: "/quotations",
+      href: `/quotations/${q.id}`,
     })),
     ...unpaidInvoices
       .filter((i) => i.status === "overdue" || daysUntil(i.dueDate) <= INVOICE_DUE_SOON_DAYS)
@@ -268,7 +268,7 @@ export function RenterDashboard() {
             : `${daysUntil(invoice.dueDate)}d`,
           tone: overdue ? "danger" : "warning",
           actionLabel: overdue ? "Pay" : "Review",
-          href: "/billing",
+          href: `/billing?invoiceId=${invoice.id}`,
         };
       }),
     ...openRequirements
@@ -280,7 +280,7 @@ export function RenterDashboard() {
         state: "Review",
         tone: "info",
         actionLabel: "Compare",
-        href: "/requirements",
+        href: `/requirements/${r.id}`,
       })),
     ...auctionsNeedingSelection.map((a): AttentionItem => ({
       ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,

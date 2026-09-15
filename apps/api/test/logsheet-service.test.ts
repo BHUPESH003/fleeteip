@@ -18,7 +18,7 @@ import type {
   UtilizationTotals,
 } from "../src/modules/logsheet/domain/ports.js";
 import { LogsheetService } from "../src/modules/logsheet/application/logsheet-service.js";
-import { ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
@@ -208,6 +208,7 @@ function fakeLogsheetRepository(rentals: RentalRecord[] = []): LogsheetRepositor
       records.set(key, record);
       return record;
     },
+    findById: async (id) => [...records.values()].find((r) => r.id === id),
     findByRentalAndDate: async (rentalId, logDate) => records.get(`${rentalId}:${logDate}`),
     listByRental: async (rentalId) => [...records.values()].filter((r) => r.rental_id === rentalId),
     listByRentalCompanyOrganization: async (rentalCompanyOrganizationId) => {
@@ -283,6 +284,38 @@ describe("LogsheetService", () => {
     expect(record.operatingHours).toBe(8);
   });
 
+  it("rejects submitting a logsheet while the rental isn't active yet", async () => {
+    const service = buildService([rental({ status: "confirmed" })]);
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects a log date before the rental's own start date", async () => {
+    const service = buildService();
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-02-28" }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects a log date after the rental's own end date", async () => {
+    const service = buildService();
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-11" }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects a log date in the future", async () => {
+    const service = buildService([rental({ end_date: null })]);
+    const future = new Date();
+    future.setDate(future.getDate() + 5);
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, {
+        logDate: future.toISOString().slice(0, 10),
+      }),
+    ).rejects.toThrow(ValidationError);
+  });
+
   it("upserts on the same date instead of creating a duplicate", async () => {
     const logsheetRepository = fakeLogsheetRepository();
     const service = new LogsheetService(
@@ -336,5 +369,45 @@ describe("LogsheetService", () => {
 
     const list = await service.listByOrganization("user-1", RC_ORG_ID);
     expect(list).toHaveLength(2);
+  });
+
+  // getLogsheetById: the one lookup path with only the logsheet's own id,
+  // no rentalId in hand — the notification/dashboard deep link case.
+  describe("getLogsheetById", () => {
+    it("lets the owning Rental Company fetch a logsheet by its own id alone", async () => {
+      const service = buildService();
+      const created = await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, {
+        logDate: "2026-03-02",
+      });
+      const found = await service.getLogsheetById("user-1", RC_ORG_ID, created.id);
+      expect(found.id).toBe(created.id);
+      expect(found.rentalId).toBe(RENTAL_ID);
+    });
+
+    it("lets the Renter counterparty fetch the same logsheet by its own id alone", async () => {
+      const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+      const created = await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, {
+        logDate: "2026-03-02",
+      });
+      const found = await service.getLogsheetById("user-2", RENTER_ORG_ID, created.id);
+      expect(found.id).toBe(created.id);
+    });
+
+    it("hides the logsheet from a Renter that isn't the counterparty on the underlying rental", async () => {
+      const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+      const created = await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, {
+        logDate: "2026-03-02",
+      });
+      await expect(
+        service.getLogsheetById("user-2", OTHER_RENTER_ORG_ID, created.id),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("rejects an unknown logsheet id", async () => {
+      const service = buildService();
+      await expect(service.getLogsheetById("user-1", RC_ORG_ID, "unknown-id")).rejects.toThrow(
+        NotFoundError,
+      );
+    });
   });
 });

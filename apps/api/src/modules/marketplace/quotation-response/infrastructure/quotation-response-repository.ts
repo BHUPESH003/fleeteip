@@ -14,6 +14,7 @@ const RESPONSE_COLUMNS = [
   "indicative_rate",
   "indicative_rate_unit",
   "notes",
+  "quotation_requested_at",
   "created_at",
   "updated_at",
 ] as const;
@@ -87,6 +88,27 @@ export class QuotationResponseRepository implements QuotationResponseRepositoryP
       .selectAll()
       .where("requirement_id", "=", requirementId)
       .orderBy("created_at", "desc")
+      .execute();
+    return rows.map(toResponseRecord);
+  }
+
+  async markQuotationRequested(id: string) {
+    const row = await this.db
+      .updateTable("quotation_responses")
+      .set({ quotation_requested_at: new Date(), updated_at: new Date() })
+      .where("id", "=", id)
+      .returning(RESPONSE_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toResponseRecord(row);
+  }
+
+  async listRequestedByRentalCompanyOrganization(rentalCompanyOrganizationId: string) {
+    const rows = await this.db
+      .selectFrom("quotation_responses")
+      .selectAll()
+      .where("rental_company_organization_id", "=", rentalCompanyOrganizationId)
+      .where("quotation_requested_at", "is not", null)
+      .orderBy("quotation_requested_at", "desc")
       .execute();
     return rows.map(toResponseRecord);
   }

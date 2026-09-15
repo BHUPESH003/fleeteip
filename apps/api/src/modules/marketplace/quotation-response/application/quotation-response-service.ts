@@ -17,6 +17,9 @@ function toQuotationResponse(record: QuotationResponseRecord): QuotationResponse
     indicativeRate: record.indicative_rate,
     indicativeRateUnit: record.indicative_rate_unit,
     notes: record.notes,
+    quotationRequestedAt: record.quotation_requested_at
+      ? new Date(record.quotation_requested_at).toISOString()
+      : null,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
   };
@@ -63,7 +66,13 @@ export class QuotationResponseService {
       rentalCompanyOrganizationId,
       status: input.status,
       indicativeRate: input.indicativeRate,
-      indicativeRateUnit: input.indicativeRateUnit,
+      // Locked to the requirement's own expectedDurationUnit when it has
+      // one, never trusting the caller for it — otherwise responses to the
+      // same requirement can land in different units (e.g. 6000/day vs.
+      // 150000/month), making the Renter's "lowest"/"spread" comparison
+      // meaningless. Falls back to the caller's own choice only when the
+      // requirement didn't specify a unit to lock to.
+      indicativeRateUnit: requirement.expected_duration_unit ?? input.indicativeRateUnit,
       notes: input.notes,
     });
     if (isFirstResponse) {
@@ -81,6 +90,49 @@ export class QuotationResponseService {
       }
     }
     return toQuotationResponse(record);
+  }
+
+  // The Renter's own action on an "interested" response with no formal
+  // CommercialQuotation yet — the frontend's "Request quotation" button used
+  // to just navigate the Renter to their own /quotations page, which does
+  // nothing for them (only a rental_company can create one there) and never
+  // told the Rental Company anything. This is the actual ask.
+  async requestQuotation(
+    userId: string,
+    renterOrganizationId: string,
+    requirementId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<void> {
+    await this.permissionService.requirePermission(userId, renterOrganizationId, "rfq.manage");
+    const requirement = await this.requirementRepository.findById(requirementId);
+    if (!requirement || requirement.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Requirement not found in this organization");
+    }
+    const response = await this.quotationResponseRepository.findByRequirementAndOrganization(
+      requirementId,
+      rentalCompanyOrganizationId,
+    );
+    if (!response || response.status !== "interested") {
+      throw new ConflictError(
+        "Can only request a quotation from a rental company that responded as interested",
+      );
+    }
+    // Persisted first — this is the durable record of the ask, independent
+    // of whether the notification below actually gets delivered/read/kept,
+    // and it's what backs the Rental Company's own "Requested" filter.
+    await this.quotationResponseRepository.markQuotationRequested(response.id);
+    // Not swallowed like submitResponse's notification — here, notifying
+    // *is* the entire business action, not a side effect alongside a DB
+    // write, so a failure must surface to the Renter rather than silently
+    // doing nothing.
+    await this.notificationService.notify({
+      recipientOrganizationId: rentalCompanyOrganizationId,
+      type: "requirement.quotation_requested",
+      title: "Quotation requested",
+      message: "The Renter has asked you to formalize a commercial quotation for your response.",
+      relatedResourceType: "quotation_request",
+      relatedResourceId: requirementId,
+    });
   }
 
   async getMyResponse(
@@ -116,6 +168,27 @@ export class QuotationResponseService {
       throw new NotFoundError("Requirement not found in this organization");
     }
     const records = await this.quotationResponseRepository.listByRequirement(requirementId);
+    return records.map(toQuotationResponse);
+  }
+
+  // The Rental Company's "Requested" filter on the Quotations page — every
+  // one of its own responses the Renter has explicitly asked it to
+  // formalize. Whether a CommercialQuotation already exists for one of
+  // these is left to the caller to cross-reference (see domain/ports.ts);
+  // this repository has no CommercialQuotation dependency.
+  async listRequestedQuotations(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+  ): Promise<QuotationResponse[]> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rfq.respond",
+    );
+    const records =
+      await this.quotationResponseRepository.listRequestedByRentalCompanyOrganization(
+        rentalCompanyOrganizationId,
+      );
     return records.map(toQuotationResponse);
   }
 }

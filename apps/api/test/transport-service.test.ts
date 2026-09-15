@@ -203,6 +203,7 @@ function fakeTransportRepository(rentals: RentalRecord[] = []): TransportReposit
       records.set(record.id, record);
       return record;
     },
+    findById: async (id) => records.get(id),
     findByRentalAndLeg: async (rentalId, leg) =>
       [...records.values()].find((r) => r.rental_id === rentalId && r.leg === leg),
     listByRental: async (rentalId) => [...records.values()].filter((r) => r.rental_id === rentalId),
@@ -370,5 +371,46 @@ describe("TransportService", () => {
 
     const list = await service.listByOrganization("user-1", RC_ORG_ID);
     expect(list).toHaveLength(2);
+  });
+
+  // getTransportById: the one lookup path that has only the transport
+  // record's own id, no rentalId in hand — the notification/dashboard deep
+  // link case (see docs/decisions.md).
+  describe("getTransportById", () => {
+    it("lets the owning Rental Company fetch a record by its own id alone", async () => {
+      const service = buildService();
+      const created = await service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, {
+        leg: "mobilization",
+      });
+      const found = await service.getTransportById("user-1", RC_ORG_ID, created.id);
+      expect(found.id).toBe(created.id);
+      expect(found.rentalId).toBe(RENTAL_ID);
+    });
+
+    it("lets the Renter counterparty fetch the same record by its own id alone", async () => {
+      const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+      const created = await service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, {
+        leg: "mobilization",
+      });
+      const found = await service.getTransportById("user-2", RENTER_ORG_ID, created.id);
+      expect(found.id).toBe(created.id);
+    });
+
+    it("hides the record from a Renter that isn't the counterparty on the underlying rental", async () => {
+      const service = buildService([rental({ renter_organization_id: RENTER_ORG_ID })]);
+      const created = await service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, {
+        leg: "mobilization",
+      });
+      await expect(
+        service.getTransportById("user-2", OTHER_RENTER_ORG_ID, created.id),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("rejects an unknown transport id", async () => {
+      const service = buildService();
+      await expect(service.getTransportById("user-1", RC_ORG_ID, "unknown-id")).rejects.toThrow(
+        NotFoundError,
+      );
+    });
   });
 });

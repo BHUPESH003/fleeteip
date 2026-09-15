@@ -22,7 +22,7 @@ import type {
 } from "../../../organizations/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import type { AuctionRepositoryPort } from "../../auction/domain/ports.js";
-import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
+import type { RequirementRecord, RequirementRepositoryPort } from "../../rfq/domain/ports.js";
 import type { QuotationResponseRepositoryPort } from "../../quotation-response/domain/ports.js";
 import { NotificationService } from "../../../notification/application/notification-service.js";
 import { RentalService } from "../../rental/application/rental-service.js";
@@ -180,8 +180,9 @@ export class CommercialQuotationService {
       }
     }
 
+    let requirement: RequirementRecord | undefined;
     if (input.requirementId) {
-      const requirement = await this.requirementRepository.findById(input.requirementId);
+      requirement = await this.requirementRepository.findById(input.requirementId);
       if (!requirement) throw new NotFoundError("Requirement not found");
       if (requirement.status !== "open") {
         throw new ConflictError("Cannot quote against a requirement that is not open");
@@ -230,7 +231,12 @@ export class CommercialQuotationService {
       startDate: input.startDate,
       endDate: input.endDate,
       rate: input.rate,
-      rateUnit: input.rateUnit,
+      // Locked to the requirement's own expectedDurationUnit when it has
+      // one, never trusting the caller for it — same reasoning as
+      // QuotationResponseService.submitResponse's indicativeRateUnit: a
+      // formal quotation quoted in a different unit than the requirement
+      // asked for defeats the point of asking for one at all.
+      rateUnit: requirement?.expected_duration_unit ?? input.rateUnit,
       mobilizationCharge: input.mobilizationCharge,
       demobilizationCharge: input.demobilizationCharge,
       overtimeRate: input.overtimeRate,
@@ -386,10 +392,12 @@ export class CommercialQuotationService {
       "quotation.respond",
     );
     const records = await this.quotationRepository.listByRenter(renterOrganizationId);
+    // A draft is the Rental Company still drafting terms — not yet a real
+    // offer, so the Renter never sees it until it's actually sent.
     return Promise.all(
-      records.map(async (record) =>
-        toQuotation(record, await this.resolveMachineInfoForRenter(record)),
-      ),
+      records
+        .filter((record) => record.status !== "draft")
+        .map(async (record) => toQuotation(record, await this.resolveMachineInfoForRenter(record))),
     );
   }
 
@@ -845,6 +853,14 @@ export class CommercialQuotationService {
       existing.rental_company_organization_id === organizationId ||
       existing.renter_organization_id === organizationId;
     if (!isParty) throw new NotFoundError("Quotation not found");
+    // A draft is the Rental Company still drafting terms — hidden from the
+    // Renter side entirely (list, detail, scope items, offers, ...) until
+    // it's actually sent, same as any other "not yours" case. Centralized
+    // here rather than in each caller since every Renter-facing lookup on
+    // a single quotation already routes through this method.
+    if (existing.renter_organization_id === organizationId && existing.status === "draft") {
+      throw new NotFoundError("Quotation not found");
+    }
     return (await this.quotationRepository.expireIfDue(quotationId)) ?? existing;
   }
 

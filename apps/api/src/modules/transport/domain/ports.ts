@@ -40,6 +40,7 @@ export interface UpdateTransportInput {
 
 export interface TransportRepositoryPort {
   create(input: CreateTransportInput): Promise<TransportRecord>;
+  findById(id: string): Promise<TransportRecord | undefined>;
   findByRentalAndLeg(rentalId: string, leg: TransportLeg): Promise<TransportRecord | undefined>;
   listByRental(rentalId: string): Promise<TransportRecord[]>;
   // Standalone Transport screen — every transport record across the Rental

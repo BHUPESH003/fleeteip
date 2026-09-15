@@ -224,6 +224,9 @@ function fakeLogsheetRepository(totals: UtilizationTotals): LogsheetRepositoryPo
     submit: async () => {
       throw new Error("not used in this test");
     },
+    findById: async () => {
+      throw new Error("not used in this test");
+    },
     findByRentalAndDate: async () => {
       throw new Error("not used in this test");
     },
@@ -266,6 +269,22 @@ describe("UtilizationService", () => {
     expect(result.totalRentalDays).toBe(10);
     expect(result.totalOperatingHours).toBe(40);
     expect(result.loggedDayCount).toBe(5);
+  });
+
+  it("reports 0 rental days, not negative, for an open-ended rental that hasn't started yet", async () => {
+    const future = new Date();
+    future.setDate(future.getDate() + 10);
+    const service = new UtilizationService(
+      fakeLogsheetRepository({ totalOperatingHours: 0, totalIdleHours: 0, totalOvertimeHours: 0, loggedDayCount: 0 }),
+      fakeRentalRepository([
+        rental({ start_date: future.toISOString().slice(0, 10), end_date: null }),
+      ]),
+      fakeMachineRepository([machine()]),
+      fakeOrganizationRepository(),
+      fakePermissionService(),
+    );
+    const result = await service.getRentalUtilization("user-1", RC_ORG_ID, RENTAL_ID);
+    expect(result.totalRentalDays).toBe(0);
   });
 
   it("hides a rental belonging to a different organization behind NotFoundError", async () => {

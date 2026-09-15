@@ -6,7 +6,7 @@ import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { NotificationListResponse } from "@fleetip/contracts/notification";
 import type { Organization } from "@fleetip/contracts/organization";
-import type { CommercialQuotation } from "@fleetip/contracts/quotation";
+import type { CommercialQuotation, QuotationResponse } from "@fleetip/contracts/quotation";
 import type { Rental } from "@fleetip/contracts/rental";
 import { Card, LoadingState, Meter, PageHeader } from "@fleetip/ui";
 import { useEffect, useState } from "react";
@@ -23,6 +23,7 @@ interface DashboardData {
   machines: Machine[];
   rentals: Rental[];
   quotations: CommercialQuotation[];
+  requestedQuotations: QuotationResponse[];
   invoices: Invoice[];
   invoiceBalances: Map<string, number>;
   renterNames: Map<string, string>;
@@ -46,6 +47,7 @@ export function RentalCompanyDashboard() {
   const canListQuotations = hasPermission("quotation.manage");
   const canListInvoices = hasPermission("billing.manage");
   const canListAuctions = hasPermission("auction.participate");
+  const canRespondToRfq = hasPermission("rfq.respond");
 
   useEffect(() => {
     if (!organizationId) return;
@@ -61,6 +63,7 @@ export function RentalCompanyDashboard() {
           renterOrgs,
           products,
           auctions,
+          requestedQuotations,
         ] = await Promise.all([
           canListMachines
             ? (apiClient.listMachines(organizationId) as Promise<Machine[]>)
@@ -81,6 +84,9 @@ export function RentalCompanyDashboard() {
           apiClient.listProducts() as Promise<Product[]>,
           canListAuctions
             ? (apiClient.listAuctionsForOrganization(organizationId) as Promise<AuctionSummary[]>)
+            : Promise.resolve([]),
+          canRespondToRfq
+            ? (apiClient.listRequestedQuotations(organizationId) as Promise<QuotationResponse[]>)
             : Promise.resolve([]),
         ]);
 
@@ -103,6 +109,7 @@ export function RentalCompanyDashboard() {
           machines,
           rentals,
           quotations,
+          requestedQuotations,
           invoices,
           invoiceBalances,
           renterNames: new Map(renterOrgs.map((org) => [org.id, org.name])),
@@ -126,6 +133,7 @@ export function RentalCompanyDashboard() {
     machines,
     rentals,
     quotations,
+    requestedQuotations,
     invoices,
     invoiceBalances,
     renterNames,
@@ -135,6 +143,15 @@ export function RentalCompanyDashboard() {
   } = data;
 
   const auctionsSelected = auctions.filter((a) => a.needsAttention);
+  // Dropped once a quotation actually exists for the response — same
+  // cross-reference as the Quotations page's "Requested" filter, so this
+  // stops nagging the moment it's been acted on (even in draft).
+  const fulfilledResponseIds = new Set(
+    quotations.filter((q) => q.quotationResponseId).map((q) => q.quotationResponseId as string),
+  );
+  const pendingQuotationRequests = requestedQuotations.filter(
+    (r) => !fulfilledResponseIds.has(r.id),
+  );
 
   const activeRentalMachineIds = new Set(
     rentals
@@ -235,6 +252,15 @@ export function RentalCompanyDashboard() {
   ];
 
   const attention: AttentionItem[] = [
+    ...pendingQuotationRequests.map((response): AttentionItem => ({
+      ref: `RFQ-${response.requirementId.slice(0, 8).toUpperCase()}`,
+      title: "Quotation requested",
+      detail: `Renter asked you to formalize a quotation${response.indicativeRate ? ` · your indicative rate ${response.indicativeRate}/${response.indicativeRateUnit}` : ""}`,
+      state: response.quotationRequestedAt ? `${Math.abs(daysUntil(response.quotationRequestedAt))}d ago` : "New",
+      tone: "warning",
+      actionLabel: "Quote",
+      href: `/quotations?requirementId=${response.requirementId}`,
+    })),
     ...overdueInvoices.map((invoice): AttentionItem => {
       const rental = rentals.find((r) => r.id === invoice.rentalId);
       const overdueDays = Math.abs(daysUntil(invoice.dueDate));
@@ -245,7 +271,7 @@ export function RentalCompanyDashboard() {
         state: `Overdue ${overdueDays}d`,
         tone: "danger",
         actionLabel: "Record",
-        href: "/billing",
+        href: `/billing?invoiceId=${invoice.id}`,
       };
     }),
     ...awaitingAcceptance.map((q): AttentionItem => ({
@@ -255,7 +281,7 @@ export function RentalCompanyDashboard() {
       state: `${Math.max(daysUntil(q.validityDate), 0)}d`,
       tone: "warning",
       actionLabel: "Follow up",
-      href: "/quotations",
+      href: `/quotations/${q.id}`,
     })),
     ...maintenanceMachines.map((m): AttentionItem => ({
       ref: m.assetCode,
@@ -264,7 +290,7 @@ export function RentalCompanyDashboard() {
       state: "Blocking",
       tone: "danger",
       actionLabel: "Update",
-      href: "/machines",
+      href: `/machines/${m.id}`,
     })),
     ...rentals
       .filter(
@@ -281,7 +307,7 @@ export function RentalCompanyDashboard() {
         state: `${daysUntil(r.endDate as string)}d`,
         tone: "warning",
         actionLabel: "Plan",
-        href: "/rentals",
+        href: `/rentals/${r.id}`,
       })),
     ...auctionsSelected.map((a): AttentionItem => ({
       ref: `AU-${a.id.slice(0, 8).toUpperCase()}`,

@@ -53,7 +53,9 @@ export class UtilizationService {
 
     const totals = await this.logsheetRepository.getRentalTotals(rentalId);
     const today = new Date().toISOString().slice(0, 10);
-    const totalRentalDays = daysBetweenInclusive(rental.start_date, rental.end_date ?? today);
+    // "Days so far" for a start date still in the future (advance-booked,
+    // not yet active) — 0, not a negative count.
+    const totalRentalDays = Math.max(daysBetweenInclusive(rental.start_date, rental.end_date ?? today), 0);
 
     return { rentalId, totalRentalDays, ...totals };
   }

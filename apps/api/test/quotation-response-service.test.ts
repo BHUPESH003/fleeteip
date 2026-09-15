@@ -17,7 +17,10 @@ import type {
   SubmitQuotationResponseInput,
 } from "../src/modules/marketplace/quotation-response/domain/ports.js";
 import { QuotationResponseService } from "../src/modules/marketplace/quotation-response/application/quotation-response-service.js";
-import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
+import type {
+  CreateNotificationInput,
+  NotificationRepositoryPort,
+} from "../src/modules/notification/domain/ports.js";
 import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
 
@@ -143,6 +146,45 @@ function fakeNotificationService(): NotificationService {
   return new NotificationService(throwingRepo, fakePermissionService());
 }
 
+// requestQuotation, unlike submitResponse, doesn't swallow a notification
+// failure (notifying *is* the whole business action here) — needs a fake
+// that actually succeeds and captures what was sent.
+function fakeNotificationServiceCapturing(): {
+  service: NotificationService;
+  sent: CreateNotificationInput[];
+} {
+  const sent: CreateNotificationInput[] = [];
+  const repo: NotificationRepositoryPort = {
+    create: async (input) => {
+      sent.push(input);
+      return {
+        id: "notification-1",
+        recipient_organization_id: input.recipientOrganizationId,
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        related_resource_type: input.relatedResourceType ?? null,
+        related_resource_id: input.relatedResourceId ?? null,
+        read_at: null,
+        created_at: new Date(),
+      };
+    },
+    listByOrganization: async () => {
+      throw new Error("not used in this test");
+    },
+    countUnread: async () => {
+      throw new Error("not used in this test");
+    },
+    markRead: async () => {
+      throw new Error("not used in this test");
+    },
+    markAllRead: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+  return { service: new NotificationService(repo, fakePermissionService()), sent };
+}
+
 function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRecord {
   return {
     id: OPEN_REQUIREMENT_ID,
@@ -215,6 +257,7 @@ function fakeQuotationResponseRepository(): QuotationResponseRepositoryPort {
         indicative_rate: input.indicativeRate ?? null,
         indicative_rate_unit: input.indicativeRateUnit ?? null,
         notes: input.notes ?? null,
+        quotation_requested_at: existing?.quotation_requested_at ?? null,
         created_at: existing?.created_at ?? new Date(),
         updated_at: new Date(),
       };
@@ -226,6 +269,20 @@ function fakeQuotationResponseRepository(): QuotationResponseRepositoryPort {
     findById: async (id) => [...responses.values()].find((r) => r.id === id),
     listByRequirement: async (requirementId) =>
       [...responses.values()].filter((r) => r.requirement_id === requirementId),
+    markQuotationRequested: async (id) => {
+      const entry = [...responses.entries()].find(([, r]) => r.id === id);
+      if (!entry) throw new Error("not used in this test");
+      const [key, existing] = entry;
+      const updated = { ...existing, quotation_requested_at: new Date() };
+      responses.set(key, updated);
+      return updated;
+    },
+    listRequestedByRentalCompanyOrganization: async (rentalCompanyOrganizationId) =>
+      [...responses.values()].filter(
+        (r) =>
+          r.rental_company_organization_id === rentalCompanyOrganizationId &&
+          r.quotation_requested_at !== null,
+      ),
   };
 }
 
@@ -286,6 +343,26 @@ describe("QuotationResponseService", () => {
     });
     expect(response.status).toBe("interested");
     expect(response.indicativeRate).toBe(1200);
+  });
+
+  it("locks the response's rate unit to the requirement's own expectedDurationUnit, ignoring the caller's choice", async () => {
+    const service = buildService([requirement({ expected_duration_unit: "month" })]);
+    const response = await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+      status: "interested",
+      indicativeRate: 1200,
+      indicativeRateUnit: "day",
+    });
+    expect(response.indicativeRateUnit).toBe("month");
+  });
+
+  it("falls back to the caller's chosen unit when the requirement has no expectedDurationUnit", async () => {
+    const service = buildService();
+    const response = await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+      status: "interested",
+      indicativeRate: 1200,
+      indicativeRateUnit: "day",
+    });
+    expect(response.indicativeRateUnit).toBe("day");
   });
 
   it("upserts on resubmission instead of creating a duplicate", async () => {
@@ -357,5 +434,144 @@ describe("QuotationResponseService", () => {
     await expect(
       service.listResponsesForRequirement("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  describe("requestQuotation", () => {
+    it("notifies the interested Rental Company", async () => {
+      const responseRepository = fakeQuotationResponseRepository();
+      const requirementRepository = fakeRequirementRepository();
+      const rcService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "interested",
+        indicativeRate: 1200,
+        indicativeRateUnit: "day",
+      });
+
+      const { service: notificationService, sent } = fakeNotificationServiceCapturing();
+      const renterService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService("renter"),
+        notificationService,
+      );
+      await renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        recipientOrganizationId: RC_ORG_ID,
+        type: "requirement.quotation_requested",
+        relatedResourceType: "quotation_request",
+        relatedResourceId: OPEN_REQUIREMENT_ID,
+      });
+
+      const response = await rcService.getMyResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID);
+      expect(response.quotationRequestedAt).not.toBeNull();
+    });
+
+    it("rejects requesting a quotation from a company that hasn't responded", async () => {
+      const service = new QuotationResponseService(
+        fakeQuotationResponseRepository(),
+        fakeRequirementRepository(),
+        fakePermissionService("renter"),
+        fakeNotificationService(),
+      );
+      await expect(
+        service.requestQuotation("user-1", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects requesting a quotation from a company that responded not_interested", async () => {
+      const responseRepository = fakeQuotationResponseRepository();
+      const requirementRepository = fakeRequirementRepository();
+      const rcService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "not_interested",
+      });
+
+      const renterService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService("renter"),
+        fakeNotificationService(),
+      );
+      await expect(
+        renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects for a requirement belonging to a different Renter organization", async () => {
+      const service = new QuotationResponseService(
+        fakeQuotationResponseRepository(),
+        fakeRequirementRepository(),
+        fakePermissionService("renter"),
+        fakeNotificationService(),
+      );
+      await expect(
+        service.requestQuotation("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("rejects requestQuotation for a Rental Company organization (rfq.manage is Renter-only)", async () => {
+      const service = new QuotationResponseService(
+        fakeQuotationResponseRepository(),
+        fakeRequirementRepository(),
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await expect(
+        service.requestQuotation("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
+      ).rejects.toThrow(ForbiddenError);
+    });
+  });
+
+  describe("listRequestedQuotations", () => {
+    it("lists a response the Renter has requested a quotation for", async () => {
+      const responseRepository = fakeQuotationResponseRepository();
+      const requirementRepository = fakeRequirementRepository();
+      const rcService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService(),
+        fakeNotificationService(),
+      );
+      await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "interested",
+        indicativeRate: 1200,
+        indicativeRateUnit: "day",
+      });
+      const { service: notificationService } = fakeNotificationServiceCapturing();
+      const renterService = new QuotationResponseService(
+        responseRepository,
+        requirementRepository,
+        fakePermissionService("renter"),
+        notificationService,
+      );
+      await renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID);
+
+      const requested = await rcService.listRequestedQuotations("user-1", RC_ORG_ID);
+      expect(requested).toHaveLength(1);
+      expect(requested[0]?.requirementId).toBe(OPEN_REQUIREMENT_ID);
+    });
+
+    it("excludes responses that were never requested", async () => {
+      const service = buildService();
+      await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "interested",
+        indicativeRate: 1200,
+        indicativeRateUnit: "day",
+      });
+      const requested = await service.listRequestedQuotations("user-1", RC_ORG_ID);
+      expect(requested).toHaveLength(0);
+    });
   });
 });

@@ -6,6 +6,7 @@ import type { ActivityItem, AttentionItem, KpiTileData } from "./types";
 
 const NOTIFICATION_TONE: Record<NotificationType, BadgeTone> = {
   "requirement.response_received": "info",
+  "requirement.quotation_requested": "info",
   "quotation.sent": "info",
   "quotation.negotiation_offer": "warning",
   "quotation.offer_accepted": "success",

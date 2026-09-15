@@ -209,7 +209,13 @@ export default function LogsheetsPage() {
             </Link>{" "}
             — open the full rental for billing, transport and more.
           </Alert>
-          <LogsheetPanel organizationId={organizationId} rentalId={selectedRental.id} />
+          <LogsheetPanel
+            organizationId={organizationId}
+            rentalId={selectedRental.id}
+            rentalStatus={selectedRental.status}
+            rentalStartDate={selectedRental.startDate}
+            rentalEndDate={selectedRental.endDate}
+          />
         </div>
       )}
     </div>

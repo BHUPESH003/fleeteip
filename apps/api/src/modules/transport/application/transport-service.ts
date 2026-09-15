@@ -126,6 +126,33 @@ export class TransportService {
     return records.map(toTransport);
   }
 
+  // A transport record's own id, with no rentalId already in hand — the
+  // notification/dashboard "deep link" case. listByRental/listByOrganization
+  // both need a rentalId up front; this is the one path that doesn't.
+  async getTransportById(
+    userId: string,
+    organizationId: string,
+    transportId: string,
+  ): Promise<TransportContract> {
+    const record = await this.transportRepository.findById(transportId);
+    if (!record) {
+      throw new NotFoundError("Transport record not found");
+    }
+    const organization = await this.organizationRepository.findWithTypeById(organizationId);
+    if (organization?.organization_type_code === "renter") {
+      await this.permissionService.requirePermission(userId, organizationId, "transport.respond");
+      const rental = await this.rentalRepository.findById(record.rental_id);
+      if (!rental || rental.renter_organization_id !== organizationId) {
+        throw new NotFoundError("Transport record not found for this organization");
+      }
+      return toTransport(record);
+    }
+
+    await this.permissionService.requirePermission(userId, organizationId, "transport.manage");
+    await this.requireOwnedRental(organizationId, record.rental_id);
+    return toTransport(record);
+  }
+
   async updateTransport(
     userId: string,
     rentalCompanyOrganizationId: string,

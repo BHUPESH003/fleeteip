@@ -9,6 +9,7 @@ export interface QuotationResponseRecord {
   indicative_rate: number | null;
   indicative_rate_unit: RateUnit | null;
   notes: string | null;
+  quotation_requested_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -34,4 +35,14 @@ export interface QuotationResponseRepositoryPort {
   ): Promise<QuotationResponseRecord | undefined>;
   findById(id: string): Promise<QuotationResponseRecord | undefined>;
   listByRequirement(requirementId: string): Promise<QuotationResponseRecord[]>;
+  markQuotationRequested(id: string): Promise<QuotationResponseRecord>;
+  // Every "interested" response this Rental Company has been explicitly
+  // asked to formalize, that doesn't have one yet — the Quotations page's
+  // "Requested" filter. Excluding already-fulfilled ones is left to the
+  // caller (cross-referencing CommercialQuotation.quotationResponseId),
+  // same as elsewhere in this codebase — this repository stays
+  // CommercialQuotation-agnostic.
+  listRequestedByRentalCompanyOrganization(
+    rentalCompanyOrganizationId: string,
+  ): Promise<QuotationResponseRecord[]>;
 }

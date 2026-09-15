@@ -42,6 +42,7 @@ export interface LogsheetRepositoryPort {
   // Upserts on (rental_id, log_date) — resubmitting the same date corrects
   // it rather than duplicating. See docs/execution-and-billing-design.md §4.
   submit(input: SubmitLogsheetInput): Promise<LogsheetRecord>;
+  findById(id: string): Promise<LogsheetRecord | undefined>;
   findByRentalAndDate(rentalId: string, logDate: string): Promise<LogsheetRecord | undefined>;
   listByRental(rentalId: string): Promise<LogsheetRecord[]>;
   // Standalone Logsheets screen — every logsheet across the Rental Company's

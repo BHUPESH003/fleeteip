@@ -20,7 +20,7 @@ import {
 import Link from "next/link";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { formatDate } from "../../../lib/format";
+import { formatDate, todayIsoDate } from "../../../lib/format";
 import { legalNextTransportStatuses, TRANSPORT_STATUS_MAP } from "./shared";
 
 const LEGS: TransportLeg[] = ["mobilization", "demobilization"];
@@ -148,11 +148,19 @@ export function LogsheetPanel({
   organizationId,
   rentalId,
   readOnly = false,
+  rentalStatus,
+  rentalStartDate,
+  rentalEndDate,
 }: {
   organizationId: string;
   rentalId: string;
   /** Renter callers get logsheet.respond (read-only) — hide the submit form. */
   readOnly?: boolean;
+  /** Mirrors the backend's own guard (LogsheetService.submitLogsheet): a
+   * logsheet only makes sense once the machine is actually on site. */
+  rentalStatus: string;
+  rentalStartDate: string;
+  rentalEndDate: string | null;
 }) {
   const [logsheets, setLogsheets] = useState<Logsheet[]>([]);
   const [utilization, setUtilization] = useState<RentalUtilization | null>(null);
@@ -219,9 +227,22 @@ export function LogsheetPanel({
         </Card>
       )}
       <Card>
-        {!readOnly && (
+        {!readOnly && rentalStatus !== "active" && (
+          <p className="mb-4 text-sm text-meta">
+            Logsheets can be submitted once this rental is active (the machine is on site) —
+            currently <span className="font-medium">{rentalStatus}</span>.
+          </p>
+        )}
+        {!readOnly && rentalStatus === "active" && (
           <form onSubmit={handleSubmit} className="mb-4 flex flex-wrap items-end gap-3">
-            <Input label="Date" name="logDate" type="date" required />
+            <Input
+              label="Date"
+              name="logDate"
+              type="date"
+              min={rentalStartDate}
+              max={rentalEndDate && rentalEndDate < todayIsoDate() ? rentalEndDate : todayIsoDate()}
+              required
+            />
             <Input label="Operating hrs" name="operatingHours" type="number" step="0.5" />
             <Input label="Idle hrs" name="idleHours" type="number" step="0.5" />
             <Input label="Overtime hrs" name="overtimeHours" type="number" step="0.5" />
@@ -231,7 +252,13 @@ export function LogsheetPanel({
         {logsheets.length === 0 ? (
           <EmptyState
             title="No logsheets yet"
-            description={readOnly ? "None submitted yet." : "Submit one above."}
+            description={
+              readOnly
+                ? "None submitted yet."
+                : rentalStatus === "active"
+                  ? "Submit one above."
+                  : "None yet — the rental isn't active."
+            }
           />
         ) : (
           <Table>

@@ -76,6 +76,16 @@ export default function MachineDetailPage() {
   const [tab, setTab] = useState(searchParams.get("tab") ?? "overview");
   const [editOpen, setEditOpen] = useState(false);
 
+  // A notification/search hit for a *different* machine reaches this page
+  // via router.push — same route, only the [id] segment differs — which the
+  // App Router doesn't remount the page for either, so the useState
+  // initializer above never re-runs and `tab` stays stuck on whatever it
+  // was for the previous machine. Reset per `id`, reading tab fresh each
+  // time (falls back to "overview" when the new link carries no tab param).
+  useEffect(() => {
+    setTab(searchParams.get("tab") ?? "overview");
+  }, [id]);
+
   async function load(orgId: string) {
     const [machines, utilization, rentals, renterOrgs] = await Promise.all([
       apiClient.listMachines(orgId) as Promise<Machine[]>,

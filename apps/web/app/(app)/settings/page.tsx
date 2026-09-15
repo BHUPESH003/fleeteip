@@ -73,7 +73,16 @@ const MEMBER_STATUS_MAP: StatusMap = {
 export default function SettingsPage() {
   const { session, currentMembership, hasPermission } = useSession();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState(searchParams.get("tab") ?? "organization");
+  const tabParam = searchParams.get("tab");
+  const [tab, setTab] = useState(tabParam ?? "organization");
+
+  // The sidebar's "Organization"/"Settings" links reach this page via
+  // router.push with only the query string changing — the App Router
+  // doesn't remount the page for that, so the useState initializer above
+  // never re-runs on its own. Mirrors OpenMarket.tsx's respondingId effect.
+  useEffect(() => {
+    if (tabParam) setTab(tabParam);
+  }, [tabParam]);
 
   const organizationId = currentMembership?.organizationId;
   const organizationTypeCode = currentMembership?.organization.organizationTypeCode;

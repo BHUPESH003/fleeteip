@@ -18,6 +18,7 @@ import {
   Thead,
   Tr,
 } from "@fleetip/ui";
+import { useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { daysUntil, formatCurrencyINR, formatDate } from "../../../lib/format";
@@ -49,14 +50,16 @@ function InvoiceRow({
   canManage,
   rentalLabel,
   onChanged,
+  highlighted,
 }: {
   invoice: Invoice;
   organizationId: string;
   canManage: boolean;
   rentalLabel: string;
   onChanged: () => void;
+  highlighted?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(Boolean(highlighted));
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,6 +75,21 @@ function InvoiceRow({
     setExpanded((prev) => !prev);
     if (!expanded) await load();
   }
+
+  // A notification/dashboard deep link (?invoiceId=...) — open this one row
+  // without the reader having to find and expand it themselves. Billing has
+  // no [id] detail page, unlike every other resource; this is the closest
+  // equivalent an expand-in-place list can offer. A plain useState
+  // initializer for `expanded` isn't enough here: this link arrives via
+  // router.push, a same-route query-only navigation the App Router doesn't
+  // remount this page for, so an initializer snapshotted at first mount
+  // would stay stuck at its original value.
+  useEffect(() => {
+    if (highlighted) {
+      setExpanded(true);
+      void load();
+    }
+  }, [highlighted]);
 
   async function handleStatus(status: "issued" | "cancelled") {
     try {
@@ -103,7 +121,7 @@ function InvoiceRow({
 
   return (
     <>
-      <Tr>
+      <Tr className={highlighted ? "bg-info-bg" : undefined}>
         <Td className="font-mono">
           {invoice.invoiceNumber}
           <span className="block text-xs font-normal text-meta sm:hidden">Due {formatDate(invoice.dueDate)}</span>
@@ -189,6 +207,8 @@ function InvoiceRow({
 
 export default function BillingPage() {
   const { currentMembership, hasPermission } = useSession();
+  const searchParams = useSearchParams();
+  const highlightedInvoiceId = searchParams.get("invoiceId");
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
   const canManage = organizationType === "rental_company";
@@ -310,6 +330,7 @@ export default function BillingPage() {
                 canManage={canManage}
                 rentalLabel={rentalLabel(invoice.rentalId)}
                 onChanged={() => void load(organizationId)}
+                highlighted={invoice.id === highlightedInvoiceId}
               />
             ))}
           </Tbody>

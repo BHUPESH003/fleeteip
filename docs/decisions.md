@@ -299,6 +299,349 @@ Verified live against the exact reported screenshot's values (`requestedStartDat
 `validityDate: 2026-09-04`, with "today" being 2026-09-15) — now rejected with "Validity date cannot
 be in the past."
 
+## Open Market's "Respond" form: misaligned fields, and anchored below the whole table
+
+Client-reported with a screenshot: the "Interested"/"Not interested" radios in the inline response
+form didn't line up with the Rate/Unit/Notes fields next to them. Root cause: `Input`/`Select` each
+carry their own `mb-3` on their label wrapper (meant for vertically-stacked fields), but the plain
+radio `<label>`s and `<Button>`s in this *horizontal* `items-end` row didn't have it — so their
+visible bottoms landed 12px below the input boxes' bottoms instead of level with them, since
+`align-items` aligns the margin box, not the rendered content box.
+
+While fixing that, a second, bigger UX problem surfaced (client-flagged): the form was rendered once,
+appended after the *entire* table, regardless of which row's "Respond" was clicked — with more than a
+couple of open requirements, responding to an early row meant scrolling all the way down to reach the
+form that just appeared at the bottom.
+
+Fixed both by replacing the inline `<Card>` with a `<Dialog>` (the same modal every other
+create/edit form in the app already uses) instead of patching the margin mismatch in place — a modal
+overlays the page regardless of scroll position, so the scroll problem doesn't exist, and its fields
+stack vertically (`flex-col`), which is what `Input`/`Select`'s `mb-3` was already meant for — the
+misalignment doesn't exist there either. `Card` import was dropped as no longer used in this file.
+
+## Open Market response: rate unit could float freely, quantity vs. stock had no signal
+
+Client raised two questions from a screenshot of the response dialog:
+
+**"Do we allow the user to change the unit of rate while responding — is this a good approach?"**
+No — checked, and it was a live bug, not just a design smell. The Requirement detail page's "Lowest
+indicative"/"Rate spread"/"Lowest" badge all compared `indicativeRate` as a raw number across every
+Rental Company's response, with zero unit normalization: one company quoting 6000/day and another
+quoting 150000/month would show the 150000 as "not lowest" even though its per-day equivalent is
+actually cheaper. Client chose to lock the response's unit to the requirement's own
+`expectedDurationUnit` rather than normalize the comparison math. Implemented in
+`QuotationResponseService.submitResponse`: when the requirement specifies a duration unit, that value
+is used unconditionally, server-side, ignoring whatever the caller submitted — never trusting the
+client for it, even though the frontend also hides the picker and shows the locked unit as read-only
+in that case. Falls back to the caller's own choice only when the requirement never specified a unit
+(so responses to that kind of requirement can still land in different units) — the requirement
+detail page's comparison stats account for this residual case by refusing to compute "lowest"/"spread"
+across a mixed-unit response set, showing "Mixed units" instead of a misleading number.
+
+**"The renter is asking for 3 machines but the rental company only has one — isn't there supposed to
+be a warning?"** Confirmed: no check existed, and more fundamentally `Requirement.quantity` isn't
+wired to anything downstream at all — `Rental`/`CommercialQuotation` are both single-machine records
+with no quantity concept, so there's no defined answer today for how a quantity > 1 requirement
+actually gets fulfilled (one quotation covering all of them vs. several separate ones). Client chose
+the lightweight fix, not designing real fulfillment tracking: the response dialog now shows the
+responding Rental Company their own registered machine count for that subcategory next to the form
+("You have 1 matching machine registered — this requirement needs 3") whenever it's short of the
+requirement's quantity — informational only, doesn't block submission. Gated behind
+`equipment.manage` like the existing "only equipment I stock" filter on this same page, for the same
+reason: a role that can't see the org's fleet gets no false "0" reading.
+
+**"Why do we need a 'Not interested' button — if a Rental Company isn't interested, they just won't
+respond?"** Answered, no code change: it does two real things today — it moves the requirement out of
+*that* company's own "Needs response" queue (`hasResponse` on the Open Market filters doesn't
+distinguish interested from not_interested), and it gives the Renter an explicit "seen and declined"
+signal in their response list, distinct from "no one's discovered it yet" — genuine market feedback a
+silent non-response can't provide. Left as-is; flagged as a legitimate simplification to cut later if
+wanted, not a bug.
+
+## Notifications and dashboard "Waiting on you" links landed on list pages, not the item itself
+
+Client-reported, portal-wide: clicking a notification, or an item in a dashboard's "Waiting on
+you" panel, opened the base list route (`/requirements`, `/quotations`, `/billing`, `/machines`,
+`/rentals`) instead of the specific record it was about. Audited every source of these links:
+
+- `NotificationBell.tsx`'s `ROUTE_BY_RESOURCE_TYPE` had a comment claiming "No per-id detail route
+  exists for these resources yet" for `requirement`/`quotation`/`auction` — stale; `/requirements/[id]`
+  and `/quotations/[id]` detail pages both exist now (added earlier this session/phase). Fixed those
+  three, and found the map was also silently missing three resource types real `notify()` calls
+  actually emit — `invoice`, `work_order`, `transport` — which meant clicking those notifications did
+  *nothing at all* (not even a wrong page), since a missing map entry short-circuits navigation
+  entirely. Added all three.
+- `RenterDashboard.tsx`/`RentalCompanyDashboard.tsx`'s "Waiting on you" (`attention`) items had the
+  identical bug for quotations, invoices, requirements, machines, and rentals — only the two
+  auction-related items (added later) were already correctly parametrized. Fixed all of them to the
+  specific record's own link.
+
+Two resource types have no `[id]` detail page at all, so "the exact same bug" isn't fixable the same
+way for them:
+
+- **Auction** — no detail route; `/auctions` already supports selecting one via
+  `?auctionId=`/`?requirementId=` query params (used correctly by the auction-related attention
+  items already). Notification links now use the same convention.
+- **Invoice/Billing** — no detail route *and* no existing query-param convention at all (a flat list
+  with expand-in-place rows, `InvoiceRow`). Added one: `billing/page.tsx` now reads `?invoiceId=`,
+  auto-expands the matching row and highlights it — the closest equivalent an expand-in-place list
+  can offer to a real detail page.
+
+**Transport was a deeper gap, not just a wrong href**: its `[id]` page required a `rentalId` query
+param to load at all (`listTransportForRental` + client-side filter by id — there was no
+get-transport-by-id capability, an explicitly documented limitation in the page's own dead-end
+`EmptyState` for exactly this case). A notification only carries the transport record's own id, so
+this class of link could never work without fixing that underlying gap first. Added it properly, the
+same shape every other single-resource lookup in this codebase already has:
+`TransportRepositoryPort.findById`, `TransportService.getTransportById` (branches by organization
+type — rental_company via `transport.manage`/ownership, renter via `transport.respond`/counterparty,
+mirroring `listByRental`), and `GET /organizations/:organizationId/transport-records/:id`. The detail
+page now resolves its own `rentalId` from the record when the query param is absent, instead of
+refusing to load.
+
+**Bonus bug caught in the same file while fixing that**: `transport/[id]/page.tsx`'s own permission
+gate was `hasPermission("transport.manage")` unconditionally — `transport.manage` is
+rental_company-only per `PERMISSION_ORGANIZATION_TYPES`, so this page was already unconditionally
+unreachable for every Renter regardless of role, the identical "wrong org-type's permission checked"
+bug class as the `getRental`/notifications fixes earlier this session. Fixed to branch by organization
+type like `canGetRental` right next to it already did.
+
+Given that, audited every other `[id]` page's own top-level `hasPermission(...)` gate (not just its
+ancillary-data gates, which had already been swept earlier) for the same single-org-type mistake.
+Found one more, structurally identical down to the same dead-end `EmptyState` wording:
+`logsheets/[id]/page.tsx` — `canView` was hardcoded to `hasPermission("logsheet.manage")`
+(rental_company-only), unconditionally blocking every Renter, even though `LogsheetService.listByRental`
+already correctly branches (`logsheet.respond` for a renter counterparty). Fixed the same way as
+Transport: `LogsheetRepositoryPort.findById`, `LogsheetService.getLogsheetById`, a new
+`GET /organizations/:organizationId/logsheets/:id` route, and the frontend gate + rentalId resolution
+fixed to match. `maintenance/[id]/page.tsx`'s equivalent gate was checked too and found correct as-is —
+every `MaintenanceService` method requires `maintenance.manage` with no renter-facing counterpart at
+all (no `maintenance.respond` permission exists), so Maintenance is genuinely rental-company-internal
+by design, not a bug.
+
+## "Request quotation" didn't request anything
+
+Client-reported, with a screenshot: on a Renter's Requirement detail page, a Rental Company that
+responded "interested" but hasn't yet formalized a `CommercialQuotation` shows a "Request quotation"
+link — it just navigated to `/quotations?requirementId=...`, the Renter's own Quotations page. Checked
+what that actually does for a Renter: `CreateQuotationDialog` (the thing that `requirementId` query
+param is meant to open) only renders when `organizationType === "rental_company"` — for a Renter it's a
+complete no-op, landing on a plain list with nothing pre-filled and no way to act on it. Renters can't
+create quotations at all (`quotation.manage` is rental_company-only); the button's entire premise was
+navigating the wrong party to a screen only the *other* party can use.
+
+The real ask, per the button's own label and the client's report: tell the Rental Company the Renter
+wants a formal quotation. Added the actual action instead of a broken redirect:
+- New notification type `requirement.quotation_requested`.
+- `QuotationResponseService.requestQuotation(userId, renterOrganizationId, requirementId,
+  rentalCompanyOrganizationId)` — `rfq.manage` (Renter-only), requires the target company's own
+  response to exist and be `"interested"` (`ConflictError` otherwise), then notifies that company.
+  Deliberately **not** wrapped in the "swallow notification failures" try/catch every other caller in
+  this codebase uses — those calls have already done their real DB write and the notification is a
+  side effect; here, notifying the Rental Company *is* the entire business action, so a failure has to
+  surface to the Renter rather than silently doing nothing while returning success.
+- `POST /organizations/:organizationId/requirements/:requirementId/responses/:rentalCompanyOrganizationId/request-quotation`.
+- The Rental Company's notification needs its own `relatedResourceType` (`quotation_request`, not
+  `requirement`) — `/requirements/[id]` is Renter-only, so a Rental Company clicking a plain
+  `requirement`-typed notification would hit a permission wall. Routes to
+  `/quotations?requirementId=...` instead — the create-quotation flow that param shape was always
+  meant for.
+- Frontend: the link is now a button that calls the endpoint and swaps to "Requested" in place,
+  instead of navigating the Renter anywhere — the whole point was to notify someone else, not to send
+  the Renter to a different page.
+
+Verified live end-to-end: submitted an interested response as a Rental Company, called
+"Request quotation" as the Renter, confirmed the notification actually landed in the Rental Company's
+own notification list with the right type/message/link. Also verified the guard rails: a Rental
+Company calling this on itself gets 403 (`rfq.manage` is Renter-only), and requesting from a company
+that never responded (or responded not-interested) gets a 409 `ConflictError`.
+
+## Clicking "Quotation requested" landed on Quotations but never opened the form
+
+Client-reported, right after the previous fix shipped: clicking the new "Quotation requested"
+notification navigated to `/quotations?requirementId=...` correctly, but `CreateQuotationDialog` never
+opened — no pre-filled form, just the plain list.
+
+Root cause: `const [createOpen, setCreateOpen] = useState(Boolean(requirementIdParam ||
+sourceAuctionIdParam))` — a `useState` **initializer**, which only runs once, at first mount. The
+notification bell navigates with `router.push(...)`, a same-route, query-only transition — the App
+Router doesn't remount the page for that, only re-renders it with the new `searchParams`. So if
+`QuotationsPage` was already mounted (which it very often is — the sidebar nav, prior visits, or
+simply having the tab open), `createOpen`'s initializer never re-runs and silently stays `false`
+forever, no matter what the URL says. The tell was sitting two lines below it the whole time: the
+`quotationIdParam` redirect already does this correctly, as a `useEffect` that re-runs whenever the
+param actually changes — proof this is a real bug, not a design choice, and exactly what the fix
+should mirror. Added the matching effect: `useEffect(() => { if (requirementIdParam ||
+sourceAuctionIdParam) setCreateOpen(true) }, [requirementIdParam, sourceAuctionIdParam])`.
+
+**Caught the identical bug in my own prior commit before it was even reported**: `billing/page.tsx`'s
+`InvoiceRow` had `const [expanded, setExpanded] = useState(Boolean(highlighted))` — same
+initializer-vs-query-only-navigation mismatch, meaning the `?invoiceId=` deep link I'd just built would
+correctly fetch the invoice's detail (that part *was* a reactive `useEffect`) but never actually expand
+the row to show it, for the exact same reason. Fixed by moving `setExpanded(true)` into the existing
+reactive effect instead of the state initializer.
+
+**Not chased further, flagged instead**: the same `useState(Boolean(...))`/`useState(searchParams.get(...))`
+pattern also exists for tab state in `settings/page.tsx`, `machines/[id]/page.tsx`, and
+`rentals/[id]/page.tsx` (e.g. the sidebar's "Organization" link to `/settings?tab=organization`, clicked
+while already on `/settings` in a different tab). Plausibly the same bug, but unverified and unreported
+— left alone rather than speculatively rewritten; worth a look if a similar "link doesn't do what it
+says" report comes in for those.
+
+## Full sweep of the useState-from-searchParams bug, plus three Create Quotation gaps
+
+Client asked to check every screen for the same bug class just fixed on Quotations/Billing, and
+separately flagged three more issues on the "Create a quotation" form from a screenshot. Handled
+together since they touched the same two files.
+
+**The searchParams sweep** (dispatched to an agent, since it needed checking every `<Link>`/
+`router.push` across the app against every `useState` seeded from `useSearchParams()`, not just
+grep hits): confirmed the App Router remounts a page for neither a query-only change **nor a
+changed `[id]` dynamic segment** (verified: no `key={id}` anywhere, no `template.tsx` files) — so
+the bug applies to cross-record navigation too, not just query-only. Found and fixed three more real
+instances:
+- `settings/page.tsx`'s `tab` state — the sidebar's "Organization"/"Settings" links do nothing while
+  already on Settings in a different tab. Fixed with the same `useEffect(() => { if (tabParam)
+  setTab(tabParam) }, [tabParam])` idiom.
+- `machines/[id]/page.tsx` and `rentals/[id]/page.tsx`'s `tab` state — opening a notification/search
+  hit for a *different* machine or rental lands on the new record's page still showing whatever tab
+  was selected for the previous one, since a changed `[id]` doesn't remount either. Fixed with
+  `useEffect(() => { setTab(searchParams.get("tab") ?? "overview") }, [id])` — unconditional and
+  keyed on `id`, so a fresh id with no tab param correctly resets to "overview" instead of staying
+  wherever it was.
+- `CreateQuotationDialog.tsx`'s `loadingContext`/`loadingAuctionPrefill` — the dialog stays mounted
+  (only `open` toggles), so a second notification for a *different* requirement arriving after these
+  flags already settled to `false` never flips them back to `true`; the form briefly rendered as a
+  manual quotation (no requirement banner, no locked renter, no pre-filled rate) for the duration of
+  the re-fetch. Fixed by setting them `true` at the start of each effect, not just relying on the
+  mount-time initializer.
+
+Checked and confirmed **not** live bugs, left alone: `auctions/page.tsx`'s `selectedRequirementId`
+(every path to `/auctions?requirementId=...` crosses a different route first, always a fresh mount),
+`transport/[id]/page.tsx`'s `rentalId` (self-healing — the data-loading effect already unconditionally
+calls `setRentalId` on every relevant param change), and `CreateQuotationDialog`'s `customerMode`
+initializer (masked by `isFromRequirement`, itself a correctly-recomputed plain `const`, not stateful —
+no observable symptom).
+
+**Three more issues on Create Quotation, all client-reported from one screenshot:**
+
+1. **"The rate unit lets you change it instead of keeping what was requested."** Same fix as
+   `QuotationResponseService.submitResponse`'s `indicativeRateUnit` from a few commits earlier:
+   `CommercialQuotationService.createQuotation` now locks `rateUnit` to the requirement's own
+   `expectedDurationUnit` when it has one, server-side and unconditional. The dialog hides the picker
+   and shows the locked unit read-only in that case, same UI pattern as the Open Market response
+   dialog.
+2. **"If the requirement needs more than one machine, we only let the user pick one."** Confirmed
+   the data model already supports it — `commercial_quotations` has no unique constraint on
+   `requirementId` alone, so multiple quotations against the same requirement (one per machine) were
+   always possible, the dialog just never let you pick more than one. Changed the Machine field from
+   a single `<Select>` to a checkbox list; submitting now creates one `CommercialQuotation` per
+   selected machine, all with the same terms (the Renter asked for N of the same equipment type, not
+   N different deals) — partial failures are reported by asset code rather than silently dropped, and
+   the dialog only closes once every selected machine succeeded.
+3. **Client asked for a "Requested" filter + count on the Quotations page**, so a Rental Company
+   doesn't have to rely on still having the notification to find what's waiting on them. This needed
+   real persistence, not just reading notifications: added `quotation_responses.quotation_requested_at`
+   (migration `0028`), set by `QuotationResponseService.requestQuotation` (persisted *before* the
+   notification send — it's the durable record of the ask, independent of whether the notification
+   itself is ever delivered/read/kept) alongside a new `listRequestedQuotations` method/route,
+   `GET .../requested-quotations`. The Quotations page fetches this list (rental_company only) and
+   cross-references it against existing quotations' `quotationResponseId` to drop off ones already
+   formalized, rendering a distinct table (no CommercialQuotation exists yet for these) with a
+   "Create quotation" action per row that opens the same dialog, prefilled.
+
+   **That cross-reference exposed a real, separate, pre-existing bug while building it**:
+   `CreateQuotationDialog` never actually sent `quotationResponseId` when creating a quotation from a
+   requirement — the field exists on the contract and the backend already validates it correctly (see
+   the "Path A" test `commercial-quotation-service.test.ts` had all along), the frontend just never
+   populated it. This meant every commercial quotation ever formalized from a response was silently
+   unlinked from that response — which is also why the Renter's requirement detail page's "Open
+   {reference}" link next to an interested response has likely never actually resolved
+   (`quotationByResponseId` had nothing to match against). Fixed by having the dialog also fetch the
+   Rental Company's own response for the requirement (best-effort — creating straight from Open
+   Market with no prior response is still valid) and include its id in the create payload.
+
+Verified live end-to-end: created a requirement with `expectedDurationUnit: month`, submitted a
+response with `day`, requested a quotation, confirmed it appears in `GET .../requested-quotations`;
+created a quotation for it with `rateUnit: day` in the payload and confirmed it came back `month`;
+created a second quotation against the same requirement for a different machine (no unique-constraint
+conflict, confirming the multi-machine fan-out is safe); created a third quotation explicitly passing
+`quotationResponseId` and confirmed it round-trips correctly linked.
+
+## A draft quotation was fully visible to the Renter — list, detail, scope items, offers
+
+Client-reported (from the multi-machine quotation screenshot, seeing 3 fresh "Draft" rows and asking
+why): confirmed the Renter side had no status filter anywhere. `listQuotationsForRenter` listed every
+quotation regardless of status, and `getQuotation`/`listScopeItems`/`listOffers`/`makeOffer`/
+`acceptOffer` all route through the same `loadAsParty` helper, which only checked "is this
+organization a party to the quotation at all" — never whether it had actually been sent yet. A Rental
+Company drafting terms (adjusting rate, working hours, scope items) had all of that visible to the
+Renter in real time, before ever choosing to send it.
+
+Fixed at the shared choke point rather than in each caller: `loadAsParty` now also throws
+`NotFoundError` when the caller is the Renter party and the quotation is still `"draft"` — same
+"hide, don't 403" tenant-isolation pattern already used everywhere else in this codebase — which
+automatically covers every method that already calls it. `listQuotationsForRenter` gets the matching
+list-level filter. The drafting Rental Company's own view is completely unaffected (draft is very
+much visible to them — it's their own in-progress work). A quotation becomes visible to the Renter the
+moment `sendQuotation` moves it to `"sent"`, never before.
+
+Verified live: a Rental Company with 4 drafts and 1 awarded quotation — the Renter's own list showed
+only the 1 awarded one; fetching a draft's id directly as the Renter returned 404.
+
+## "Quotation requested" was still notification-only — no dashboard attention item
+
+Client follow-up on the earlier "Request quotation" fix: the Rental Company's dashboard "Waiting on
+you" panel had no entry for a Renter's quotation request at all — it only ever existed as a
+notification-bell entry and (from an earlier round) a tab on the Quotations page itself, neither of
+which surfaces on the dashboard the way every other actionable item (overdue invoices, awaiting
+acceptance, blocked machines, auctions needing selection) already does. Added it: `RentalCompanyDashboard`
+now fetches `listRequestedQuotations` (gated on `rfq.respond`, matching the API's own gate) and adds
+one attention item per still-pending request — same fulfilled-cross-reference against
+`CommercialQuotation.quotationResponseId` as the Quotations page's "Requested" tab, so it drops off
+the moment a quotation (even a draft) exists for it. Placed first in the attention list — it's a
+direct customer ask, not an internal housekeeping item.
+
+## Logsheets: no date validation, and no check that the machine was ever delivered
+
+Client-reported, with a screenshot showing a logsheet logged for "01 Sept 2026" against a rental that
+doesn't start until "26 Sept 2026" — plus "Rental days: -10" on the same page. Two real, related gaps
+in `LogsheetService.submitLogsheet`, which had zero validation beyond "does this rental belong to this
+organization":
+
+- **No status check at all.** A rental only reaches `"active"` once the Rental Company has confirmed
+  the machine is actually on site (the Rental detail page's own banner: "plan mobilization, then mark
+  Active once the machine is on site") — `submitLogsheet` let a Rental Company log hours against a
+  rental still sitting at `"confirmed"`, before anything had been mobilized. Fixed: submission now
+  requires `rental.status === "active"`.
+- **No date bounds at all.** `logDate` could be anything — before the rental even started, after it
+  ended, or in the future. Fixed: must fall within `[rental.start_date, rental.end_date ?? unbounded]`
+  and can't be in the future (you can't log actual operating hours for a day that hasn't happened).
+
+Also fixed the "Rental days: -10" display bug this same screenshot showed: `getRentalUtilization`'s
+`daysBetweenInclusive(start, end ?? today)` goes negative for an open-ended rental whose start date is
+still in the future (advance-booked, not yet active) — clamped to a floor of 0 ("hasn't started yet"
+instead of a nonsensical negative count).
+
+These are service-layer checks, not Zod contract refines (unlike most of this session's other date
+work) — the "must be active" rule needs the Rental record in hand, not just the request body, so it
+couldn't live in the schema. That also means `seed-demo-data.ts`, which drives services directly and
+bypasses every Zod contract, was **not** immune this time: its Journey 1 execution timeline
+(mobilization → logsheets → invoice → payment) used `daysFromNow` offsets that land in the future,
+which the new future-date check now correctly rejects. Fixed by shifting that whole timeline back
+15 days so it represents a rental that started 5 days ago and has been running since — a more
+realistic demo scenario anyway than a rental that "hasn't started yet" but already has logsheets and
+an invoice against it.
+
+Added matching frontend checks per client request ("add those checks in frontend as well which are
+possible"): `LogsheetPanel` now takes the rental's own status/start/end date, hides the submission
+form entirely (with an explanatory line) while the rental isn't `"active"`, and sets `min`/`max` on
+the date input to the rental's own span (capped at today) once it is.
+
+Verified live: a freshly-created "confirmed" rental correctly rejects a logsheet with "Logsheets can
+only be submitted while the rental is active"; once marked active, a date before its start date and a
+date in the future are both correctly rejected with the specific reason.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

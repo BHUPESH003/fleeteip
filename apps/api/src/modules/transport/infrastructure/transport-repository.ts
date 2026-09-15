@@ -68,6 +68,15 @@ export class TransportRepository implements TransportRepositoryPort {
     }
   }
 
+  async findById(id: string) {
+    const row = await this.db
+      .selectFrom("transport_records")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return row ? toTransportRecord(row) : undefined;
+  }
+
   async findByRentalAndLeg(rentalId: string, leg: string) {
     const row = await this.db
       .selectFrom("transport_records")
