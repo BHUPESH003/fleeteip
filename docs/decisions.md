@@ -602,6 +602,46 @@ one attention item per still-pending request — same fulfilled-cross-reference 
 the moment a quotation (even a draft) exists for it. Placed first in the attention list — it's a
 direct customer ask, not an internal housekeeping item.
 
+## Logsheets: no date validation, and no check that the machine was ever delivered
+
+Client-reported, with a screenshot showing a logsheet logged for "01 Sept 2026" against a rental that
+doesn't start until "26 Sept 2026" — plus "Rental days: -10" on the same page. Two real, related gaps
+in `LogsheetService.submitLogsheet`, which had zero validation beyond "does this rental belong to this
+organization":
+
+- **No status check at all.** A rental only reaches `"active"` once the Rental Company has confirmed
+  the machine is actually on site (the Rental detail page's own banner: "plan mobilization, then mark
+  Active once the machine is on site") — `submitLogsheet` let a Rental Company log hours against a
+  rental still sitting at `"confirmed"`, before anything had been mobilized. Fixed: submission now
+  requires `rental.status === "active"`.
+- **No date bounds at all.** `logDate` could be anything — before the rental even started, after it
+  ended, or in the future. Fixed: must fall within `[rental.start_date, rental.end_date ?? unbounded]`
+  and can't be in the future (you can't log actual operating hours for a day that hasn't happened).
+
+Also fixed the "Rental days: -10" display bug this same screenshot showed: `getRentalUtilization`'s
+`daysBetweenInclusive(start, end ?? today)` goes negative for an open-ended rental whose start date is
+still in the future (advance-booked, not yet active) — clamped to a floor of 0 ("hasn't started yet"
+instead of a nonsensical negative count).
+
+These are service-layer checks, not Zod contract refines (unlike most of this session's other date
+work) — the "must be active" rule needs the Rental record in hand, not just the request body, so it
+couldn't live in the schema. That also means `seed-demo-data.ts`, which drives services directly and
+bypasses every Zod contract, was **not** immune this time: its Journey 1 execution timeline
+(mobilization → logsheets → invoice → payment) used `daysFromNow` offsets that land in the future,
+which the new future-date check now correctly rejects. Fixed by shifting that whole timeline back
+15 days so it represents a rental that started 5 days ago and has been running since — a more
+realistic demo scenario anyway than a rental that "hasn't started yet" but already has logsheets and
+an invoice against it.
+
+Added matching frontend checks per client request ("add those checks in frontend as well which are
+possible"): `LogsheetPanel` now takes the rental's own status/start/end date, hides the submission
+form entirely (with an explanatory line) while the rental isn't `"active"`, and sets `min`/`max` on
+the date input to the rental's own span (capped at today) once it is.
+
+Verified live: a freshly-created "confirmed" rental correctly rejects a logsheet with "Logsheets can
+only be submitted while the rental is active"; once marked active, a date before its start date and a
+date in the future are both correctly rejected with the specific reason.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

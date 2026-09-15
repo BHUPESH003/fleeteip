@@ -81,7 +81,7 @@ async function main() {
       projectName: "Metro Bridge Foundation",
       siteLocation: "Jaipur",
       state: "Rajasthan",
-      startDate: daysFromNow(9),
+      startDate: daysFromNow(-6),
     },
   );
   const desertProject = await container.projectService.createProject(
@@ -153,8 +153,8 @@ async function main() {
       projectId: metroProject.id,
       productSubcategoryId: trackedExcavatorSub.id,
       quantity: 1,
-      requestedStartDate: daysFromNow(10),
-      validityDate: daysFromNow(7),
+      requestedStartDate: daysFromNow(-5),
+      validityDate: daysFromNow(-8),
       shiftPattern: "double",
       crewRequirement: "one_crew_set",
       notes: "20T class tracked excavator needed for bridge foundation excavation.",
@@ -174,10 +174,10 @@ async function main() {
       requirementId: requirement1.id,
       quotationResponseId: response1.id,
       machineId: apexExcavator.id,
-      startDate: daysFromNow(10),
+      startDate: daysFromNow(-5),
       rate: 6500,
       rateUnit: "day",
-      validityDate: daysFromNow(9),
+      validityDate: daysFromNow(-6),
       fuelScope: "company",
       operatorScope: "with_operator",
       workingHours: 8,
@@ -201,7 +201,7 @@ async function main() {
     metroInfra.userId,
     metroInfra.organizationId,
     quotation1.id,
-    { rate: 6000, rateUnit: "day", startDate: daysFromNow(10), notes: "Can we agree on 6000/day?" },
+    { rate: 6000, rateUnit: "day", startDate: daysFromNow(-5), notes: "Can we agree on 6000/day?" },
   );
   await container.commercialQuotationService.acceptOffer(
     apex.userId,
@@ -331,7 +331,7 @@ async function main() {
     leg: "mobilization",
     pickupLocation: "Apex Yard, Jaipur",
     destination: "Metro Bridge Site, Jaipur",
-    plannedDate: daysFromNow(9),
+    plannedDate: daysFromNow(-6),
   });
   await container.transportService.updateTransport(
     apex.userId,
@@ -345,7 +345,7 @@ async function main() {
     apex.organizationId,
     rental1.id,
     "mobilization",
-    { status: "delivered", actualDate: daysFromNow(10) },
+    { status: "delivered", actualDate: daysFromNow(-5) },
   );
   await container.rentalService.updateRentalStatus(
     apex.userId,
@@ -354,13 +354,13 @@ async function main() {
     "active",
   );
   await container.logsheetService.submitLogsheet(apex.userId, apex.organizationId, rental1.id, {
-    logDate: daysFromNow(10),
+    logDate: daysFromNow(-5),
     operatingHours: 8,
     idleHours: 1,
     overtimeHours: 0,
   });
   await container.logsheetService.submitLogsheet(apex.userId, apex.organizationId, rental1.id, {
-    logDate: daysFromNow(11),
+    logDate: daysFromNow(-4),
     operatingHours: 9,
     idleHours: 0.5,
     overtimeHours: 1,
@@ -368,9 +368,9 @@ async function main() {
 
   const invoice1 = await container.billingService.createInvoice(apex.userId, apex.organizationId, {
     rentalId: rental1.id,
-    billingPeriodStart: daysFromNow(10),
-    billingPeriodEnd: daysFromNow(11),
-    dueDate: daysFromNow(25),
+    billingPeriodStart: daysFromNow(-5),
+    billingPeriodEnd: daysFromNow(-4),
+    dueDate: daysFromNow(10),
     taxAmount: 720,
     lineItems: [{ description: "Excavator rental, 2 days @ 6000/day", quantity: 2, rate: 6000 }],
   });
@@ -382,7 +382,7 @@ async function main() {
   );
   await container.billingService.recordPayment(apex.userId, apex.organizationId, invoice1.id, {
     amount: 6000,
-    paidDate: daysFromNow(12),
+    paidDate: daysFromNow(-3),
     method: "bank_transfer",
     reference: "NEFT-DEMO-0001",
   });

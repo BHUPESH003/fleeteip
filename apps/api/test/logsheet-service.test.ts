@@ -18,7 +18,7 @@ import type {
   UtilizationTotals,
 } from "../src/modules/logsheet/domain/ports.js";
 import { LogsheetService } from "../src/modules/logsheet/application/logsheet-service.js";
-import { ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
@@ -282,6 +282,38 @@ describe("LogsheetService", () => {
     });
     expect(record.machineId).toBe(MACHINE_ID);
     expect(record.operatingHours).toBe(8);
+  });
+
+  it("rejects submitting a logsheet while the rental isn't active yet", async () => {
+    const service = buildService([rental({ status: "confirmed" })]);
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects a log date before the rental's own start date", async () => {
+    const service = buildService();
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-02-28" }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects a log date after the rental's own end date", async () => {
+    const service = buildService();
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-11" }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects a log date in the future", async () => {
+    const service = buildService([rental({ end_date: null })]);
+    const future = new Date();
+    future.setDate(future.getDate() + 5);
+    await expect(
+      service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, {
+        logDate: future.toISOString().slice(0, 10),
+      }),
+    ).rejects.toThrow(ValidationError);
   });
 
   it("upserts on the same date instead of creating a duplicate", async () => {

@@ -337,7 +337,14 @@ export default function RentalDetailPage() {
         <TransportPanel organizationId={organizationId} rentalId={id} readOnly={isRenter} />
       )}
       {tab === "logsheets" && canReadLogsheets && (
-        <LogsheetPanel organizationId={organizationId} rentalId={id} readOnly={isRenter} />
+        <LogsheetPanel
+          organizationId={organizationId}
+          rentalId={id}
+          readOnly={isRenter}
+          rentalStatus={rental.status}
+          rentalStartDate={rental.startDate}
+          rentalEndDate={rental.endDate}
+        />
       )}
 
       {tab === "maintenance" && !isRenter && machine && (

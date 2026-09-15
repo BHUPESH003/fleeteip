@@ -1,5 +1,6 @@
 import type { Logsheet, SubmitLogsheetRequest } from "@fleetip/contracts/logsheet";
-import { NotFoundError } from "../../../shared/errors.js";
+import { isFutureIsoDate } from "@fleetip/contracts/shared";
+import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
@@ -47,6 +48,25 @@ export class LogsheetService {
     const rental = await this.rentalRepository.findById(rentalId);
     if (!rental || rental.rental_company_organization_id !== rentalCompanyOrganizationId) {
       throw new NotFoundError("Rental not found in this organization");
+    }
+    // "active" is this app's own signal that the machine is actually on
+    // site (see the Rental detail page's own banner: "plan mobilization,
+    // then mark Active once the machine is on site") — before that there's
+    // nothing to log yet, and once off_rent/completed the engagement is
+    // closed.
+    if (rental.status !== "active") {
+      throw new ConflictError(
+        "Logsheets can only be submitted while the rental is active (the machine is on site)",
+      );
+    }
+    if (input.logDate < rental.start_date) {
+      throw new ValidationError("Log date cannot be before the rental's start date");
+    }
+    if (rental.end_date && input.logDate > rental.end_date) {
+      throw new ValidationError("Log date cannot be after the rental's end date");
+    }
+    if (isFutureIsoDate(input.logDate)) {
+      throw new ValidationError("Log date cannot be in the future");
     }
 
     const record = await this.logsheetRepository.submit({
