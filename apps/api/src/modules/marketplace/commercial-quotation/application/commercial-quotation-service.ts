@@ -392,10 +392,12 @@ export class CommercialQuotationService {
       "quotation.respond",
     );
     const records = await this.quotationRepository.listByRenter(renterOrganizationId);
+    // A draft is the Rental Company still drafting terms — not yet a real
+    // offer, so the Renter never sees it until it's actually sent.
     return Promise.all(
-      records.map(async (record) =>
-        toQuotation(record, await this.resolveMachineInfoForRenter(record)),
-      ),
+      records
+        .filter((record) => record.status !== "draft")
+        .map(async (record) => toQuotation(record, await this.resolveMachineInfoForRenter(record))),
     );
   }
 
@@ -851,6 +853,14 @@ export class CommercialQuotationService {
       existing.rental_company_organization_id === organizationId ||
       existing.renter_organization_id === organizationId;
     if (!isParty) throw new NotFoundError("Quotation not found");
+    // A draft is the Rental Company still drafting terms — hidden from the
+    // Renter side entirely (list, detail, scope items, offers, ...) until
+    // it's actually sent, same as any other "not yours" case. Centralized
+    // here rather than in each caller since every Renter-facing lookup on
+    // a single quotation already routes through this method.
+    if (existing.renter_organization_id === organizationId && existing.status === "draft") {
+      throw new NotFoundError("Quotation not found");
+    }
     return (await this.quotationRepository.expireIfDue(quotationId)) ?? existing;
   }
 

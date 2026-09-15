@@ -568,6 +568,40 @@ created a second quotation against the same requirement for a different machine 
 conflict, confirming the multi-machine fan-out is safe); created a third quotation explicitly passing
 `quotationResponseId` and confirmed it round-trips correctly linked.
 
+## A draft quotation was fully visible to the Renter — list, detail, scope items, offers
+
+Client-reported (from the multi-machine quotation screenshot, seeing 3 fresh "Draft" rows and asking
+why): confirmed the Renter side had no status filter anywhere. `listQuotationsForRenter` listed every
+quotation regardless of status, and `getQuotation`/`listScopeItems`/`listOffers`/`makeOffer`/
+`acceptOffer` all route through the same `loadAsParty` helper, which only checked "is this
+organization a party to the quotation at all" — never whether it had actually been sent yet. A Rental
+Company drafting terms (adjusting rate, working hours, scope items) had all of that visible to the
+Renter in real time, before ever choosing to send it.
+
+Fixed at the shared choke point rather than in each caller: `loadAsParty` now also throws
+`NotFoundError` when the caller is the Renter party and the quotation is still `"draft"` — same
+"hide, don't 403" tenant-isolation pattern already used everywhere else in this codebase — which
+automatically covers every method that already calls it. `listQuotationsForRenter` gets the matching
+list-level filter. The drafting Rental Company's own view is completely unaffected (draft is very
+much visible to them — it's their own in-progress work). A quotation becomes visible to the Renter the
+moment `sendQuotation` moves it to `"sent"`, never before.
+
+Verified live: a Rental Company with 4 drafts and 1 awarded quotation — the Renter's own list showed
+only the 1 awarded one; fetching a draft's id directly as the Renter returned 404.
+
+## "Quotation requested" was still notification-only — no dashboard attention item
+
+Client follow-up on the earlier "Request quotation" fix: the Rental Company's dashboard "Waiting on
+you" panel had no entry for a Renter's quotation request at all — it only ever existed as a
+notification-bell entry and (from an earlier round) a tab on the Quotations page itself, neither of
+which surfaces on the dashboard the way every other actionable item (overdue invoices, awaiting
+acceptance, blocked machines, auctions needing selection) already does. Added it: `RentalCompanyDashboard`
+now fetches `listRequestedQuotations` (gated on `rfq.respond`, matching the API's own gate) and adds
+one attention item per still-pending request — same fulfilled-cross-reference against
+`CommercialQuotation.quotationResponseId` as the Quotations page's "Requested" tab, so it drops off
+the moment a quotation (even a draft) exists for it. Placed first in the attention list — it's a
+direct customer ask, not an internal housekeeping item.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.
