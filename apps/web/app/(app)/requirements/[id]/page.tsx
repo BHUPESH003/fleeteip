@@ -33,9 +33,17 @@ import { REQUIREMENT_STATUS_MAP, RESPONSE_STATUS_MAP, validityTone } from "../sh
 interface Loaded {
   requirement: Requirement;
   subcategoryName: string | null;
+  // Renter-only — every Rental Company's reply. Empty for a Rental Company
+  // viewer (see myResponse below instead): showing every competitor's name
+  // and indicative rate to another Rental Company would be a real
+  // cross-tenant leak, not just a missing feature.
   responses: QuotationResponse[];
   rentalCompanyNames: Map<string, string>;
   quotationByResponseId: Map<string, CommercialQuotation>;
+  // Rental Company-only — this org's own reply and, if formalized, its own
+  // linked quotation. Null for a Renter viewer.
+  myResponse: QuotationResponse | null;
+  myQuotation: CommercialQuotation | null;
   activity: { id: string; text: string; when: string }[];
 }
 
@@ -44,6 +52,8 @@ export default function RequirementDetailPage() {
   const router = useRouter();
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  const organizationType = currentMembership?.organization.organizationTypeCode;
+  const isRentalCompany = organizationType === "rental_company";
   // Counterparty names / linked quotations are enrichment, not the point of
   // this page (rfq.manage is) — a role without quotation.respond still gets
   // a fully working requirement view, just without rental-company names or
@@ -73,24 +83,21 @@ export default function RequirementDetailPage() {
   }
 
   async function load(orgId: string) {
-    const requirement = (await apiClient.getRequirement(orgId, id)) as Requirement;
-    // listRentalCompanyOrganizations and listQuotations need quotation.respond
-    // (used only to resolve counterparty names / linked quotations below);
-    // listProductCategories is an open read, listNotifications needs no
-    // specific permission — neither is gated.
-    const [categories, responses, rentalCompanyOrgs, quotations, notifications] = await Promise.all(
-      [
-        apiClient.listProductCategories() as Promise<ProductCategory[]>,
-        apiClient.listResponsesForRequirement(orgId, id) as Promise<QuotationResponse[]>,
-        canRespondToQuotations
-          ? (apiClient.listRentalCompanyOrganizations(orgId) as Promise<Organization[]>)
-          : Promise.resolve([]),
-        canRespondToQuotations
-          ? (apiClient.listQuotations(orgId) as Promise<CommercialQuotation[]>)
-          : Promise.resolve([]),
-        apiClient.listNotifications(orgId) as Promise<NotificationListResponse>,
-      ],
-    );
+    // A Rental Company has no rfq.manage on the Renter's own org — the
+    // Renter-scoped getRequirement/listResponsesForRequirement endpoints
+    // 404/403 for them. Discovery is the read path they actually hold
+    // (rfq.respond), same one OpenMarket and CreateQuotationDialog already
+    // use for exactly this reason.
+    const requirement = (
+      isRentalCompany
+        ? await apiClient.getRequirementForDiscovery(orgId, id)
+        : await apiClient.getRequirement(orgId, id)
+    ) as Requirement;
+
+    const [categories, notifications] = await Promise.all([
+      apiClient.listProductCategories() as Promise<ProductCategory[]>,
+      apiClient.listNotifications(orgId) as Promise<NotificationListResponse>,
+    ]);
     const subcategoryLists = await Promise.all(
       categories.map(
         (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
@@ -99,6 +106,46 @@ export default function RequirementDetailPage() {
     const subcategory = subcategoryLists
       .flat()
       .find((s) => s.id === requirement.productSubcategoryId);
+
+    if (isRentalCompany) {
+      let myResponse: QuotationResponse | null = null;
+      try {
+        myResponse = (await apiClient.getMyResponse(orgId, id)) as QuotationResponse;
+      } catch {
+        // No response submitted yet — fine.
+      }
+      const quotations = myResponse
+        ? ((await apiClient.listQuotations(orgId)) as CommercialQuotation[])
+        : [];
+      const myQuotation =
+        quotations.find((q) => q.quotationResponseId === myResponse?.id) ?? null;
+
+      setData({
+        requirement,
+        subcategoryName: subcategory?.name ?? null,
+        responses: [],
+        rentalCompanyNames: new Map(),
+        quotationByResponseId: new Map(),
+        myResponse,
+        myQuotation,
+        activity: notifications.notifications
+          .filter((n) => n.relatedResourceType === "requirement" && n.relatedResourceId === id)
+          .map((n) => ({ id: n.id, text: n.message, when: formatRelativeTime(n.createdAt) })),
+      });
+      return;
+    }
+
+    // listRentalCompanyOrganizations and listQuotations need quotation.respond
+    // (used only to resolve counterparty names / linked quotations below).
+    const [responses, rentalCompanyOrgs, quotations] = await Promise.all([
+      apiClient.listResponsesForRequirement(orgId, id) as Promise<QuotationResponse[]>,
+      canRespondToQuotations
+        ? (apiClient.listRentalCompanyOrganizations(orgId) as Promise<Organization[]>)
+        : Promise.resolve([]),
+      canRespondToQuotations
+        ? (apiClient.listQuotations(orgId) as Promise<CommercialQuotation[]>)
+        : Promise.resolve([]),
+    ]);
 
     setData({
       requirement,
@@ -110,6 +157,8 @@ export default function RequirementDetailPage() {
           .filter((q) => q.quotationResponseId)
           .map((q) => [q.quotationResponseId as string, q]),
       ),
+      myResponse: null,
+      myQuotation: null,
       activity: notifications.notifications
         .filter((n) => n.relatedResourceType === "requirement" && n.relatedResourceId === id)
         .map((n) => ({ id: n.id, text: n.message, when: formatRelativeTime(n.createdAt) })),
@@ -125,7 +174,7 @@ export default function RequirementDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load requirement");
       }
     })();
-  }, [organizationId, id, canRespondToQuotations]);
+  }, [organizationId, id, canRespondToQuotations, isRentalCompany]);
 
   async function handleClose() {
     if (!organizationId) return;
@@ -142,6 +191,8 @@ export default function RequirementDetailPage() {
     responses,
     rentalCompanyNames,
     quotationByResponseId,
+    myResponse,
+    myQuotation,
     activity,
   } = data;
   const interested = responses.filter((r) => r.status === "interested");
@@ -179,28 +230,30 @@ export default function RequirementDetailPage() {
         ]}
         title={title || "Requirement"}
         actions={
-          <div className="flex flex-wrap gap-2">
-            {requirement.status === "open" && (
-              <Button variant="secondary" onClick={() => void handleClose()}>
-                Close requirement
+          isRentalCompany ? undefined : (
+            <div className="flex flex-wrap gap-2">
+              {requirement.status === "open" && (
+                <Button variant="secondary" onClick={() => void handleClose()}>
+                  Close requirement
+                </Button>
+              )}
+              <Button
+                variant="secondary"
+                onClick={() => setEditOpen(true)}
+                disabled={requirement.status !== "open"}
+                title={
+                  requirement.status !== "open"
+                    ? "Editing is only available while the requirement is open"
+                    : undefined
+                }
+              >
+                Edit
               </Button>
-            )}
-            <Button
-              variant="secondary"
-              onClick={() => setEditOpen(true)}
-              disabled={requirement.status !== "open"}
-              title={
-                requirement.status !== "open"
-                  ? "Editing is only available while the requirement is open"
-                  : undefined
-              }
-            >
-              Edit
-            </Button>
-            <Button onClick={() => router.push(`/auctions?requirementId=${requirement.id}`)}>
-              Start auction
-            </Button>
-          </div>
+              <Button onClick={() => router.push(`/auctions?requirementId=${requirement.id}`)}>
+                Start auction
+              </Button>
+            </div>
+          )
         }
       />
 
@@ -212,8 +265,10 @@ export default function RequirementDetailPage() {
           </Badge>
         )}
         <span className="text-sm text-meta">
-          Posted {formatDate(requirement.createdAt)} · quantity {requirement.quantity} ·{" "}
-          {responses.length} response{responses.length === 1 ? "" : "s"}
+          Posted {formatDate(requirement.createdAt)} · quantity {requirement.quantity}
+          {!isRentalCompany && (
+            <> · {responses.length} response{responses.length === 1 ? "" : "s"}</>
+          )}
         </span>
       </div>
 
@@ -262,26 +317,64 @@ export default function RequirementDetailPage() {
         </div>
 
         <div className="flex flex-col gap-3.5">
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-            <Stat label="Responses" value={String(responses.length)} />
-            <Stat
-              label="Interested"
-              value={String(interested.length)}
-              note={`${responses.length - interested.length} not interested`}
-            />
-            <Stat
-              label="Rate spread"
-              value={rateSpreadPct != null ? `${rateSpreadPct}%` : mixedRateUnits ? "Mixed units" : "—"}
-            />
-            <Stat
-              label="Lowest indicative"
-              value={lowestRate != null ? `${lowestRate} / ${commonRateUnit}` : mixedRateUnits ? "Mixed units" : "—"}
-            />
-          </div>
+          {isRentalCompany ? (
+            <Card>
+              <h2 className="mb-3 text-sm font-semibold text-ink">Your response</h2>
+              {myResponse ? (
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={myResponse.status} map={RESPONSE_STATUS_MAP} />
+                    {myResponse.indicativeRate != null && (
+                      <span className="font-mono text-sm text-ink">
+                        {myResponse.indicativeRate} / {myResponse.indicativeRateUnit}
+                      </span>
+                    )}
+                  </div>
+                  {myResponse.notes && <p className="text-sm text-meta">{myResponse.notes}</p>}
+                  {myQuotation ? (
+                    <Link
+                      href={`/quotations?quotationId=${myQuotation.id}`}
+                      className="text-xs font-medium text-accent-text"
+                    >
+                      Open {myQuotation.referenceNumber}
+                    </Link>
+                  ) : myResponse.status === "interested" ? (
+                    <p className="text-xs text-meta">
+                      {myResponse.quotationRequestedAt
+                        ? "The Renter has requested a formal quotation — formalize it from Quotations."
+                        : "No formal quotation created yet."}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <EmptyState
+                  title="No response submitted yet"
+                  description="Respond to this requirement from the Open Market."
+                />
+              )}
+            </Card>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                <Stat label="Responses" value={String(responses.length)} />
+                <Stat
+                  label="Interested"
+                  value={String(interested.length)}
+                  note={`${responses.length - interested.length} not interested`}
+                />
+                <Stat
+                  label="Rate spread"
+                  value={rateSpreadPct != null ? `${rateSpreadPct}%` : mixedRateUnits ? "Mixed units" : "—"}
+                />
+                <Stat
+                  label="Lowest indicative"
+                  value={lowestRate != null ? `${lowestRate} / ${commonRateUnit}` : mixedRateUnits ? "Mixed units" : "—"}
+                />
+              </div>
 
-          {requestQuotationError && <p className="text-sm text-danger">{requestQuotationError}</p>}
+              {requestQuotationError && <p className="text-sm text-danger">{requestQuotationError}</p>}
 
-          <Card padding={responses.length === 0 ? "md" : "none"}>
+              <Card padding={responses.length === 0 ? "md" : "none"}>
             {responses.length === 0 ? (
               <EmptyState
                 title="No responses yet"
@@ -354,7 +447,9 @@ export default function RequirementDetailPage() {
                 </Tbody>
               </Table>
             )}
-          </Card>
+              </Card>
+            </>
+          )}
         </div>
       </div>
 

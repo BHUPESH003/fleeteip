@@ -4,6 +4,21 @@ export function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Mirrors packages/contracts/src/shared/dates.ts's addDuration — duplicated
+// rather than imported, same as todayIsoDate above, since this file already
+// has its own copy of that helper instead of pulling from contracts/shared.
+export function addDuration(
+  startDate: string,
+  value: number,
+  unit: "shift" | "day" | "week" | "month",
+): string {
+  const date = new Date(`${startDate}T00:00:00Z`);
+  if (unit === "week") date.setUTCDate(date.getUTCDate() + value * 7);
+  else if (unit === "month") date.setUTCMonth(date.getUTCMonth() + value);
+  else date.setUTCDate(date.getUTCDate() + value);
+  return date.toISOString().slice(0, 10);
+}
+
 export function formatRelativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const minutes = Math.round(diffMs / 60_000);

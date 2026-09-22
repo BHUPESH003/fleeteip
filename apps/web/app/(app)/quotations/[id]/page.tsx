@@ -20,11 +20,13 @@ import {
   Select,
   StatusBadge,
 } from "@fleetip/ui";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../../lib/api-client";
 import { formatCurrencyINR, formatDate, formatRelativeTime } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
+import { EditQuotationTermsDialog } from "../EditQuotationTermsDialog";
 import {
   contractValue,
   needsRenterAcceptance,
@@ -194,6 +196,9 @@ export default function QuotationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCounterForm, setShowCounterForm] = useState(false);
   const [workOrderId, setWorkOrderId] = useState<string | null>(null);
+  const [showEditTerms, setShowEditTerms] = useState(false);
+  const [showAlternateDatesForm, setShowAlternateDatesForm] = useState(false);
+  const [alternateDatesError, setAlternateDatesError] = useState<string | null>(null);
 
   async function load(orgId: string, orgType: "renter" | "rental_company") {
     const [quotation, offers] = await Promise.all([
@@ -305,6 +310,38 @@ export default function QuotationDetailPage() {
       await load(organizationId, organizationType);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to accept offer");
+    }
+  }
+
+  async function handleProposeAlternateDates(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!organizationId || !organizationType) return;
+    setAlternateDatesError(null);
+    const form = new FormData(event.currentTarget);
+    const endDate = form.get("endDate");
+    try {
+      await apiClient.proposeAlternateDates(organizationId, id, {
+        startDate: String(form.get("startDate")),
+        endDate: endDate ? String(endDate) : undefined,
+        reason: form.get("reason") ? String(form.get("reason")) : undefined,
+      });
+      setShowAlternateDatesForm(false);
+      await load(organizationId, organizationType);
+    } catch (err) {
+      setAlternateDatesError(err instanceof Error ? err.message : "Failed to propose alternate dates");
+    }
+  }
+
+  async function handleRespondToAlternateDates(decision: "accepted" | "rejected") {
+    if (!organizationId || !organizationType) return;
+    setAlternateDatesError(null);
+    try {
+      await apiClient.respondToAlternateDates(organizationId, id, decision);
+      await load(organizationId, organizationType);
+    } catch (err) {
+      setAlternateDatesError(
+        err instanceof Error ? err.message : `Failed to ${decision === "accepted" ? "accept" : "reject"} the proposed dates`,
+      );
     }
   }
 
@@ -454,9 +491,12 @@ export default function QuotationDetailPage() {
             <>
               {" "}
               · against requirement{" "}
-              <span className="font-mono">
+              <Link
+                href={`/requirements/${quotation.requirementId}`}
+                className="font-mono text-accent-text"
+              >
                 RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}
-              </span>
+              </Link>
             </>
           )}{" "}
           · validity {formatDate(quotation.validityDate)}
@@ -611,6 +651,13 @@ export default function QuotationDetailPage() {
                     {quotation.status === "draft" && (
                       <Button onClick={() => void handleAction("send")}>Send</Button>
                     )}
+                    {(quotation.status === "draft" ||
+                      quotation.status === "sent" ||
+                      quotation.status === "negotiating") && (
+                      <Button variant="secondary" onClick={() => setShowEditTerms(true)}>
+                        Edit terms
+                      </Button>
+                    )}
                     {(quotation.status === "draft" || quotation.status === "sent") && (
                       <Button variant="secondary" onClick={() => void handleAction("withdraw")}>
                         Withdraw
@@ -681,6 +728,71 @@ export default function QuotationDetailPage() {
             )}
           </Card>
 
+          {canNegotiate && (
+            <Card>
+              <h2 className="mb-3 text-sm font-semibold text-ink">Alternate dates</h2>
+              {alternateDatesError && (
+                <p className="mb-2 text-sm text-danger">{alternateDatesError}</p>
+              )}
+              {quotation.alternateDateStatus === "pending" ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm text-ink">
+                    {formatDate(quotation.proposedAlternateStartDate ?? "")} –{" "}
+                    {quotation.proposedAlternateEndDate
+                      ? formatDate(quotation.proposedAlternateEndDate)
+                      : "open-ended"}
+                  </p>
+                  {quotation.alternateDateReason && (
+                    <p className="text-xs text-meta">{quotation.alternateDateReason}</p>
+                  )}
+                  {!isOwner && organizationType === "renter" ? (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => void handleRespondToAlternateDates("accepted")}
+                      >
+                        Accept
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void handleRespondToAlternateDates("rejected")}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-meta">Waiting for {counterpartyName} to respond.</p>
+                  )}
+                </div>
+              ) : isOwner ? (
+                !showAlternateDatesForm ? (
+                  <Button variant="secondary" onClick={() => setShowAlternateDatesForm(true)}>
+                    Propose alternate dates
+                  </Button>
+                ) : (
+                  <form onSubmit={handleProposeAlternateDates} className="flex flex-col gap-3">
+                    <Input label="Start date" name="startDate" type="date" required />
+                    <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
+                    <Input label="Reason" name="reason" />
+                    <div className="flex gap-2">
+                      <Button type="submit">Propose</Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setShowAlternateDatesForm(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                )
+              ) : (
+                <p className="text-sm text-meta">No alternate dates proposed.</p>
+              )}
+            </Card>
+          )}
+
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-ink">Offer trail</h2>
             {offers.length === 0 ? (
@@ -734,6 +846,16 @@ export default function QuotationDetailPage() {
           </Card>
         </div>
       </div>
+
+      {organizationId && (
+        <EditQuotationTermsDialog
+          open={showEditTerms}
+          onClose={() => setShowEditTerms(false)}
+          organizationId={organizationId}
+          quotation={quotation}
+          onUpdated={(updated) => setData((prev) => (prev ? { ...prev, quotation: updated } : prev))}
+        />
+      )}
     </div>
   );
 }

@@ -143,6 +143,10 @@ function rental(overrides: Partial<RentalRecord> = {}): RentalRecord {
     operator_scope: null,
     notice_period_days: null,
     dehire_terms: null,
+    actual_start_date: null,
+    actual_end_date: null,
+    actual_dates_verification_status: null,
+    actual_dates_dispute_reason: null,
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,
@@ -165,6 +169,9 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
       throw new Error("not used in this test");
     },
     updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
     isAvailable: async () => {

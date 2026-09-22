@@ -6,6 +6,7 @@ import type {
   CommercialQuotationRecord,
   CommercialQuotationRepositoryPort,
   CreateCommercialQuotationInput,
+  ProposeAlternateDatesInput,
   UpdateCommercialQuotationTermsInput,
 } from "../domain/ports.js";
 
@@ -45,6 +46,10 @@ const QUOTATION_COLUMNS = [
   "company_terms",
   "status",
   "renter_accepted_at",
+  "proposed_alternate_start_date",
+  "proposed_alternate_end_date",
+  "alternate_date_status",
+  "alternate_date_reason",
   "created_at",
   "updated_at",
 ] as const;
@@ -63,6 +68,7 @@ function toQuotationRecord(
     | "fuel_scope"
     | "accommodation_scope"
     | "minimum_rental_period_unit"
+    | "alternate_date_status"
   > & {
     status: string;
     rate_unit: string;
@@ -71,6 +77,7 @@ function toQuotationRecord(
     fuel_scope: string | null;
     accommodation_scope: string | null;
     minimum_rental_period_unit: string | null;
+    alternate_date_status: string;
   },
 ): CommercialQuotationRecord {
   return row as CommercialQuotationRecord;
@@ -129,6 +136,7 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
         commercial_notes: input.commercialNotes ?? null,
         company_terms: input.companyTerms ?? null,
         status: "draft",
+        alternate_date_status: "none",
       })
       .returning(QUOTATION_COLUMNS)
       .executeTakeFirstOrThrow();
@@ -269,6 +277,53 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
 
   async searchByRenter(renterOrganizationId: string, query: string) {
     return this.search("renter_organization_id", renterOrganizationId, query);
+  }
+
+  async proposeAlternateDates(id: string, input: ProposeAlternateDatesInput) {
+    const row = await this.db
+      .updateTable("commercial_quotations")
+      .set({
+        proposed_alternate_start_date: input.startDate,
+        proposed_alternate_end_date: input.endDate ?? null,
+        alternate_date_status: "pending",
+        alternate_date_reason: input.reason ?? null,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returning(QUOTATION_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toQuotationRecord(row);
+  }
+
+  async respondToAlternateDates(id: string, decision: "accepted" | "rejected") {
+    const dateFields =
+      decision === "accepted"
+        ? await (async () => {
+            const current = await this.db
+              .selectFrom("commercial_quotations")
+              .select(["start_date", "end_date", "proposed_alternate_start_date", "proposed_alternate_end_date"])
+              .where("id", "=", id)
+              .executeTakeFirstOrThrow();
+            return {
+              start_date: current.proposed_alternate_start_date ?? current.start_date,
+              end_date: current.proposed_alternate_end_date,
+            };
+          })()
+        : {};
+    const row = await this.db
+      .updateTable("commercial_quotations")
+      .set({
+        ...dateFields,
+        alternate_date_status: "none",
+        proposed_alternate_start_date: null,
+        proposed_alternate_end_date: null,
+        alternate_date_reason: null,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returning(QUOTATION_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toQuotationRecord(row);
   }
 
   private async search(

@@ -192,6 +192,7 @@ export const container = {
     requirementRepository,
     permissionService,
     notificationService,
+    organizationRepository,
   ),
 
   commercialQuotationService: new CommercialQuotationService(

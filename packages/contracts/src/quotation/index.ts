@@ -44,6 +44,9 @@ export type SubmitQuotationResponseRequest = z.infer<typeof submitQuotationRespo
 
 // --- CommercialQuotation: the formal, negotiable, awardable document ---
 
+export const alternateDateStatusSchema = z.enum(["none", "pending", "accepted", "rejected"]);
+export type AlternateDateStatus = z.infer<typeof alternateDateStatusSchema>;
+
 export const commercialQuotationStatusSchema = z.enum([
   "draft",
   "sent",
@@ -113,6 +116,15 @@ export const commercialQuotationSchema = z.object({
   // design.md §6). Gates awardQuotation whenever a real in-app Renter is on
   // the other end; cleared back to null by any subsequent term change.
   renterAcceptedAt: z.string().datetime().nullable(),
+  // The one sanctioned channel for changing a quotation's dates after
+  // creation, now that they're locked to the Requirement's own dates at
+  // creation time (see commercial-quotation-service.ts::createQuotation) —
+  // QuotationOffer's own startDate/endDate no longer move independently.
+  // The Rental Company proposes; the Renter must explicitly accept/reject.
+  proposedAlternateStartDate: z.string().date().nullable(),
+  proposedAlternateEndDate: z.string().date().nullable(),
+  alternateDateStatus: alternateDateStatusSchema,
+  alternateDateReason: z.string().min(1).max(500).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   // Resolved server-side, only for the Renter party viewing its own
@@ -280,3 +292,24 @@ export const createQuotationOfferRequestSchema = z
     path: ["endDate"],
   });
 export type CreateQuotationOfferRequest = z.infer<typeof createQuotationOfferRequestSchema>;
+
+// --- Alternate-date request: the one sanctioned channel for changing a
+// quotation's dates once they're locked at creation (see
+// commercialQuotationSchema.alternateDateStatus above) ---
+
+export const proposeAlternateDatesRequestSchema = z
+  .object({
+    startDate: z.string().date(),
+    endDate: z.string().date().optional(),
+    reason: z.string().min(1).max(500).optional(),
+  })
+  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
+  });
+export type ProposeAlternateDatesRequest = z.infer<typeof proposeAlternateDatesRequestSchema>;
+
+export const respondToAlternateDatesRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+});
+export type RespondToAlternateDatesRequest = z.infer<typeof respondToAlternateDatesRequestSchema>;

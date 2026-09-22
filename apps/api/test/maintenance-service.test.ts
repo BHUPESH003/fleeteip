@@ -170,6 +170,9 @@ function fakeRentalRepository(machineIsAvailable: boolean): RentalRepositoryPort
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
+    setActualDatesVerification: async () => {
+      throw new Error("not used in this test");
+    },
     isAvailable: async () => machineIsAvailable,
     searchByOrganization: async () => {
       throw new Error("not used in this test");

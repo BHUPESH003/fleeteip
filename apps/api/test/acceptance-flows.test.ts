@@ -397,6 +397,10 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         company_terms: input.companyTerms ?? null,
         status: "draft",
         renter_accepted_at: null,
+        proposed_alternate_start_date: null,
+        proposed_alternate_end_date: null,
+        alternate_date_status: "none",
+        alternate_date_reason: null,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -453,6 +457,40 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
     },
     searchByRenter: async () => {
       throw new Error("not used in this test");
+    },
+    proposeAlternateDates: async (id, input) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not found");
+      const updated: CommercialQuotationRecord = {
+        ...existing,
+        proposed_alternate_start_date: input.startDate,
+        proposed_alternate_end_date: input.endDate ?? null,
+        alternate_date_status: "pending",
+        alternate_date_reason: input.reason ?? null,
+        updated_at: new Date(),
+      };
+      quotations.set(id, updated);
+      return updated;
+    },
+    respondToAlternateDates: async (id, decision) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not found");
+      const updated: CommercialQuotationRecord = {
+        ...existing,
+        ...(decision === "accepted"
+          ? {
+              start_date: existing.proposed_alternate_start_date ?? existing.start_date,
+              end_date: existing.proposed_alternate_end_date,
+            }
+          : {}),
+        alternate_date_status: "none",
+        proposed_alternate_start_date: null,
+        proposed_alternate_end_date: null,
+        alternate_date_reason: null,
+        updated_at: new Date(),
+      };
+      quotations.set(id, updated);
+      return updated;
     },
   };
 }
@@ -811,6 +849,10 @@ function fakeRentalRepository(): RentalRepositoryPort {
         operator_scope: input.operatorScope ?? null,
         notice_period_days: input.noticePeriodDays ?? null,
         dehire_terms: input.dehireTerms ?? null,
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_dates_verification_status: null,
+        actual_dates_dispute_reason: null,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -827,10 +869,32 @@ function fakeRentalRepository(): RentalRepositoryPort {
     updateTerms: async () => {
       throw new Error("not used in this test");
     },
-    updateStatus: async (id, status) => {
+    updateStatus: async (id, status, actualDate) => {
       const existing = rentals.get(id);
       if (!existing) throw new Error("not found");
-      const updated = { ...existing, status, updated_at: new Date() };
+      const updated = {
+        ...existing,
+        status,
+        ...(status === "active" && actualDate !== undefined
+          ? { actual_start_date: actualDate, actual_dates_verification_status: "pending" as const }
+          : {}),
+        ...(status === "off_rent" && actualDate !== undefined
+          ? { actual_end_date: actualDate, actual_dates_verification_status: "pending" as const }
+          : {}),
+        updated_at: new Date(),
+      };
+      rentals.set(id, updated);
+      return updated;
+    },
+    setActualDatesVerification: async (id, status, disputeReason) => {
+      const existing = rentals.get(id);
+      if (!existing) throw new Error("not found");
+      const updated = {
+        ...existing,
+        actual_dates_verification_status: status,
+        actual_dates_dispute_reason: status === "disputed" ? (disputeReason ?? null) : null,
+        updated_at: new Date(),
+      };
       rentals.set(id, updated);
       return updated;
     },
@@ -918,6 +982,7 @@ function buildHarness() {
     requirementRepository,
     permissionService,
     notificationService,
+    organizationRepository,
   );
   const rentalService = new RentalService(
     rentalRepository,

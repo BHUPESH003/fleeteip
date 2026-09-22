@@ -106,6 +106,10 @@ const QUOTATIONS: CommercialQuotationRecord[] = [
     company_terms: null,
     status: "sent",
     renter_accepted_at: null,
+    proposed_alternate_start_date: null,
+    proposed_alternate_end_date: null,
+    alternate_date_status: "none",
+    alternate_date_reason: null,
     created_at: new Date(),
     updated_at: new Date(),
   },
@@ -135,6 +139,10 @@ const RENTALS: RentalRecord[] = [
     operator_scope: null,
     notice_period_days: null,
     dehire_terms: null,
+    actual_start_date: null,
+    actual_end_date: null,
+    actual_dates_verification_status: null,
+    actual_dates_dispute_reason: null,
     created_at: new Date(),
     updated_at: new Date(),
   },
@@ -336,6 +344,12 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         (q) =>
           q.renter_organization_id === renterOrganizationId && q.reference_number.includes(query),
       ),
+    proposeAlternateDates: async () => {
+      throw new Error("not used in this test");
+    },
+    respondToAlternateDates: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -357,6 +371,9 @@ function fakeRentalRepository(): RentalRepositoryPort {
       throw new Error("not used in this test");
     },
     updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
     isAvailable: async () => {

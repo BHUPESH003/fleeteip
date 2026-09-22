@@ -182,11 +182,14 @@ export class TransportService {
       rental.renter_organization_id &&
       (updates.status === "dispatched" || updates.status === "delivered")
     ) {
+      const rentalCompany = await this.organizationRepository.findById(
+        rentalCompanyOrganizationId,
+      );
       await this.notify({
         recipientOrganizationId: rental.renter_organization_id,
         type: updates.status === "dispatched" ? "transport.dispatched" : "transport.delivered",
         title: updates.status === "dispatched" ? "Transport dispatched" : "Transport delivered",
-        message: `${leg === "mobilization" ? "Mobilization" : "Demobilization"} for your rental has been ${updates.status}.`,
+        message: `${rentalCompany?.name ?? "The Rental Company"} marked ${leg === "mobilization" ? "mobilization" : "demobilization"} for your rental as ${updates.status}.`,
         relatedResourceType: "transport",
         relatedResourceId: record.id,
       });

@@ -238,9 +238,12 @@ export default function QuotationsPage() {
                   <Tr key={response.id}>
                     <Td>
                       <div className="flex flex-col">
-                        <span className="font-mono text-xs text-ink">
+                        <Link
+                          href={`/requirements/${response.requirementId}`}
+                          className="font-mono text-xs text-accent-text"
+                        >
                           RFQ-{response.requirementId.slice(0, 8).toUpperCase()}
-                        </span>
+                        </Link>
                         <span className="text-xs text-meta">
                           {requirement
                             ? [
@@ -306,17 +309,26 @@ export default function QuotationsPage() {
                     (quotation.renterOrganizationId && data.renterNames.get(quotation.renterOrganizationId)) ??
                     "Renter";
               const acceptance = acceptanceLabel(quotation);
-              const source = quotation.sourceAuctionId
-                ? `from AU-${quotation.sourceAuctionId.slice(0, 8).toUpperCase()}`
-                : quotation.requirementId
-                  ? `from RFQ-${quotation.requirementId.slice(0, 8).toUpperCase()}`
-                  : "direct";
+              const source = quotation.sourceAuctionId ? (
+                <span className="text-xs text-meta">
+                  from AU-{quotation.sourceAuctionId.slice(0, 8).toUpperCase()}
+                </span>
+              ) : quotation.requirementId ? (
+                <Link
+                  href={`/requirements/${quotation.requirementId}`}
+                  className="text-xs text-accent-text"
+                >
+                  from RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}
+                </Link>
+              ) : (
+                <span className="text-xs text-meta">direct</span>
+              );
               return (
                 <Tr key={quotation.id}>
                   <Td>
                     <div className="flex flex-col">
                       <span className="font-mono text-xs text-ink">{quotation.referenceNumber}</span>
-                      <span className="text-xs text-meta">{source}</span>
+                      {source}
                     </div>
                   </Td>
                   <Td>

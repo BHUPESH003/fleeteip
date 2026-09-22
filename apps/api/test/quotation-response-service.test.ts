@@ -237,6 +237,33 @@ function fakeRequirementRepository(requirements: RequirementRecord[] = [requirem
   return port;
 }
 
+const ORG_NAMES: Record<string, string> = {
+  [RC_ORG_ID]: "Acme Rentals",
+  [RENTER_ORG_ID]: "Metro Builders",
+  [OTHER_RENTER_ORG_ID]: "Other Renter Co",
+};
+
+// Notification messages now interpolate the acting org's name — a distinct
+// repo instance from fakePermissionService's internal one, since the
+// service takes organizationRepository as its own constructor argument.
+function fakeOrgRepo(): OrganizationRepositoryPort {
+  return {
+    ...fakeOrganizationTypeRepository({}),
+    findById: async (id) =>
+      ORG_NAMES[id]
+        ? {
+            id,
+            organization_type_id: "type-rental_company",
+            organization_type_code: "rental_company",
+            name: ORG_NAMES[id],
+            code: "TESTORG",
+            status: "active",
+            created_at: new Date(),
+          }
+        : undefined,
+  };
+}
+
 function fakeQuotationResponseRepository(): QuotationResponseRepositoryPort {
   const responses = new Map<string, QuotationResponseRecord>();
   let nextId = 1;
@@ -292,6 +319,7 @@ function buildService(requirements?: RequirementRecord[]) {
     fakeRequirementRepository(requirements),
     fakePermissionService(),
     fakeNotificationService(),
+    fakeOrgRepo(),
   );
 }
 
@@ -324,6 +352,7 @@ describe("QuotationResponseService", () => {
       fakeRequirementRepository(),
       fakePermissionService("renter"),
       fakeNotificationService(),
+      fakeOrgRepo(),
     );
     await expect(
       service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
@@ -372,6 +401,7 @@ describe("QuotationResponseService", () => {
       fakeRequirementRepository(),
       fakePermissionService(),
       fakeNotificationService(),
+      fakeOrgRepo(),
     );
     const first = await service.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
       status: "interested",
@@ -403,6 +433,7 @@ describe("QuotationResponseService", () => {
       requirementRepository,
       fakePermissionService(),
       fakeNotificationService(),
+      fakeOrgRepo(),
     );
     await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
       status: "interested",
@@ -415,6 +446,7 @@ describe("QuotationResponseService", () => {
       requirementRepository,
       fakePermissionService("renter"),
       fakeNotificationService(),
+      fakeOrgRepo(),
     );
     const responses = await renterService.listResponsesForRequirement(
       "user-2",
@@ -430,6 +462,7 @@ describe("QuotationResponseService", () => {
       fakeRequirementRepository(),
       fakePermissionService("renter"),
       fakeNotificationService(),
+      fakeOrgRepo(),
     );
     await expect(
       service.listResponsesForRequirement("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID),
@@ -445,6 +478,7 @@ describe("QuotationResponseService", () => {
         requirementRepository,
         fakePermissionService(),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
         status: "interested",
@@ -458,6 +492,7 @@ describe("QuotationResponseService", () => {
         requirementRepository,
         fakePermissionService("renter"),
         notificationService,
+        fakeOrgRepo(),
       );
       await renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID);
 
@@ -479,6 +514,7 @@ describe("QuotationResponseService", () => {
         fakeRequirementRepository(),
         fakePermissionService("renter"),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await expect(
         service.requestQuotation("user-1", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
@@ -493,6 +529,7 @@ describe("QuotationResponseService", () => {
         requirementRepository,
         fakePermissionService(),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
         status: "not_interested",
@@ -503,6 +540,7 @@ describe("QuotationResponseService", () => {
         requirementRepository,
         fakePermissionService("renter"),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await expect(
         renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
@@ -515,6 +553,7 @@ describe("QuotationResponseService", () => {
         fakeRequirementRepository(),
         fakePermissionService("renter"),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await expect(
         service.requestQuotation("user-1", OTHER_RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
@@ -527,6 +566,7 @@ describe("QuotationResponseService", () => {
         fakeRequirementRepository(),
         fakePermissionService(),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await expect(
         service.requestQuotation("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID),
@@ -543,6 +583,7 @@ describe("QuotationResponseService", () => {
         requirementRepository,
         fakePermissionService(),
         fakeNotificationService(),
+        fakeOrgRepo(),
       );
       await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
         status: "interested",
@@ -555,6 +596,7 @@ describe("QuotationResponseService", () => {
         requirementRepository,
         fakePermissionService("renter"),
         notificationService,
+        fakeOrgRepo(),
       );
       await renterService.requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID);
 

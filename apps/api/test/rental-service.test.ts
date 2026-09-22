@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { todayIsoDate } from "@fleetip/contracts/shared";
 import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import type {
   ActiveMembershipRecord,
@@ -227,6 +228,10 @@ function fakeRentalRepository(): RentalRepositoryPort {
         operator_scope: input.operatorScope ?? null,
         notice_period_days: input.noticePeriodDays ?? null,
         dehire_terms: input.dehireTerms ?? null,
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_dates_verification_status: null,
+        actual_dates_dispute_reason: null,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -251,10 +256,32 @@ function fakeRentalRepository(): RentalRepositoryPort {
       rentals.set(id, updated);
       return updated;
     },
-    updateStatus: async (id, status) => {
+    updateStatus: async (id, status, actualDate) => {
       const existing = rentals.get(id);
       if (!existing) throw new Error("not used in this test");
-      const updated = { ...existing, status, updated_at: new Date() };
+      const updated = {
+        ...existing,
+        status,
+        ...(status === "active" && actualDate !== undefined
+          ? { actual_start_date: actualDate, actual_dates_verification_status: "pending" as const }
+          : {}),
+        ...(status === "off_rent" && actualDate !== undefined
+          ? { actual_end_date: actualDate, actual_dates_verification_status: "pending" as const }
+          : {}),
+        updated_at: new Date(),
+      };
+      rentals.set(id, updated);
+      return updated;
+    },
+    setActualDatesVerification: async (id, status, disputeReason) => {
+      const existing = rentals.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated = {
+        ...existing,
+        actual_dates_verification_status: status,
+        actual_dates_dispute_reason: status === "disputed" ? (disputeReason ?? null) : null,
+        updated_at: new Date(),
+      };
       rentals.set(id, updated);
       return updated;
     },
@@ -518,6 +545,89 @@ describe("RentalService", () => {
     await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "off_rent");
     const completed = await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "completed");
     expect(completed.status).toBe("completed");
+  });
+
+  it("defaults actualStartDate to today when activating without an explicit date", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    const active = await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active");
+    expect(active.actualStartDate).toBe(todayIsoDate());
+    expect(active.actualDatesVerificationStatus).toBe("pending");
+  });
+
+  it("accepts an overridden actualStartDate/actualEndDate instead of defaulting to today", async () => {
+    const service = buildService();
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    const active = await service.updateRentalStatus(
+      "user-1",
+      RC_ORG_ID,
+      rental.id,
+      "active",
+      "2026-03-02",
+    );
+    expect(active.actualStartDate).toBe("2026-03-02");
+    const offRent = await service.updateRentalStatus(
+      "user-1",
+      RC_ORG_ID,
+      rental.id,
+      "off_rent",
+      "2026-03-09",
+    );
+    expect(offRent.actualEndDate).toBe("2026-03-09");
+    expect(offRent.actualDatesVerificationStatus).toBe("pending");
+  });
+
+  describe("actual dates verification", () => {
+    it("lets the Renter verify the actual dates the Rental Company recorded", async () => {
+      const service = buildService();
+      const rental = await service.createRental("user-1", RC_ORG_ID, {
+        ...baseInput,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active");
+      const verified = await service.verifyActualDates("user-2", RENTER_ORG_ID, rental.id);
+      expect(verified.actualDatesVerificationStatus).toBe("verified");
+    });
+
+    it("lets the Renter dispute the actual dates with a reason", async () => {
+      const service = buildService();
+      const rental = await service.createRental("user-1", RC_ORG_ID, {
+        ...baseInput,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active");
+      const disputed = await service.disputeActualDates(
+        "user-2",
+        RENTER_ORG_ID,
+        rental.id,
+        "Machine actually arrived two days later",
+      );
+      expect(disputed.actualDatesVerificationStatus).toBe("disputed");
+      expect(disputed.actualDatesDisputeReason).toBe("Machine actually arrived two days later");
+    });
+
+    it("rejects verifying when nothing is pending", async () => {
+      const service = buildService();
+      const rental = await service.createRental("user-1", RC_ORG_ID, {
+        ...baseInput,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await expect(
+        service.verifyActualDates("user-2", RENTER_ORG_ID, rental.id),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("hides a rental belonging to a different Renter behind NotFoundError", async () => {
+      const service = buildService();
+      const rental = await service.createRental("user-1", RC_ORG_ID, {
+        ...baseInput,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active");
+      await expect(
+        service.verifyActualDates("user-2", OTHER_RENTER_ORG_ID, rental.id),
+      ).rejects.toThrow(NotFoundError);
+    });
   });
 
   it("checks machine availability for the acting organization's own machine", async () => {

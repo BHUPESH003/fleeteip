@@ -2,6 +2,8 @@ import {
   createCommercialQuotationRequestSchema,
   createQuotationOfferRequestSchema,
   createQuotationScopeItemRequestSchema,
+  proposeAlternateDatesRequestSchema,
+  respondToAlternateDatesRequestSchema,
   updateCommercialQuotationTermsRequestSchema,
 } from "@fleetip/contracts/quotation";
 import type { FastifyInstance } from "fastify";
@@ -84,6 +86,34 @@ export async function commercialQuotationRoutes(fastify: FastifyInstance): Promi
         request.params.organizationId,
         request.params.quotationId,
         body,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; quotationId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/alternate-dates",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(proposeAlternateDatesRequestSchema, request.body);
+      return container.commercialQuotationService.proposeAlternateDates(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+        body,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; quotationId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/alternate-dates/respond",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(respondToAlternateDatesRequestSchema, request.body);
+      return container.commercialQuotationService.respondToAlternateDates(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+        body.decision,
       );
     },
   );

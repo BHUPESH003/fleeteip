@@ -5,6 +5,7 @@ import type {
 import { ConflictError, NotFoundError } from "../../../../shared/errors.js";
 import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
 import { NotificationService } from "../../../notification/application/notification-service.js";
+import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import type { QuotationResponseRecord, QuotationResponseRepositoryPort } from "../domain/ports.js";
 
@@ -31,6 +32,7 @@ export class QuotationResponseService {
     private readonly requirementRepository: RequirementRepositoryPort,
     private readonly permissionService: PermissionService,
     private readonly notificationService: NotificationService,
+    private readonly organizationRepository: OrganizationRepositoryPort,
   ) {}
 
   async submitResponse(
@@ -77,11 +79,14 @@ export class QuotationResponseService {
     });
     if (isFirstResponse) {
       try {
+        const rentalCompany = await this.organizationRepository.findById(
+          rentalCompanyOrganizationId,
+        );
         await this.notificationService.notify({
           recipientOrganizationId: requirement.renter_organization_id,
           type: "requirement.response_received",
           title: "New response to your requirement",
-          message: "A Rental Company responded to your requirement.",
+          message: `${rentalCompany?.name ?? "A Rental Company"} responded to your requirement.`,
           relatedResourceType: "requirement",
           relatedResourceId: requirementId,
         });
@@ -125,11 +130,12 @@ export class QuotationResponseService {
     // *is* the entire business action, not a side effect alongside a DB
     // write, so a failure must surface to the Renter rather than silently
     // doing nothing.
+    const renter = await this.organizationRepository.findById(renterOrganizationId);
     await this.notificationService.notify({
       recipientOrganizationId: rentalCompanyOrganizationId,
       type: "requirement.quotation_requested",
       title: "Quotation requested",
-      message: "The Renter has asked you to formalize a commercial quotation for your response.",
+      message: `${renter?.name ?? "The Renter"} has asked you to formalize a commercial quotation for your response.`,
       relatedResourceType: "quotation_request",
       relatedResourceId: requirementId,
     });
