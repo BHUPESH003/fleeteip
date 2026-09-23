@@ -5,6 +5,9 @@ import type { Organization } from "@fleetip/contracts/organization";
 import type { CommercialQuotation, CommercialQuotationStatus, QuotationResponse } from "@fleetip/contracts/quotation";
 import type { Requirement } from "@fleetip/contracts/rfq";
 import {
+  AllocationBar,
+  type AllocationTone,
+  AttentionStrip,
   Badge,
   Button,
   EmptyState,
@@ -31,7 +34,15 @@ import { acceptanceLabel, QUOTATION_STATUS_MAP } from "./shared";
 
 type Filter = "all" | CommercialQuotationStatus | "requested";
 
-const FILTERS: Filter[] = ["all", "draft", "sent", "negotiating", "awarded", "rejected", "expired", "withdrawn"];
+const STATUS_SEGMENTS: { key: CommercialQuotationStatus; label: string; tone: AllocationTone }[] = [
+  { key: "draft", label: "Draft", tone: "neutral" },
+  { key: "sent", label: "Sent", tone: "on-rent" },
+  { key: "negotiating", label: "Negotiating", tone: "attention" },
+  { key: "awarded", label: "Awarded", tone: "available" },
+  { key: "rejected", label: "Rejected", tone: "out-of-service" },
+  { key: "expired", label: "Expired", tone: "out-of-service" },
+  { key: "withdrawn", label: "Withdrawn", tone: "out-of-service" },
+];
 
 interface Loaded {
   quotations: CommercialQuotation[];
@@ -174,7 +185,7 @@ export default function QuotationsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Quotations"
-        description={`${formatCurrencyINR(openValue)} of open commercial value · ${awaitingAcceptanceCount} awaiting renter acceptance · ${expiringSoonCount} expiring this week`}
+        description={`${formatCurrencyINR(openValue)} of open commercial value`}
         actions={
           organizationType === "rental_company" ? (
             <Button onClick={() => setCreateOpen(true)}>New quotation</Button>
@@ -182,37 +193,42 @@ export default function QuotationsPage() {
         }
       />
 
+      <AllocationBar
+        total={{ count: data.quotations.length, label: "All quotations" }}
+        segments={STATUS_SEGMENTS.map((s) => ({
+          key: s.key,
+          count: data.quotations.filter((q) => q.status === s.key).length,
+          label: s.label,
+          tone: s.tone,
+        }))}
+        active={filter === "all" || filter === "requested" ? null : filter}
+        onSelect={(key) => setFilter((key ?? "all") as Filter)}
+      />
+
+      <AttentionStrip
+        items={[
+          {
+            key: "requested",
+            count: data.requestedResponses.length,
+            text: `RFQ${data.requestedResponses.length === 1 ? "" : "s"} awaiting your quotation`,
+            onClick: () => setFilter("requested"),
+          },
+          {
+            key: "awaiting-acceptance",
+            count: awaitingAcceptanceCount,
+            text: `sent quotation${awaitingAcceptanceCount === 1 ? "" : "s"} awaiting renter acceptance`,
+            onClick: () => setFilter("sent"),
+          },
+          {
+            key: "expiring-soon",
+            count: expiringSoonCount,
+            text: `quotation${expiringSoonCount === 1 ? "" : "s"} expiring within 7 days`,
+          },
+        ]}
+      />
+
       <div className="flex flex-wrap items-center gap-2">
         <Input placeholder="Reference, renter, machine…" className="w-64" value={search} onChange={(e) => setSearch(e.target.value)} />
-        {organizationType === "rental_company" && (
-          <button
-            type="button"
-            onClick={() => setFilter("requested")}
-            className={[
-              "rounded-control border px-3 py-1.5 text-xs font-semibold",
-              filter === "requested"
-                ? "border-ink-strong bg-ink-strong text-white"
-                : "border-border-strong bg-surface text-ink-muted hover:bg-surface-sunk",
-            ].join(" ")}
-          >
-            Requested · {data.requestedResponses.length}
-          </button>
-        )}
-        {FILTERS.map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilter(key)}
-            className={[
-              "rounded-control border px-3 py-1.5 text-xs font-semibold capitalize",
-              filter === key
-                ? "border-ink-strong bg-ink-strong text-white"
-                : "border-border-strong bg-surface text-ink-muted hover:bg-surface-sunk",
-            ].join(" ")}
-          >
-            {key} · {key === "all" ? data.quotations.length : data.quotations.filter((q) => q.status === key).length}
-          </button>
-        ))}
       </div>
 
       {filter === "requested" ? (

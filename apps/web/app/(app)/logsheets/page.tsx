@@ -4,7 +4,7 @@ import type { Logsheet } from "@fleetip/contracts/logsheet";
 import type { Rental } from "@fleetip/contracts/rental";
 import {
   Alert,
-  Badge,
+  AttentionStrip,
   Card,
   EmptyState,
   ErrorState,
@@ -12,6 +12,7 @@ import {
   LoadingState,
   PageHeader,
   Select,
+  StatusBadge,
   Table,
   Tbody,
   Td,
@@ -22,9 +23,10 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { formatDate } from "../../../lib/format";
+import { daysBetween, formatDate, todayIsoDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
 import { LogsheetPanel } from "../rentals/panels";
+import { LOGSHEET_CONFIRMED_MAP } from "./shared";
 
 /**
  * Standalone Logsheets workspace. `GET .../logsheets` now serves a real
@@ -102,12 +104,26 @@ export default function LogsheetsPage() {
   if (!logsheets || !rentals) return <LoadingState label="Loading logsheets…" />;
 
   const selectedRental = rentals.find((r) => r.id === selectedRentalId) ?? null;
+  const today = todayIsoDate();
+  const staleUnconfirmedCount = logsheets.filter(
+    (s) => !s.customerConfirmed && daysBetween(s.logDate, today) > 7,
+  ).length;
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Logsheets"
         description="Daily operating hours across every rental — fast entry, fleet-wide visibility."
+      />
+
+      <AttentionStrip
+        items={[
+          {
+            key: "stale-unconfirmed",
+            count: staleUnconfirmedCount,
+            text: `logsheet${staleUnconfirmedCount === 1 ? "" : "s"} unconfirmed by the customer for more than 7 days`,
+          },
+        ]}
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -170,9 +186,10 @@ export default function LogsheetsPage() {
                   <Td className="font-mono">{sheet.idleHours ?? "—"}</Td>
                   <Td>{sheet.operatorName ?? "—"}</Td>
                   <Td>
-                    <Badge tone={sheet.customerConfirmed ? "success" : "neutral"}>
-                      {sheet.customerConfirmed ? "Confirmed" : "Unconfirmed"}
-                    </Badge>
+                    <StatusBadge
+                      status={sheet.customerConfirmed ? "confirmed" : "unconfirmed"}
+                      map={LOGSHEET_CONFIRMED_MAP}
+                    />
                   </Td>
                 </Tr>
               );

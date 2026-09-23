@@ -5,7 +5,7 @@ import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/cat
 import type { Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
 import type { ResponsibleParty } from "@fleetip/contracts/quotation";
-import type { RateUnit } from "@fleetip/contracts/rental";
+import type { OperatorScope, RateUnit } from "@fleetip/contracts/rental";
 import type { Requirement } from "@fleetip/contracts/rfq";
 import { Button, Dialog, EmptyState, Input, LoadingState, Select } from "@fleetip/ui";
 import { type FormEvent, useEffect, useState } from "react";
@@ -23,6 +23,12 @@ const RESPONSIBLE_PARTY_OPTIONS = [
   { value: "", label: "Not specified" },
   { value: "client", label: "Client scope" },
   { value: "company", label: "Company scope" },
+];
+
+const OPERATOR_SCOPE_OPTIONS = [
+  { value: "", label: "Not specified" },
+  { value: "with_operator", label: "With operator" },
+  { value: "without_operator", label: "Without operator" },
 ];
 
 export interface CreateQuotationDialogProps {
@@ -59,7 +65,12 @@ function RequirementContext({
           ["Renter", renterName],
           ["Equipment", subcategoryName ?? "—"],
           ["Quantity", String(requirement.quantity)],
-          ["Capacity", requirement.capacity ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}` : "—"],
+          [
+            "Capacity",
+            requirement.capacity
+              ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}`
+              : "—",
+          ],
           ["Project", requirement.projectName ?? "—"],
           ["Location", requirement.projectLocation ?? "—"],
           ["Requested start", requirement.requestedStartDate],
@@ -222,9 +233,15 @@ export function CreateQuotationDialog({
       demobilizationCharge: form.get("demobilizationCharge")
         ? Number(form.get("demobilizationCharge"))
         : undefined,
-      fuelScope: form.get("fuelScope") ? (String(form.get("fuelScope")) as ResponsibleParty) : undefined,
+      overtimeRate: form.get("overtimeRate") ? Number(form.get("overtimeRate")) : undefined,
+      fuelScope: form.get("fuelScope")
+        ? (String(form.get("fuelScope")) as ResponsibleParty)
+        : undefined,
       accommodationScope: form.get("accommodationScope")
         ? (String(form.get("accommodationScope")) as ResponsibleParty)
+        : undefined,
+      operatorScope: form.get("operatorScope")
+        ? (String(form.get("operatorScope")) as OperatorScope)
         : undefined,
       workingHours: form.get("workingHours") ? Number(form.get("workingHours")) : undefined,
       workingDaysPerWeek: form.get("workingDaysPerWeek")
@@ -236,8 +253,20 @@ export function CreateQuotationDialog({
       minimumRentalPeriodUnit: form.get("minimumRentalPeriodUnit")
         ? (String(form.get("minimumRentalPeriodUnit")) as RateUnit)
         : undefined,
+      noticePeriodDays: form.get("noticePeriodDays")
+        ? Number(form.get("noticePeriodDays"))
+        : undefined,
       gstTerms: form.get("gstTerms") ? String(form.get("gstTerms")) : undefined,
-      commercialNotes: form.get("commercialNotes") ? String(form.get("commercialNotes")) : undefined,
+      paymentTerms: form.get("paymentTerms") ? String(form.get("paymentTerms")) : undefined,
+      shiftStructure: form.get("shiftStructure") ? String(form.get("shiftStructure")) : undefined,
+      sundayCondition: form.get("sundayCondition")
+        ? String(form.get("sundayCondition"))
+        : undefined,
+      fuelNorms: form.get("fuelNorms") ? String(form.get("fuelNorms")) : undefined,
+      dehireTerms: form.get("dehireTerms") ? String(form.get("dehireTerms")) : undefined,
+      commercialNotes: form.get("commercialNotes")
+        ? String(form.get("commercialNotes"))
+        : undefined,
       companyTerms: form.get("companyTerms") ? String(form.get("companyTerms")) : undefined,
     };
 
@@ -277,7 +306,11 @@ export function CreateQuotationDialog({
   const lockedStartDate = requirement?.requestedStartDate ?? null;
   const lockedEndDate =
     lockedStartDate && requirement?.expectedDurationValue && requirement.expectedDurationUnit
-      ? addDuration(lockedStartDate, requirement.expectedDurationValue, requirement.expectedDurationUnit)
+      ? addDuration(
+          lockedStartDate,
+          requirement.expectedDurationValue,
+          requirement.expectedDurationUnit,
+        )
       : null;
   // A one-line summary of the requirement's shift info — a reasonable
   // starting point for the free-text commercialNotes field, not a real
@@ -297,9 +330,16 @@ export function CreateQuotationDialog({
       {loadingContext || loadingAuctionPrefill ? (
         <LoadingState label="Loading requirement…" />
       ) : activeMachines.length === 0 ? (
-        <EmptyState title="No available machines" description="Register a machine and mark it active before quoting." />
+        <EmptyState
+          title="No available machines"
+          description="Register a machine and mark it active before quoting."
+        />
       ) : (
-        <form key={requirement?.id ?? "no-requirement"} onSubmit={handleCreate} className="flex flex-col gap-4 text-left">
+        <form
+          key={requirement?.id ?? "no-requirement"}
+          onSubmit={handleCreate}
+          className="flex flex-col gap-4 text-left"
+        >
           {requirement && (
             <RequirementContext
               requirement={requirement}
@@ -313,7 +353,10 @@ export function CreateQuotationDialog({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs font-medium text-ink-muted">
-                  Machine{requirement && requirement.quantity > 1 ? ` — needs ${requirement.quantity}` : ""}
+                  Machine
+                  {requirement && requirement.quantity > 1
+                    ? ` — needs ${requirement.quantity}`
+                    : ""}
                 </span>
                 <div className="flex max-h-[136px] flex-col gap-1 overflow-y-auto rounded-control border border-border-strong px-2.5 py-2">
                   {activeMachines.map((m) => (
@@ -325,8 +368,8 @@ export function CreateQuotationDialog({
                 </div>
                 {requirement && requirement.quantity > 1 && (
                   <span className="text-[11px] text-meta">
-                    Select more than one to quote several machines in one go — one quotation is created per
-                    machine selected, all with the same terms below.
+                    Select more than one to quote several machines in one go — one quotation is
+                    created per machine selected, all with the same terms below.
                   </span>
                 )}
               </div>
@@ -335,11 +378,19 @@ export function CreateQuotationDialog({
                   <span className="text-xs font-medium text-ink-muted">Customer type</span>
                   <div className="flex gap-4 text-sm text-ink-muted">
                     <label className="flex items-center gap-1.5">
-                      <input type="radio" checked={customerMode === "external"} onChange={() => setCustomerMode("external")} />
+                      <input
+                        type="radio"
+                        checked={customerMode === "external"}
+                        onChange={() => setCustomerMode("external")}
+                      />
                       External client
                     </label>
                     <label className="flex items-center gap-1.5">
-                      <input type="radio" checked={customerMode === "renter"} onChange={() => setCustomerMode("renter")} />
+                      <input
+                        type="radio"
+                        checked={customerMode === "renter"}
+                        onChange={() => setCustomerMode("renter")}
+                      />
                       FleetIP Renter
                     </label>
                   </div>
@@ -348,11 +399,17 @@ export function CreateQuotationDialog({
             </div>
             {isFromRequirement && requirement ? (
               <div>
-                <span className="mb-1 block text-xs font-medium text-ink-muted">Renter organization</span>
+                <span className="mb-1 block text-xs font-medium text-ink-muted">
+                  Renter organization
+                </span>
                 <p className="rounded-control border border-border bg-surface-sunk px-2.5 py-2 text-sm text-ink-muted">
                   {renterName(requirement.renterOrganizationId)} (locked to this requirement)
                 </p>
-                <input type="hidden" name="renterOrganizationId" value={requirement.renterOrganizationId} />
+                <input
+                  type="hidden"
+                  name="renterOrganizationId"
+                  value={requirement.renterOrganizationId}
+                />
               </div>
             ) : customerMode === "external" ? (
               <Input label="Client name" name="clientName" required />
@@ -370,7 +427,9 @@ export function CreateQuotationDialog({
           </div>
 
           <div className="flex flex-col gap-1 border-t border-border pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-meta">Schedule &amp; rate</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-meta">
+              Schedule &amp; rate
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {lockedStartDate ? (
                 <div className="flex flex-col gap-1.5">
@@ -379,7 +438,13 @@ export function CreateQuotationDialog({
                   <input type="hidden" name="startDate" value={lockedStartDate} />
                 </div>
               ) : (
-                <Input label="Start date" name="startDate" type="date" min={todayIsoDate()} required />
+                <Input
+                  label="Start date"
+                  name="startDate"
+                  type="date"
+                  min={todayIsoDate()}
+                  required
+                />
               )}
               {lockedEndDate ? (
                 <div className="flex flex-col gap-1.5">
@@ -390,11 +455,20 @@ export function CreateQuotationDialog({
               ) : (
                 <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
               )}
-              <Input label="Rate" name="rate" type="number" step="0.01" required defaultValue={prefilledRate ?? undefined} />
+              <Input
+                label="Rate"
+                name="rate"
+                type="number"
+                step="0.01"
+                required
+                defaultValue={prefilledRate ?? undefined}
+              />
               {lockedRateUnit ? (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-ink-muted">Rate unit</span>
-                  <p className="flex h-[34px] items-center text-sm text-ink capitalize">{lockedRateUnit}</p>
+                  <p className="flex h-[34px] items-center text-sm text-ink capitalize">
+                    {lockedRateUnit}
+                  </p>
                   <input type="hidden" name="rateUnit" value={lockedRateUnit} />
                 </div>
               ) : (
@@ -416,16 +490,55 @@ export function CreateQuotationDialog({
               Working terms &amp; responsibilities
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Input
+                label="Mobilization charge"
+                name="mobilizationCharge"
+                type="number"
+                step="0.01"
+                min={0}
+              />
+              <Input
+                label="Demobilization charge"
+                name="demobilizationCharge"
+                type="number"
+                step="0.01"
+                min={0}
+              />
+              <Input label="Overtime rate" name="overtimeRate" type="number" step="0.01" min={0} />
               <Input label="Working hours / shift" name="workingHours" type="number" step="0.5" />
-              <Input label="Working days / week" name="workingDaysPerWeek" type="number" min={1} max={7} />
+              <Input
+                label="Working days / week"
+                name="workingDaysPerWeek"
+                type="number"
+                min={1}
+                max={7}
+              />
+              <Select label="Operator" name="operatorScope" options={OPERATOR_SCOPE_OPTIONS} />
               <Select label="Fuel scope" name="fuelScope" options={RESPONSIBLE_PARTY_OPTIONS} />
-              <Select label="Accommodation scope" name="accommodationScope" options={RESPONSIBLE_PARTY_OPTIONS} />
-              <Input label="Minimum rental period" name="minimumRentalPeriodValue" type="number" min={1} />
-              <Select label="Period unit" name="minimumRentalPeriodUnit" options={RATE_UNIT_OPTIONS} />
-              <Input label="Mobilization charge" name="mobilizationCharge" type="number" step="0.01" min={0} />
-              <Input label="Demobilization charge" name="demobilizationCharge" type="number" step="0.01" min={0} />
+              <Select
+                label="Accommodation scope"
+                name="accommodationScope"
+                options={RESPONSIBLE_PARTY_OPTIONS}
+              />
+              <Input
+                label="Minimum rental period"
+                name="minimumRentalPeriodValue"
+                type="number"
+                min={1}
+              />
+              <Select
+                label="Period unit"
+                name="minimumRentalPeriodUnit"
+                options={RATE_UNIT_OPTIONS}
+              />
+              <Input label="Notice period (days)" name="noticePeriodDays" type="number" min={0} />
             </div>
             <Input label="GST terms" name="gstTerms" placeholder="e.g. GST extra @ 18%" />
+            <Input label="Payment terms" name="paymentTerms" />
+            <Input label="Shift structure" name="shiftStructure" />
+            <Input label="Sunday condition" name="sundayCondition" />
+            <Input label="Fuel norms" name="fuelNorms" />
+            <Input label="De-hire terms" name="dehireTerms" />
           </div>
 
           <div className="flex flex-col gap-1 border-t border-border pt-4">

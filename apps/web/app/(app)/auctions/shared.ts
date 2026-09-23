@@ -8,6 +8,13 @@ export const PARTICIPANT_STATUS_MAP: StatusMap = {
   rejected: { label: "Rejected", tone: "danger" },
 };
 
+export const AUCTION_STATUS_MAP: StatusMap = {
+  scheduled: { label: "Scheduled", tone: "neutral" },
+  live: { label: "Live", tone: "info" },
+  closed: { label: "Closed", tone: "warning" },
+  cancelled: { label: "Cancelled", tone: "danger" },
+};
+
 /** Leading / Outbid (own latest, not leading) / Superseded (own, older, not leading). */
 export function bidTag(bid: AuctionBid, ownParticipantId: string | undefined, allBids: AuctionBid[]): string | null {
   if (bid.isLeading) return "Leading";

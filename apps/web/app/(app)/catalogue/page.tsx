@@ -245,8 +245,8 @@ export default function CataloguePage() {
                   <Tr key={category.id}>
                     <Td className="font-medium text-ink">{category.name}</Td>
                     <Td className="font-mono">{category.code}</Td>
-                    <Td>{subs.length}</Td>
-                    <Td>{productCount}</Td>
+                    <Td className="font-mono">{subs.length}</Td>
+                    <Td className="font-mono">{productCount}</Td>
                     <Td>
                       <Link
                         href={`/catalogue/categories/${category.id}`}
@@ -282,7 +282,7 @@ export default function CataloguePage() {
                   <Td className="font-medium text-ink">{subcategory.name}</Td>
                   <Td className="font-mono">{subcategory.code}</Td>
                   <Td>{categoryById.get(subcategory.productCategoryId)?.name ?? "—"}</Td>
-                  <Td>
+                  <Td className="font-mono">
                     {products.filter((p) => p.productSubcategoryId === subcategory.id).length}
                   </Td>
                   <Td>

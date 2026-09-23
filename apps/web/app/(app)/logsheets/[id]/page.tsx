@@ -2,12 +2,13 @@
 
 import type { Logsheet } from "@fleetip/contracts/logsheet";
 import type { Rental } from "@fleetip/contracts/rental";
-import { Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "@fleetip/ui";
+import { Card, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@fleetip/ui";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiClient } from "../../../../lib/api-client";
 import { formatDate } from "../../../../lib/format";
 import { useSession } from "../../../../lib/session-context";
+import { LOGSHEET_CONFIRMED_MAP } from "../shared";
 
 export default function LogsheetDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -94,9 +95,10 @@ export default function LogsheetDetailPage() {
       />
 
       <div>
-        <Badge tone={logsheet.customerConfirmed ? "success" : "neutral"}>
-          {logsheet.customerConfirmed ? "Customer confirmed" : "Not yet confirmed by customer"}
-        </Badge>
+        <StatusBadge
+          status={logsheet.customerConfirmed ? "confirmed" : "unconfirmed"}
+          map={LOGSHEET_CONFIRMED_MAP}
+        />
       </div>
 
       <Card>

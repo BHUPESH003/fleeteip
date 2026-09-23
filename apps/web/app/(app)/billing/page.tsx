@@ -3,6 +3,9 @@
 import type { Invoice, InvoiceDetail, InvoiceStatus } from "@fleetip/contracts/billing";
 import type { Rental } from "@fleetip/contracts/rental";
 import {
+  AllocationBar,
+  type AllocationTone,
+  AttentionStrip,
   Badge,
   Button,
   EmptyState,
@@ -27,7 +30,14 @@ import { CreateInvoiceDialog } from "./CreateInvoiceDialog";
 import { INVOICE_STATUS_MAP, legalNextInvoiceStatuses } from "./shared";
 
 type Filter = "all" | InvoiceStatus;
-const FILTERS: Filter[] = ["all", "draft", "issued", "overdue", "paid", "cancelled"];
+
+const STATUS_SEGMENTS: { key: InvoiceStatus; label: string; tone: AllocationTone }[] = [
+  { key: "draft", label: "Draft", tone: "neutral" },
+  { key: "issued", label: "Issued", tone: "on-rent" },
+  { key: "overdue", label: "Overdue", tone: "attention" },
+  { key: "paid", label: "Paid", tone: "available" },
+  { key: "cancelled", label: "Cancelled", tone: "out-of-service" },
+];
 
 /**
  * The `overdue` status transition is server-only (see shared.ts) — an
@@ -267,16 +277,51 @@ export default function BillingPage() {
   if (error) return <ErrorState message={error} />;
   if (!invoices) return <LoadingState label="Loading invoices…" />;
 
-  const issuedCount = invoices.filter((i) => i.status === "issued").length;
-  const overdueCount = invoices.filter((i) => i.status === "overdue").length;
-  const paidCount = invoices.filter((i) => i.status === "paid").length;
+  // Recomputed from the real dueDate rather than mirroring the `overdue`
+  // segment count as-is — that status transition is server-only (see
+  // shared.ts) and can lag, same reasoning as `DueSoonBadge` above.
+  const trueOverdueCount = invoices.filter(
+    (i) => i.status === "overdue" || (i.status === "issued" && daysUntil(i.dueDate) < 0),
+  ).length;
+  const dueSoonCount = invoices.filter(
+    (i) => i.status === "issued" && daysUntil(i.dueDate) >= 0 && daysUntil(i.dueDate) <= 7,
+  ).length;
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Billing"
-        description={`${invoices.length} invoices · ${issuedCount} issued · ${overdueCount} overdue · ${paidCount} paid`}
+        description={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}
         actions={canManage ? <Button onClick={() => setCreateOpen(true)}>Create invoice</Button> : undefined}
+      />
+
+      <AllocationBar
+        total={{ count: invoices.length, label: "All invoices" }}
+        segments={STATUS_SEGMENTS.map((s) => ({
+          key: s.key,
+          count: invoices.filter((i) => i.status === s.key).length,
+          label: s.label,
+          tone: s.tone,
+        }))}
+        active={filter === "all" ? null : filter}
+        onSelect={(key) => setFilter((key ?? "all") as Filter)}
+      />
+
+      <AttentionStrip
+        items={[
+          {
+            key: "overdue",
+            count: trueOverdueCount,
+            text: `invoice${trueOverdueCount === 1 ? "" : "s"} overdue`,
+            onClick: () => setFilter("overdue"),
+          },
+          {
+            key: "due-soon",
+            count: dueSoonCount,
+            text: `invoice${dueSoonCount === 1 ? "" : "s"} due within 7 days`,
+            onClick: () => setFilter("issued"),
+          },
+        ]}
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -286,21 +331,6 @@ export default function BillingPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {FILTERS.map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilter(key)}
-            className={[
-              "rounded-control border px-3 py-1.5 text-xs font-semibold capitalize",
-              filter === key
-                ? "border-ink-strong bg-ink-strong text-white"
-                : "border-border-strong bg-surface text-ink-muted hover:bg-surface-sunk",
-            ].join(" ")}
-          >
-            {key} · {key === "all" ? invoices.length : invoices.filter((i) => i.status === key).length}
-          </button>
-        ))}
       </div>
 
       {filtered.length === 0 ? (

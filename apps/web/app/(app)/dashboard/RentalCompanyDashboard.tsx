@@ -8,7 +8,7 @@ import type { NotificationListResponse } from "@fleetip/contracts/notification";
 import type { Organization } from "@fleetip/contracts/organization";
 import type { CommercialQuotation, QuotationResponse } from "@fleetip/contracts/quotation";
 import type { Rental } from "@fleetip/contracts/rental";
-import { Card, LoadingState, Meter, PageHeader } from "@fleetip/ui";
+import { Card, ErrorState, LoadingState, Meter, PageHeader } from "@fleetip/ui";
 import { useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
 import { daysUntil, formatCurrencyINR } from "../../../lib/format";
@@ -126,7 +126,7 @@ export function RentalCompanyDashboard() {
     };
   }, [organizationId]);
 
-  if (error) return <p className="text-sm text-danger">{error}</p>;
+  if (error) return <ErrorState message={error} />;
   if (!data) return <LoadingState label="Loading dashboard…" />;
 
   const {

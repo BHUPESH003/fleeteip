@@ -175,7 +175,7 @@ export default function CategoryDetailPage() {
                 <Tr key={subcategory.id}>
                   <Td className="font-medium text-ink">{subcategory.name}</Td>
                   <Td className="font-mono">{subcategory.code}</Td>
-                  <Td>
+                  <Td className="font-mono">
                     {products.filter((p) => p.productSubcategoryId === subcategory.id).length}
                   </Td>
                   <Td>

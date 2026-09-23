@@ -69,7 +69,9 @@ function ScopeItemsCard({
 
   async function load() {
     try {
-      setItems((await apiClient.listScopeItems(organizationId, quotationId)) as QuotationScopeItem[]);
+      setItems(
+        (await apiClient.listScopeItems(organizationId, quotationId)) as QuotationScopeItem[],
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load scope items");
     }
@@ -110,9 +112,7 @@ function ScopeItemsCard({
   return (
     <Card>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ink">
-          Category-specific responsibilities
-        </h2>
+        <h2 className="text-sm font-semibold text-ink">Category-specific responsibilities</h2>
         {canEdit && !adding && (
           <Button variant="secondary" onClick={() => setAdding(true)}>
             Add item
@@ -215,7 +215,9 @@ export default function QuotationDetailPage() {
       // resolving the renter's name needs quotation.manage. listProducts is
       // an open read, but it's only useful here paired with the machine.
       const [machines, products, renterOrgs] = await Promise.all([
-        canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
+        canListMachines
+          ? (apiClient.listMachines(orgId) as Promise<Machine[]>)
+          : Promise.resolve([]),
         apiClient.listProducts() as Promise<Product[]>,
         apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
       ]);
@@ -328,7 +330,9 @@ export default function QuotationDetailPage() {
       setShowAlternateDatesForm(false);
       await load(organizationId, organizationType);
     } catch (err) {
-      setAlternateDatesError(err instanceof Error ? err.message : "Failed to propose alternate dates");
+      setAlternateDatesError(
+        err instanceof Error ? err.message : "Failed to propose alternate dates",
+      );
     }
   }
 
@@ -340,7 +344,9 @@ export default function QuotationDetailPage() {
       await load(organizationId, organizationType);
     } catch (err) {
       setAlternateDatesError(
-        err instanceof Error ? err.message : `Failed to ${decision === "accepted" ? "accept" : "reject"} the proposed dates`,
+        err instanceof Error
+          ? err.message
+          : `Failed to ${decision === "accepted" ? "accept" : "reject"} the proposed dates`,
       );
     }
   }
@@ -367,7 +373,8 @@ export default function QuotationDetailPage() {
   // while one is still pending it's stale — the pending offer's own rate is
   // the actual number on the table right now.
   const pendingOffer = offers.find((o) => o.status === "pending") ?? null;
-  const pendingFromCounterparty = Boolean(pendingOffer) && pendingOffer!.offeredByOrganizationId !== organizationId;
+  const pendingFromCounterparty =
+    Boolean(pendingOffer) && pendingOffer!.offeredByOrganizationId !== organizationId;
   const decisionRate = pendingFromCounterparty ? pendingOffer!.rate : quotation.rate;
   const decisionRateUnit = pendingFromCounterparty ? pendingOffer!.rateUnit : quotation.rateUnit;
   const delta = rateDelta(quotation, offers);
@@ -463,11 +470,19 @@ export default function QuotationDetailPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {workOrderId && organizationId ? (
-              <a href={apiClient.workOrderPrintUrl(organizationId, workOrderId)} target="_blank" rel="noreferrer">
+              <a
+                href={apiClient.workOrderPrintUrl(organizationId, workOrderId)}
+                target="_blank"
+                rel="noreferrer"
+              >
                 <Button variant="secondary">Download PDF</Button>
               </a>
             ) : (
-              <Button variant="secondary" disabled title="Available once the quotation is awarded and a Work Order exists">
+              <Button
+                variant="secondary"
+                disabled
+                title="Available once the quotation is awarded and a Work Order exists"
+              >
                 Download PDF
               </Button>
             )}
@@ -600,7 +615,9 @@ export default function QuotationDetailPage() {
                 {!showCounterForm ? (
                   <div className="flex flex-col gap-2">
                     {(!pendingOffer || pendingFromCounterparty) && (
-                      <Button onClick={() => void handleAction("accept")}>Accept these terms</Button>
+                      <Button onClick={() => void handleAction("accept")}>
+                        Accept these terms
+                      </Button>
                     )}
                     <Button variant="secondary" onClick={() => setShowCounterForm(true)}>
                       Send counter offer
@@ -728,70 +745,73 @@ export default function QuotationDetailPage() {
             )}
           </Card>
 
-          {canNegotiate && (
-            <Card>
-              <h2 className="mb-3 text-sm font-semibold text-ink">Alternate dates</h2>
-              {alternateDatesError && (
-                <p className="mb-2 text-sm text-danger">{alternateDatesError}</p>
-              )}
-              {quotation.alternateDateStatus === "pending" ? (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm text-ink">
-                    {formatDate(quotation.proposedAlternateStartDate ?? "")} –{" "}
-                    {quotation.proposedAlternateEndDate
-                      ? formatDate(quotation.proposedAlternateEndDate)
-                      : "open-ended"}
-                  </p>
-                  {quotation.alternateDateReason && (
-                    <p className="text-xs text-meta">{quotation.alternateDateReason}</p>
-                  )}
-                  {!isOwner && organizationType === "renter" ? (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => void handleRespondToAlternateDates("accepted")}
-                      >
-                        Accept
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void handleRespondToAlternateDates("rejected")}
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-meta">Waiting for {counterpartyName} to respond.</p>
-                  )}
-                </div>
-              ) : isOwner ? (
-                !showAlternateDatesForm ? (
-                  <Button variant="secondary" onClick={() => setShowAlternateDatesForm(true)}>
-                    Propose alternate dates
-                  </Button>
+          <Card>
+            <h2 className="mb-3 text-sm font-semibold text-ink">Alternate dates</h2>
+            {alternateDatesError && (
+              <p className="mb-2 text-sm text-danger">{alternateDatesError}</p>
+            )}
+            {!canNegotiate ? (
+              <p className="text-sm text-meta">
+                Available once this quotation has been sent — start and end dates are locked to the
+                requirement until then.
+              </p>
+            ) : quotation.alternateDateStatus === "pending" ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm text-ink">
+                  {formatDate(quotation.proposedAlternateStartDate ?? "")} –{" "}
+                  {quotation.proposedAlternateEndDate
+                    ? formatDate(quotation.proposedAlternateEndDate)
+                    : "open-ended"}
+                </p>
+                {quotation.alternateDateReason && (
+                  <p className="text-xs text-meta">{quotation.alternateDateReason}</p>
+                )}
+                {!isOwner && organizationType === "renter" ? (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => void handleRespondToAlternateDates("accepted")}
+                    >
+                      Accept
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void handleRespondToAlternateDates("rejected")}
+                    >
+                      Reject
+                    </Button>
+                  </div>
                 ) : (
-                  <form onSubmit={handleProposeAlternateDates} className="flex flex-col gap-3">
-                    <Input label="Start date" name="startDate" type="date" required />
-                    <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
-                    <Input label="Reason" name="reason" />
-                    <div className="flex gap-2">
-                      <Button type="submit">Propose</Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => setShowAlternateDatesForm(false)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                )
+                  <p className="text-xs text-meta">Waiting for {counterpartyName} to respond.</p>
+                )}
+              </div>
+            ) : isOwner ? (
+              !showAlternateDatesForm ? (
+                <Button variant="secondary" onClick={() => setShowAlternateDatesForm(true)}>
+                  Propose alternate dates
+                </Button>
               ) : (
-                <p className="text-sm text-meta">No alternate dates proposed.</p>
-              )}
-            </Card>
-          )}
+                <form onSubmit={handleProposeAlternateDates} className="flex flex-col gap-3">
+                  <Input label="Start date" name="startDate" type="date" required />
+                  <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
+                  <Input label="Reason" name="reason" />
+                  <div className="flex gap-2">
+                    <Button type="submit">Propose</Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setShowAlternateDatesForm(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )
+            ) : (
+              <p className="text-sm text-meta">No alternate dates proposed.</p>
+            )}
+          </Card>
 
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-ink">Offer trail</h2>
@@ -853,7 +873,9 @@ export default function QuotationDetailPage() {
           onClose={() => setShowEditTerms(false)}
           organizationId={organizationId}
           quotation={quotation}
-          onUpdated={(updated) => setData((prev) => (prev ? { ...prev, quotation: updated } : prev))}
+          onUpdated={(updated) =>
+            setData((prev) => (prev ? { ...prev, quotation: updated } : prev))
+          }
         />
       )}
     </div>

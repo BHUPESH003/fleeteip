@@ -24,7 +24,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
       : "Search machines, rentals, quotations…";
 
   return (
-    <header className="flex h-14 items-center gap-3.5 border-b border-border bg-surface px-5">
+    <header className="flex h-14 shrink-0 items-center gap-3.5 border-b border-border bg-surface px-5">
       <button
         type="button"
         onClick={onMenuClick}

@@ -51,6 +51,41 @@ export function formatDate(dateStr: string): string {
   }).format(new Date(dateStr));
 }
 
+/**
+ * "05 Oct" — no year. Used in dense contexts (lane scales, filter pills,
+ * gap labels) per the design system's date-beats-percentages convention.
+ * `formatDate` (above, with year) stays as-is for the ~10 existing call
+ * sites that need the year unconditionally.
+ */
+export function formatShortDate(dateStr: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+  }).format(new Date(dateStr));
+}
+
+/**
+ * "15 May → 30 Sep 2026" — a range with an arrow, never a hyphen, year
+ * only once (on the later/only date that needs it, per the design
+ * system's unit table). `end` may be null for an open-ended rental —
+ * rendered as the literal "no end date", never a blank or em dash.
+ */
+export function formatDateRange(start: string, end: string | null): string {
+  if (!end) return `${formatShortDate(start)} \u2192 no end date`;
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const sameYear = startDate.getUTCFullYear() === endDate.getUTCFullYear();
+  const startLabel = sameYear ? formatShortDate(start) : formatDate(start);
+  return `${startLabel} \u2192 ${formatDate(end)}`;
+}
+
+/** Whole days between two ISO dates (end exclusive-of-time, date-only math). */
+export function daysBetween(fromIso: string, toIso: string): number {
+  const from = new Date(`${fromIso}T00:00:00Z`).getTime();
+  const to = new Date(`${toIso}T00:00:00Z`).getTime();
+  return Math.round((to - from) / (24 * 60 * 60 * 1000));
+}
+
 /** Title-cases a camelCase key for display, e.g. "boomLengthM" -> "Boom length m". */
 export function humanizeKey(key: string): string {
   const spaced = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2");

@@ -12,54 +12,97 @@
 @source "../../../packages/ui/src";
 
 /*
- * FleetIP design tokens — sourced from the approved Claude Design canvas
- * ("FleetIP Redesign", pass 01). Every component in @fleetip/ui and every
- * page should draw from these tokens rather than raw Tailwind grays/blues,
- * so a future palette change happens in one place.
+ * FleetIP design tokens — sourced from the approved "FleetIP Design
+ * System" canvas (register-language pass, superseding the earlier
+ * "FleetIP Redesign" pass 01 palette). Every component in @fleetip/ui and
+ * every page should draw from these tokens rather than raw Tailwind
+ * grays/blues, so a future palette change happens in one place.
+ *
+ * Four semantic hues, one accent, three surfaces — deliberately small.
+ * See design/FleetIP Design System.dc.html for the full rationale.
  */
 @theme {
-  --color-ink: #0f1720; /* primary text */
-  --color-ink-muted: #47525e; /* secondary text */
-  --color-meta: #5c6875; /* tertiary text, labels */
-  --color-meta-light: #6e7a87; /* placeholders, faint meta */
-  --color-border: #e2e5e9; /* default hairline border */
-  --color-border-strong: #cdd3da; /* control borders */
-  --color-border-stronger: #aeb7c0;
-  --color-surface: #ffffff;
-  --color-surface-sunk: #f4f5f7; /* recessed fields, search box */
-  --color-surface-hover: #f0f2f4; /* ghost-button hover, disabled bg */
-  --color-surface-page: #ebedf0; /* page background behind the shell */
-  --color-ink-strong: #1b2530; /* secondary/ghost button text, avatar chip */
+  --color-canvas: #e9ebee; /* behind frames — app shell page background */
+  --color-ink: #0f1720; /* figures, codes, primary text */
+  --color-ink-strong: #1b2530; /* body, names, secondary/ghost button text */
+  --color-ink-muted: #47525e; /* secondary text, descriptions */
+  --color-meta: #5c6875; /* labels, dates, tertiary text */
+  --color-meta-light: #6e7a87; /* captions >= 11px, placeholders */
+  --color-border: #edf0f2; /* hairline — row separators */
+  --color-border-soft: #e4e8ec; /* inner dividers */
+  --color-border-strong: #d6dbe1; /* card borders, control borders */
+  --color-border-stronger: #b9c1c9; /* checkbox borders */
+  --color-surface: #ffffff; /* cards, rows */
+  --color-surface-sunk: #fafbfc; /* toolbars, captions */
+  --color-surface-hover: #f7f9fa; /* row hover */
+  --color-surface-rail-track: #f1f3f5; /* lane track background */
+  --color-surface-page: #e9ebee; /* page background behind the shell */
   --color-disabled-text: #a9b2bb;
 
-  --color-rail: #131a22; /* sidebar background */
-  --color-rail-border: #212c39;
-  --color-rail-active: #1f2b38; /* active nav item background */
-  --color-rail-muted: #97a3b1; /* inactive nav text */
-  --color-rail-planned: #5c6978; /* dimmed "soon" nav text */
-  --color-rail-group: #596573; /* nav group label */
-  --color-rail-tag: #4c5867; /* nav trailing tag text */
+  --color-rail: #0f1720; /* sidebar, bulk bar background */
+  --color-rail-border: #1e2932; /* sidebar top border under logo */
+  --color-rail-active: #1b2530; /* active nav item background */
+  --color-rail-muted: #b6bfc8; /* inactive nav text */
+  --color-rail-planned: #69757f; /* dimmed "soon" nav text/icon */
+  --color-rail-group: #8d99a6; /* nav group label */
+  --color-rail-tag: #8d99a6; /* nav trailing tag text */
+  --color-rail-control-border: #38454f; /* outlined button in the bulk bar */
 
-  --color-accent: #e07a12; /* primary action */
-  --color-accent-press: #c2620a; /* primary action hover/border */
-  --color-accent-text: #b4650d; /* accent-colored links/text */
+  --color-accent: #d2640c; /* primary action, today's line */
+  --color-accent-press: #b4560a; /* primary action hover/active */
+  --color-accent-text: #a6540c; /* inline links, row action links */
+  --color-accent-wash: #fdf8f0; /* attention strip background */
+  --color-accent-wash-border: #e2d6be; /* attention strip border */
 
-  --color-success-bg: #e7f4ec;
-  --color-success: #0e7c4a;
-  --color-warning-bg: #fbf0df;
-  --color-warning: #8f5107;
-  --color-danger-bg: #fbe9e8;
-  --color-danger: #a81f1b;
-  --color-danger-border: #e4b9b7;
-  --color-info-bg: #e6eef7;
-  --color-info: #14558c;
-  --color-neutral-bg: #edeff2;
-  --color-neutral: #55606c;
+  /* Deployment / status vocabulary — a value the contracts hold is a
+     chip (Status column); a conclusion the product draws is a plain
+     label (Deployment column, marked "derived"). Both draw from the
+     same four hues below so they stay visually related. */
+  --color-on-rent: #1b4d8f; /* deployed, earning */
+  --color-on-rent-bg: #edf2f9;
+  --color-on-rent-lane: #bbd0ea; /* lane block fill */
+  --color-on-rent-lane-edge: #1b4d8f;
+  --color-confirmed-lane: #e0e9f4; /* confirmed-ahead lane block */
+  --color-confirmed-lane-edge: #7ea3cf;
+  --color-available: #12694a; /* quotable now */
+  --color-available-bg: #e8f3ee;
+  --color-attention: #8a5107; /* maintenance, idle, needs-attention text */
+  --color-attention-bg: #fbf1df;
+  --color-attention-lane: #f0dcb4; /* maintenance/workshop lane block */
+  --color-attention-lane-edge: #b57a12;
+  --color-out-of-service: #5c6875; /* retired */
+  --color-out-of-service-bg: #eef0f3;
+  --color-past-lane: #e6e9ed; /* past-rental lane block */
+  --color-past-lane-edge: #b4bdc6;
+  --color-destructive: #96302a; /* retire, delete, breakdown */
+  --color-destructive-bg: #fbf1f0;
+  --color-destructive-border: #d8c3c3;
+  --color-destructive-lane-edge: #b4453c;
 
-  --radius-xs: 4px; /* row actions, badges */
-  --radius-control: 5px; /* buttons, inputs, selects, chips */
+  /* Legacy semantic aliases — kept so existing Badge/Alert tone classes
+     (success/warning/danger/info/neutral) keep working unchanged while
+     mapping onto the new hues above. */
+  --color-success-bg: var(--color-available-bg);
+  --color-success: var(--color-available);
+  --color-warning-bg: var(--color-attention-bg);
+  --color-warning: var(--color-attention);
+  --color-danger-bg: var(--color-destructive-bg);
+  --color-danger: var(--color-destructive);
+  --color-danger-border: var(--color-destructive-border);
+  --color-info-bg: var(--color-on-rent-bg);
+  --color-info: var(--color-on-rent);
+  --color-neutral-bg: var(--color-out-of-service-bg);
+  --color-neutral: var(--color-out-of-service);
+
+  --radius-xs: 3px; /* chips */
+  --radius-cell: 4px; /* cells, pills, tiles */
+  --radius-control: 5px; /* buttons, inputs, selects */
   --radius-panel: 6px; /* cards, list panels */
   --radius-shell: 8px; /* app shell corners */
+
+  --row-height-balanced: 64px;
+  --row-height-compact: 52px;
+  --row-height-header: 44px;
 
   --font-sans:
     var(--font-archivo), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
@@ -74,4 +117,36 @@ body {
   margin: 0;
   font-family: var(--font-sans);
   color: var(--color-ink);
+  background-color: var(--color-canvas);
+}
+
+/* Asset codes, references, capacities, dates, money, counts — never for
+   sentences, labels, buttons or names. Columns of figures should align
+   on the decimal. */
+.font-mono,
+[class*="font-mono"] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A thin, on-brand scrollbar for the dark sidebar nav — the browser's
+   default light scrollbar track clashes with --color-rail. Track stays
+   transparent (blends into the sidebar); the thumb is a translucent
+   rail-muted so it's visible on demand without adding visual noise when
+   the nav isn't actively scrolling. */
+.scrollbar-rail {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(182, 191, 200, 0.35) transparent;
+}
+.scrollbar-rail::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-rail::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-rail::-webkit-scrollbar-thumb {
+  background-color: rgba(182, 191, 200, 0.35);
+  border-radius: 9999px;
+}
+.scrollbar-rail::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(182, 191, 200, 0.55);
 }

@@ -6,6 +6,8 @@ import type { Auction } from "@fleetip/contracts/auction";
 import type { QuotationResponse } from "@fleetip/contracts/quotation";
 import type { Requirement } from "@fleetip/contracts/rfq";
 import {
+  AllocationBar,
+  AttentionStrip,
   Badge,
   Button,
   Dialog,
@@ -30,7 +32,7 @@ import { daysUntil, formatDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
 import { RESPONSE_STATUS_MAP, validityTone } from "./shared";
 
-type Filter = "needs_response" | "responded" | "in_auction" | "closed";
+type Filter = "all" | "needs_response" | "responded" | "in_auction" | "closed";
 
 interface Loaded {
   requirements: Requirement[];
@@ -162,6 +164,7 @@ export function OpenMarket({
     if (!data) return [];
     return sorted.filter((r) => {
       if (onlyStocked && !data.stockedSubcategoryIds.has(r.productSubcategoryId)) return false;
+      if (filter === "all") return true;
       if (r.status !== "open") return filter === "closed";
       if (filter === "closed") return false;
       const hasResponse = data.responses.has(r.id);
@@ -183,42 +186,65 @@ export function OpenMarket({
   const respondedCount = data.requirements.filter((r) => data.responses.has(r.id)).length;
   const inAuctionCount = data.requirements.filter((r) => data.activeAuctions.has(r.id)).length;
   const closedCount = data.requirements.filter((r) => r.status !== "open").length;
+  const urgentNeedsResponseCount = data.requirements.filter(
+    (r) => r.status === "open" && !data.responses.has(r.id) && daysUntil(r.validityDate) <= 2,
+  ).length;
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        title="Open market"
-        description={`${openCount} open requirements · ${needsResponseCount} still need a response from you`}
+      <PageHeader title="Open market" description={`${openCount} open requirements`} />
+
+      <AllocationBar
+        total={{ count: openCount + closedCount, label: "All requirements" }}
+        segments={[
+          {
+            key: "needs_response",
+            count: needsResponseCount,
+            label: "Needs response",
+            sub: "open, no reply from you yet",
+            tone: "attention",
+          },
+          {
+            key: "responded",
+            count: respondedCount,
+            label: "Responded",
+            sub: "you've replied",
+            tone: "available",
+          },
+          {
+            key: "in_auction",
+            count: inAuctionCount,
+            label: "In auction",
+            sub: "bidding is open",
+            tone: "on-rent",
+          },
+          {
+            key: "closed",
+            count: closedCount,
+            label: "Closed",
+            sub: "no longer open",
+            tone: "out-of-service",
+          },
+        ]}
+        active={filter === "all" ? null : filter}
+        onSelect={(key) => setFilter((key ?? "all") as Filter)}
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        {(
-          [
-            ["needs_response", `Needs response · ${needsResponseCount}`],
-            ["responded", `Responded · ${respondedCount}`],
-            ["in_auction", `In auction · ${inAuctionCount}`],
-            ["closed", `Closed · ${closedCount}`],
-          ] as [Filter, string][]
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilter(key)}
-            className={[
-              "rounded-control border px-3 py-1.5 text-xs font-semibold",
-              filter === key
-                ? "border-ink-strong bg-ink-strong text-white"
-                : "border-border-strong bg-surface text-ink-muted hover:bg-surface-sunk",
-            ].join(" ")}
-          >
-            {label}
-          </button>
-        ))}
-        <label className="ml-auto flex items-center gap-2 text-xs text-ink-muted">
-          <input type="checkbox" checked={onlyStocked} onChange={(e) => setOnlyStocked(e.target.checked)} />
-          Only equipment I stock
-        </label>
-      </div>
+      <AttentionStrip
+        items={[
+          {
+            key: "urgent-needs-response",
+            count: urgentNeedsResponseCount,
+            text: `requirement${urgentNeedsResponseCount === 1 ? "" : "s"} closing within 2 days, still no reply from you`,
+            onClick: () => setFilter("needs_response"),
+          },
+        ]}
+      />
+
+      <label className="flex items-center gap-2 text-xs text-ink-muted">
+        <input type="checkbox" checked={onlyStocked} onChange={(e) => setOnlyStocked(e.target.checked)} />
+        Only equipment I stock
+      </label>
 
       {filtered.length === 0 ? (
         <EmptyState title="No requirements in this view" />

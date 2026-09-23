@@ -26,12 +26,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen bg-surface-page">
+    <div className="flex h-screen overflow-hidden bg-surface-page">
       <Sidebar />
       {mobileNavOpen && <MobileNav onClose={() => setMobileNavOpen(false)} />}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header onMenuClick={() => setMobileNavOpen(true)} />
-        <main className="min-w-0 flex-1 overflow-x-hidden px-6 py-8">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-8">
           <div className="mx-auto max-w-6xl">{children}</div>
         </main>
       </div>

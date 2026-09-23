@@ -3,7 +3,10 @@
 import type { Rental } from "@fleetip/contracts/rental";
 import type { TransportRecord, TransportStatus } from "@fleetip/contracts/transport";
 import {
+  AllocationBar,
+  type AllocationTone,
   Alert,
+  AttentionStrip,
   Card,
   EmptyState,
   ErrorState,
@@ -22,17 +25,16 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { formatDate } from "../../../lib/format";
+import { daysUntil, formatDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
 import { TRANSPORT_STATUS_MAP } from "../rentals/shared";
 import { TransportPanel } from "../rentals/panels";
 
-const STATUS_OPTIONS: { value: TransportStatus | ""; label: string }[] = [
-  { value: "", label: "All statuses" },
-  { value: "planned", label: "Planned" },
-  { value: "dispatched", label: "Dispatched" },
-  { value: "delivered", label: "Delivered" },
-  { value: "cancelled", label: "Cancelled" },
+const STATUS_SEGMENTS: { key: TransportStatus; label: string; tone: AllocationTone }[] = [
+  { key: "planned", label: "Planned", tone: "neutral" },
+  { key: "dispatched", label: "Dispatched", tone: "on-rent" },
+  { key: "delivered", label: "Delivered", tone: "available" },
+  { key: "cancelled", label: "Cancelled", tone: "out-of-service" },
 ];
 
 /**
@@ -116,6 +118,12 @@ export default function TransportPage() {
   if (!records || !rentals) return <LoadingState label="Loading transport…" />;
 
   const selectedRental = rentals.find((r) => r.id === selectedRentalId) ?? null;
+  // Overdue in the sense that matters operationally: still "planned" past
+  // the date it was supposed to move — a real delay, not the terminal
+  // "cancelled" state.
+  const overdueCount = records.filter(
+    (r) => r.status === "planned" && r.plannedDate && daysUntil(r.plannedDate) < 0,
+  ).length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,18 +132,35 @@ export default function TransportPage() {
         description="Mobilization and demobilization across every rental — fleet-wide visibility."
       />
 
+      <AllocationBar
+        total={{ count: records.length, label: "All legs" }}
+        segments={STATUS_SEGMENTS.map((s) => ({
+          key: s.key,
+          count: records.filter((r) => r.status === s.key).length,
+          label: s.label,
+          tone: s.tone,
+        }))}
+        active={statusFilter || null}
+        onSelect={(key) => setStatusFilter((key ?? "") as TransportStatus | "")}
+      />
+
+      <AttentionStrip
+        items={[
+          {
+            key: "overdue",
+            count: overdueCount,
+            text: `leg${overdueCount === 1 ? "" : "s"} still planned past their scheduled date`,
+            onClick: () => setStatusFilter("planned"),
+          },
+        ]}
+      />
+
       <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="Machine, rental, route…"
           className="w-64"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-        />
-        <Select
-          className="w-40"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as TransportStatus | "")}
-          options={STATUS_OPTIONS}
         />
       </div>
 

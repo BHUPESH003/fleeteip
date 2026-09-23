@@ -37,7 +37,7 @@ import { downloadCsv } from "../../../lib/csv";
 import { formatCurrencyINR, formatDate, formatRelativeTime } from "../../../lib/format";
 import { useInterval } from "../../../lib/use-interval";
 import { useSession } from "../../../lib/session-context";
-import { bidsRemaining, bidTag, formatCountdown, PARTICIPANT_STATUS_MAP } from "./shared";
+import { AUCTION_STATUS_MAP, bidsRemaining, bidTag, formatCountdown, PARTICIPANT_STATUS_MAP } from "./shared";
 
 const AUCTION_POLL_INTERVAL_MS = 5000;
 const AUCTION_PRESTART_POLL_WINDOW_MS = 30_000;
@@ -471,7 +471,7 @@ function RenterAuctionPanel({
         description={`${formatDateTime(auction.startsAt)} → ${formatDateTime(auction.endsAt)}`}
         actions={
           <div className="flex items-center gap-2">
-            <Badge tone={auction.status === "closed" ? "neutral" : "info"}>{auction.status}</Badge>
+            <StatusBadge status={auction.status} map={AUCTION_STATUS_MAP} />
             {(auction.status === "live" || auction.status === "scheduled") && (
               <Button variant="secondary" onClick={() => void handleClose()}>
                 Close now
@@ -666,7 +666,7 @@ function RentalCompanyAuctionPanel({
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2.5">
             <h1 className="text-lg font-semibold">{subcategoryName ?? "Equipment"}</h1>
-            <Badge tone={auction.status === "live" ? "danger" : "info"}>{auction.status}</Badge>
+            <StatusBadge status={auction.status} map={AUCTION_STATUS_MAP} />
           </div>
           <span className="text-xs text-rail-muted">
             AU-{auction.id.slice(0, 8).toUpperCase()} · requirement{" "}

@@ -35,3 +35,15 @@ export { Alert } from "./Alert";
 export type { AlertProps, AlertTone } from "./Alert";
 export { Meter } from "./Meter";
 export type { MeterProps, MeterSegment } from "./Meter";
+export { AvailabilityLane, AvailabilityLaneLegend } from "./AvailabilityLane";
+export type {
+  AvailabilityLaneProps,
+  LaneBlock,
+  LaneBlockKind,
+  LaneGapLabel,
+  LaneLegendItem,
+} from "./AvailabilityLane";
+export { AllocationBar } from "./AllocationBar";
+export type { AllocationBarProps, AllocationSegment, AllocationTone } from "./AllocationBar";
+export { AttentionStrip } from "./AttentionStrip";
+export type { AttentionItem, AttentionStripProps } from "./AttentionStrip";

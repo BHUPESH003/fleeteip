@@ -25,7 +25,7 @@ export function MobileNav({ onClose }: { onClose: () => void }) {
           &times;
         </button>
       </div>
-      <nav className="flex-1 overflow-y-auto px-2.5 py-3.5">
+      <nav className="scrollbar-rail flex-1 overflow-y-auto px-2.5 py-3.5">
         <NavList items={items} planned={planned} onNavigate={onClose} />
       </nav>
       <div className="mt-auto flex flex-col gap-2 border-t border-rail-border px-5 py-3">
