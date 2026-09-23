@@ -642,6 +642,62 @@ Verified live: a freshly-created "confirmed" rental correctly rejects a logsheet
 only be submitted while the rental is active"; once marked active, a date before its start date and a
 date in the future are both correctly rejected with the specific reason.
 
+## Requirement → Quotation → Rental lifecycle: nine gaps from live-testing
+
+A batch of client-reported gaps spanning the whole Requirement → Quotation → Rental flow, each
+investigated before touching anything — several turned out smaller than the report implied (backend
+already there, just never wired to the frontend), two were genuinely new domain concepts.
+
+- **Rental Companies couldn't view requirement details at all.** The detail page
+  (`/requirements/[id]`) was fully built but effectively Renter-only — `OpenMarket.tsx` (where Rental
+  Companies browse) had no link into it, and it always called the Renter-scoped `getRequirement`
+  endpoint (403s for a Rental Company). Fixed by branching the page on organization type: a Rental
+  Company viewer now fetches via `getRequirementForDiscovery` (already used elsewhere for exactly this
+  reason) and sees a "Your response" card instead of the full responses table — the original table
+  shows every competing Rental Company's name and indicative rate, a real cross-tenant leak if a
+  competitor could see it. Added real links from OpenMarket, Quotations, and Auctions wherever a
+  requirement is referenced.
+- **Notifications never named who did what** — every message was generic role text ("A Rental Company
+  responded…"). Interpolated the *acting organization's* name (not an individual person's — that was
+  the explicit choice) at every `notify()` call site across quotation-response, commercial-quotation,
+  rental, and transport services.
+- **Quotation creation didn't prefill the rate the Rental Company had already stated** in its RFQ
+  response (`QuotationResponse.indicativeRate` was fetched for linking but never read for the rate
+  field) — now it is, when present.
+- **A draft quotation couldn't be edited** — `updateTerms`/`PATCH .../terms` already existed
+  server-side (gated to draft/sent/negotiating) but had zero frontend caller. Added
+  `EditQuotationTermsDialog` and wired it up.
+- **Quotation dates were freely editable** by the Rental Company even when created against a
+  Requirement — now locked server-side to the Requirement's own `requestedStartDate` (+ computed
+  `endDate` from its duration) the same way `rateUnit` already was, never trusting the caller once a
+  requirement is attached.
+- **New: a formal alternate-date request.** Locking dates at creation needed an escape hatch for real
+  scheduling conflicts — added `proposeAlternateDates`/`respondToAlternateDates` on
+  `CommercialQuotation` (`alternateDateStatus: none|pending|accepted|rejected`, modeled after
+  `QuotationOffer`'s shape). This is now the *only* sanctioned channel for changing a quotation's dates
+  after creation — `makeOffer` no longer lets a counter-offer silently move `startDate`/`endDate`
+  (it now always carries the quotation's own current dates forward), closing what would otherwise be a
+  second, competing date-change path running alongside the new explicit one.
+- **Mobilization/demobilization charges couldn't be entered at quotation time** — the fields already
+  existed on `CommercialQuotation` and already flowed through to the awarded Rental, just missing
+  inputs in `CreateQuotationDialog`. Copied the two number fields from the already-working
+  `CreateRentalDialog`.
+- **New: actual dates + a real two-sided verification.** Added `actualStartDate`/`actualEndDate` to
+  `Rental` for planned-vs-actual buffer tracking, auto-captured (overridable, defaults to today) on the
+  matching status transition (`active` → actualStartDate, `off_rent` → actualEndDate), same
+  auto-capture-on-transition precedent as Transport's own `delivered` status. Deliberately **not**
+  another silent self-attested boolean like Logsheet's `customerConfirmed` (no counterparty action, no
+  dispute path) — the Renter now gets an explicit `verifyActualDates`/`disputeActualDates` action,
+  modeled after `QuotationOffer`'s pending/accepted/rejected shape. `off_rent` never notified the
+  Renter at all before this — it does now, since that's exactly when `actualEndDate` needs verifying.
+
+One migration (`0029_add_alternate_and_actual_dates`) covers both new schema additions. Verified live
+end to end against the seeded demo data: date lock overrode a caller-supplied 2099 date to the
+requirement's real `2026-11-01`/`2027-02-01`; an alternate-dates proposal left the quotation's real
+dates untouched until the Renter explicitly accepted; transitioning a rental to `off_rent` captured
+`actualEndDate` as today and notified the Renter by name; the Renter's dispute recorded a reason and
+correctly blocked a second verify/dispute once already resolved.
+
 ## Tooling: matha (persisted AI memory)
 
 Wired up as the project's memory layer: `.matha/` holds intent, business rules, and scope boundaries (seeded once from a throwaway `requirements.md`, now removed); `.mcp.json` registers it as a project MCP server; the Claude Code `SessionStart` hook (`.claude/settings.json`) auto-injects the brief; `CLAUDE.md` carries the `matha_brief()`/`matha_record()` convention for future sessions. Machine-specific/regenerable output (`.matha/mcp-config.json`, `cortex/analysis.json`, `cortex/stability.json`, `cortex/co-changes.json`) is gitignored.

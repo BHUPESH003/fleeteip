@@ -209,6 +209,10 @@ export interface RentalsTable {
   operator_scope: string | null;
   notice_period_days: number | null;
   dehire_terms: string | null;
+  actual_start_date: string | null;
+  actual_end_date: string | null;
+  actual_dates_verification_status: string | null;
+  actual_dates_dispute_reason: string | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
   // commitment_range (generated, daterange) intentionally omitted — the app
@@ -361,6 +365,10 @@ export interface CommercialQuotationsTable {
   company_terms: string | null;
   status: string;
   renter_accepted_at: Date | string | null;
+  proposed_alternate_start_date: string | null;
+  proposed_alternate_end_date: string | null;
+  alternate_date_status: string;
+  alternate_date_reason: string | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }

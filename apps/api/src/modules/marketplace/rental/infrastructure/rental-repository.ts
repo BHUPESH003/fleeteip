@@ -32,6 +32,10 @@ const RENTAL_COLUMNS = [
   "operator_scope",
   "notice_period_days",
   "dehire_terms",
+  "actual_start_date",
+  "actual_end_date",
+  "actual_dates_verification_status",
+  "actual_dates_dispute_reason",
   "created_at",
   "updated_at",
 ] as const;
@@ -42,11 +46,19 @@ const RENTAL_COLUMNS = [
 // narrowing them back here is safe. client_snapshot (jsonb) is validated by
 // clientSnapshotSchema on every write — same reasoning.
 function toRentalRecord(
-  row: Omit<RentalRecord, "status" | "rate_unit" | "operator_scope" | "client_snapshot"> & {
+  row: Omit<
+    RentalRecord,
+    | "status"
+    | "rate_unit"
+    | "operator_scope"
+    | "client_snapshot"
+    | "actual_dates_verification_status"
+  > & {
     status: string;
     rate_unit: string;
     operator_scope: string | null;
     client_snapshot: unknown | null;
+    actual_dates_verification_status: string | null;
   },
 ): RentalRecord {
   return row as RentalRecord;
@@ -164,10 +176,37 @@ export class RentalRepository implements RentalRepositoryPort {
     return toRentalRecord(row);
   }
 
-  async updateStatus(id: string, status: RentalStatus) {
+  async updateStatus(id: string, status: RentalStatus, actualDate?: string) {
     const row = await this.db
       .updateTable("rentals")
-      .set({ status, updated_at: new Date() })
+      .set({
+        status,
+        ...(status === "active" && actualDate !== undefined
+          ? { actual_start_date: actualDate, actual_dates_verification_status: "pending" }
+          : {}),
+        ...(status === "off_rent" && actualDate !== undefined
+          ? { actual_end_date: actualDate, actual_dates_verification_status: "pending" }
+          : {}),
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returning(RENTAL_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toRentalRecord(row);
+  }
+
+  async setActualDatesVerification(
+    id: string,
+    status: "verified" | "disputed",
+    disputeReason?: string,
+  ) {
+    const row = await this.db
+      .updateTable("rentals")
+      .set({
+        actual_dates_verification_status: status,
+        actual_dates_dispute_reason: status === "disputed" ? (disputeReason ?? null) : null,
+        updated_at: new Date(),
+      })
       .where("id", "=", id)
       .returning(RENTAL_COLUMNS)
       .executeTakeFirstOrThrow();

@@ -5,6 +5,7 @@ import type {
   RentalStatus,
   UpdateRentalTermsRequest,
 } from "@fleetip/contracts/rental";
+import { todayIsoDate } from "@fleetip/contracts/shared";
 import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../../../maintenance/domain/ports.js";
@@ -44,6 +45,10 @@ function toRental(
     operatorScope: record.operator_scope,
     noticePeriodDays: record.notice_period_days,
     dehireTerms: record.dehire_terms,
+    actualStartDate: record.actual_start_date,
+    actualEndDate: record.actual_end_date,
+    actualDatesVerificationStatus: record.actual_dates_verification_status,
+    actualDatesDisputeReason: record.actual_dates_dispute_reason,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
     machineAssetCode: extra?.machineAssetCode ?? null,
@@ -241,6 +246,7 @@ export class RentalService {
     rentalCompanyOrganizationId: string,
     rentalId: string,
     newStatus: RentalStatus,
+    actualDate?: string,
   ): Promise<Rental> {
     await this.permissionService.requirePermission(
       userId,
@@ -272,20 +278,108 @@ export class RentalService {
       }
     }
 
-    const record = await this.rentalRepository.updateStatus(rentalId, newStatus);
-    if (record.renter_organization_id && (newStatus === "active" || newStatus === "completed")) {
+    // "active"/"off_rent" also record the actual start/end date, for buffer
+    // tracking against the planned start_date/end_date — defaults to today,
+    // overridable, same auto-capture-on-transition precedent as Transport's
+    // own "delivered" status.
+    const resolvedActualDate =
+      newStatus === "active" || newStatus === "off_rent" ? (actualDate ?? todayIsoDate()) : undefined;
+    const record = await this.rentalRepository.updateStatus(rentalId, newStatus, resolvedActualDate);
+    if (
+      record.renter_organization_id &&
+      (newStatus === "active" || newStatus === "off_rent" || newStatus === "completed")
+    ) {
+      const type =
+        newStatus === "active"
+          ? "rental.active"
+          : newStatus === "off_rent"
+            ? "rental.off_rent"
+            : "rental.completed";
+      const title =
+        newStatus === "active"
+          ? "Rental is now active"
+          : newStatus === "off_rent"
+            ? "Rental is off-rent — please verify the actual date"
+            : "Rental completed";
+      const rentalCompany = await this.organizationRepository.findById(
+        record.rental_company_organization_id,
+      );
+      const rentalCompanyName = rentalCompany?.name ?? "The Rental Company";
+      const message =
+        newStatus === "active"
+          ? `${rentalCompanyName} marked your rental active${resolvedActualDate ? ` on ${resolvedActualDate}` : ""} — please verify the actual date.`
+          : newStatus === "off_rent"
+            ? `${rentalCompanyName} marked your rental off-rent${resolvedActualDate ? ` on ${resolvedActualDate}` : ""} — please verify the actual date.`
+            : `${rentalCompanyName} marked your rental completed.`;
       await this.notify({
         recipientOrganizationId: record.renter_organization_id,
-        type: newStatus === "active" ? "rental.active" : "rental.completed",
-        title: newStatus === "active" ? "Rental is now active" : "Rental completed",
-        message:
-          newStatus === "active"
-            ? "Your rental has become active."
-            : "Your rental has been marked completed.",
+        type,
+        title,
+        message,
         relatedResourceType: "rental",
         relatedResourceId: record.id,
       });
     }
+    return toRental(record);
+  }
+
+  // The Renter's side of the actual-dates buffer mechanism — the Rental
+  // Company records what happened (above), the Renter confirms it's
+  // accurate. Modeled after QuotationOffer's pending/accepted/rejected
+  // shape, not a silent self-attested boolean like Logsheet's
+  // customerConfirmed (no counterparty action, no dispute path).
+  async verifyActualDates(
+    userId: string,
+    renterOrganizationId: string,
+    rentalId: string,
+  ): Promise<Rental> {
+    await this.permissionService.requirePermission(userId, renterOrganizationId, "rental.respond");
+    const existing = await this.rentalRepository.findById(rentalId);
+    if (!existing || existing.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Rental not found in this organization");
+    }
+    if (existing.actual_dates_verification_status !== "pending") {
+      throw new ConflictError("No actual dates are pending verification on this rental");
+    }
+    const record = await this.rentalRepository.setActualDatesVerification(rentalId, "verified");
+    await this.notify({
+      recipientOrganizationId: record.rental_company_organization_id,
+      type: "rental.actual_dates_verified",
+      title: "Actual dates verified",
+      message: "The Renter verified the actual dates you recorded.",
+      relatedResourceType: "rental",
+      relatedResourceId: record.id,
+    });
+    return toRental(record);
+  }
+
+  async disputeActualDates(
+    userId: string,
+    renterOrganizationId: string,
+    rentalId: string,
+    reason: string,
+  ): Promise<Rental> {
+    await this.permissionService.requirePermission(userId, renterOrganizationId, "rental.respond");
+    const existing = await this.rentalRepository.findById(rentalId);
+    if (!existing || existing.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Rental not found in this organization");
+    }
+    if (existing.actual_dates_verification_status !== "pending") {
+      throw new ConflictError("No actual dates are pending verification on this rental");
+    }
+    const record = await this.rentalRepository.setActualDatesVerification(
+      rentalId,
+      "disputed",
+      reason,
+    );
+    await this.notify({
+      recipientOrganizationId: record.rental_company_organization_id,
+      type: "rental.actual_dates_disputed",
+      title: "Actual dates disputed",
+      message: `The Renter disputed the actual dates you recorded: ${reason}`,
+      relatedResourceType: "rental",
+      relatedResourceId: record.id,
+    });
     return toRental(record);
   }
 

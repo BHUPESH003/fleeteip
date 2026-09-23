@@ -669,7 +669,13 @@ function RentalCompanyAuctionPanel({
             <Badge tone={auction.status === "live" ? "danger" : "info"}>{auction.status}</Badge>
           </div>
           <span className="text-xs text-rail-muted">
-            AU-{auction.id.slice(0, 8).toUpperCase()} · requirement RFQ-{requirementId.slice(0, 8).toUpperCase()}
+            AU-{auction.id.slice(0, 8).toUpperCase()} · requirement{" "}
+            <Link
+              href={`/requirements/${requirementId}`}
+              className="underline decoration-dotted underline-offset-2 hover:text-white"
+            >
+              RFQ-{requirementId.slice(0, 8).toUpperCase()}
+            </Link>
             {requirement.projectLocation ? ` · ${requirement.projectLocation}` : ""}
             {ownerName ? ` · owner ${ownerName}` : ""}
           </span>
@@ -796,8 +802,15 @@ function RentalCompanyAuctionPanel({
             <Card>
               <h2 className="mb-3 text-sm font-semibold text-ink">Auction terms</h2>
               <div className="flex flex-col gap-2">
+                <div className="flex items-baseline gap-2 border-b border-border pb-2 text-sm">
+                  <span className="w-28 shrink-0 text-xs font-semibold uppercase tracking-wide text-meta">
+                    Requirement
+                  </span>
+                  <Link href={`/requirements/${requirementId}`} className="text-accent-text">
+                    {requirement.projectName ?? `RFQ-${requirementId.slice(0, 8).toUpperCase()}`}
+                  </Link>
+                </div>
                 {[
-                  ["Requirement", requirement.projectName ?? `RFQ-${requirementId.slice(0, 8).toUpperCase()}`],
                   ["Owner", ownerName ?? "—"],
                   ["Direction", auction.biddingDirection === "descending" ? "Descending — lowest bid leads" : "Ascending — highest bid leads"],
                   ["Base price", formatCurrencyINR(auction.basePrice)],

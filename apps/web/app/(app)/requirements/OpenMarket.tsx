@@ -243,10 +243,13 @@ export function OpenMarket({
                 <Tr key={req.id}>
                   <Td>
                     <div className="flex flex-col">
-                      <span className="text-xs font-medium text-ink">
+                      <Link
+                        href={`/requirements/${req.id}`}
+                        className="text-xs font-medium text-accent-text"
+                      >
                         {subcategory?.name ?? "Equipment"}
                         {req.capacity ? ` · ${req.capacity}${req.capacityUnit ? ` ${req.capacityUnit}` : ""}` : ""}
-                      </span>
+                      </Link>
                       <span className="text-xs text-meta">Qty {req.quantity}</span>
                     </div>
                   </Td>

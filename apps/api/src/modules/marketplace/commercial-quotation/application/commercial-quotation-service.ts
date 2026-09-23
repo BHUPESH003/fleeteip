@@ -4,10 +4,12 @@ import type {
   CreateCommercialQuotationRequest,
   CreateQuotationOfferRequest,
   CreateQuotationScopeItemRequest,
+  ProposeAlternateDatesRequest,
   QuotationOffer,
   QuotationScopeItem,
   UpdateCommercialQuotationTermsRequest,
 } from "@fleetip/contracts/quotation";
+import { addDuration } from "@fleetip/contracts/shared";
 import {
   ConflictError,
   ForbiddenError,
@@ -79,6 +81,10 @@ function toQuotation(
     renterAcceptedAt: record.renter_accepted_at
       ? new Date(record.renter_accepted_at).toISOString()
       : null,
+    proposedAlternateStartDate: record.proposed_alternate_start_date,
+    proposedAlternateEndDate: record.proposed_alternate_end_date,
+    alternateDateStatus: record.alternate_date_status,
+    alternateDateReason: record.alternate_date_reason,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
     machineAssetCode: extra?.machineAssetCode ?? null,
@@ -219,6 +225,21 @@ export class CommercialQuotationService {
       rentalCompanyOrganizationId,
     );
 
+    // Locked to the requirement's own requestedStartDate/duration, never
+    // trusting the caller for them once a requirement is attached — same
+    // reasoning as the rateUnit lock just below. A requirement with no
+    // expectedDurationValue leaves endDate as the caller's own choice
+    // (open-ended is a legitimate answer there).
+    const startDate = requirement?.requested_start_date ?? input.startDate;
+    const endDate =
+      requirement?.expected_duration_value && requirement.expected_duration_unit
+        ? addDuration(
+            startDate,
+            requirement.expected_duration_value,
+            requirement.expected_duration_unit,
+          )
+        : input.endDate;
+
     const record = await this.quotationRepository.create({
       rentalCompanyOrganizationId,
       renterOrganizationId: input.renterOrganizationId,
@@ -228,8 +249,8 @@ export class CommercialQuotationService {
       sourceAuctionId: input.sourceAuctionId,
       referenceNumber,
       machineId: input.machineId,
-      startDate: input.startDate,
-      endDate: input.endDate,
+      startDate,
+      endDate,
       rate: input.rate,
       // Locked to the requirement's own expectedDurationUnit when it has
       // one, never trusting the caller for it — same reasoning as
@@ -545,11 +566,12 @@ export class CommercialQuotationService {
       });
     }
     const record = await this.quotationRepository.setRenterAccepted(quotationId, true);
+    const renter = await this.organizationRepository.findById(renterOrganizationId);
     await this.notify({
       recipientOrganizationId: record.rental_company_organization_id,
       type: "quotation.accepted",
       title: "Quotation accepted",
-      message: `The Renter accepted your quotation (${record.reference_number}) — you can now award it.`,
+      message: `${renter?.name ?? "The Renter"} accepted your quotation (${record.reference_number}) — you can now award it.`,
       relatedResourceType: "quotation",
       relatedResourceId: record.id,
     });
@@ -574,11 +596,12 @@ export class CommercialQuotationService {
       throw new ConflictError(`Cannot reject a quotation that is ${existing.status}`);
     }
     const record = await this.quotationRepository.updateStatus(quotationId, "rejected");
+    const renter = await this.organizationRepository.findById(renterOrganizationId);
     await this.notify({
       recipientOrganizationId: record.rental_company_organization_id,
       type: "quotation.rejected",
       title: "Quotation rejected",
-      message: `Your quotation (${record.reference_number}) was rejected.`,
+      message: `Your quotation (${record.reference_number}) was rejected by ${renter?.name ?? "the Renter"}.`,
       relatedResourceType: "quotation",
       relatedResourceId: record.id,
     });
@@ -602,11 +625,12 @@ export class CommercialQuotationService {
     }
     const record = await this.quotationRepository.updateStatus(quotationId, status);
     if (status === "sent" && record.renter_organization_id) {
+      const rentalCompany = await this.organizationRepository.findById(rentalCompanyOrganizationId);
       await this.notify({
         recipientOrganizationId: record.renter_organization_id,
         type: "quotation.sent",
         title: "Quotation received",
-        message: `A Rental Company sent you a quotation (${record.reference_number}).`,
+        message: `${rentalCompany?.name ?? "A Rental Company"} sent you a quotation (${record.reference_number}).`,
         relatedResourceType: "quotation",
         relatedResourceId: record.id,
       });
@@ -632,8 +656,15 @@ export class CommercialQuotationService {
       offeredByOrganizationId: organizationId,
       rate: input.rate,
       rateUnit: input.rateUnit,
-      startDate: input.startDate,
-      endDate: input.endDate,
+      // Dates are no longer a negotiable field via counter-offer — once
+      // locked at creation (or changed via the explicit alternate-dates
+      // request/approval flow), the quotation's own current dates carry
+      // forward unchanged. Ignoring the caller here rather than validating
+      // and rejecting keeps the existing counter-offer UI (which still only
+      // ever sends the quotation's current dates back) working with no
+      // frontend change required.
+      startDate: existing.start_date,
+      endDate: existing.end_date ?? undefined,
       notes: input.notes,
     });
     const isFirstOffer = existing.status === "sent";
@@ -645,11 +676,12 @@ export class CommercialQuotationService {
         ? existing.renter_organization_id
         : existing.rental_company_organization_id;
     if (recipientOrganizationId) {
+      const actingOrg = await this.organizationRepository.findById(organizationId);
       await this.notify({
         recipientOrganizationId,
         type: "quotation.negotiation_offer",
         title: isFirstOffer ? "Negotiation started" : "New counter-offer",
-        message: `A counter-offer of ${input.rate}/${input.rateUnit} was made on quotation ${existing.reference_number}.`,
+        message: `${actingOrg?.name ?? "A counterparty"} made a counter-offer of ${input.rate}/${input.rateUnit} on quotation ${existing.reference_number}.`,
         relatedResourceType: "quotation",
         relatedResourceId: quotationId,
       });
@@ -695,11 +727,12 @@ export class CommercialQuotationService {
       startDate: accepted.start_date,
       endDate: accepted.end_date,
     });
+    const accepter = await this.organizationRepository.findById(organizationId);
     await this.notify({
       recipientOrganizationId: accepted.offered_by_organization_id,
       type: "quotation.offer_accepted",
       title: "Offer accepted",
-      message: `Your offer of ${accepted.rate}/${accepted.rate_unit} on quotation ${record.reference_number} was accepted.`,
+      message: `${accepter?.name ?? "The counterparty"} accepted your offer of ${accepted.rate}/${accepted.rate_unit} on quotation ${record.reference_number}.`,
       relatedResourceType: "quotation",
       relatedResourceId: quotationId,
     });
@@ -819,11 +852,12 @@ export class CommercialQuotationService {
     );
 
     if (record.renter_organization_id) {
+      const rentalCompany = await this.organizationRepository.findById(rentalCompanyOrganizationId);
       await this.notify({
         recipientOrganizationId: record.renter_organization_id,
         type: "quotation.awarded",
         title: "Quotation awarded",
-        message: `Quotation ${record.reference_number} was awarded — a Rental has been created.`,
+        message: `${rentalCompany?.name ?? "The Rental Company"} awarded quotation ${record.reference_number} — a Rental has been created.`,
         relatedResourceType: "quotation",
         relatedResourceId: record.id,
       });
@@ -873,5 +907,73 @@ export class CommercialQuotationService {
       throw new NotFoundError("Quotation not found in this organization");
     }
     return (await this.quotationRepository.expireIfDue(quotationId)) ?? existing;
+  }
+
+  // The Rental Company's side of the one sanctioned post-creation
+  // date-change channel — see commercialQuotationSchema.alternateDateStatus.
+  async proposeAlternateDates(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    quotationId: string,
+    input: ProposeAlternateDatesRequest,
+  ): Promise<CommercialQuotation> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "quotation.manage",
+    );
+    const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
+    if (existing.status !== "sent" && existing.status !== "negotiating") {
+      throw new ConflictError("Alternate dates can only be proposed on a sent/negotiating quotation");
+    }
+    if (existing.alternate_date_status === "pending") {
+      throw new ConflictError("An alternate-date request is already pending on this quotation");
+    }
+    const record = await this.quotationRepository.proposeAlternateDates(quotationId, input);
+    if (record.renter_organization_id) {
+      const rentalCompany = await this.organizationRepository.findById(rentalCompanyOrganizationId);
+      await this.notify({
+        recipientOrganizationId: record.renter_organization_id,
+        type: "quotation.alternate_dates_proposed",
+        title: "Alternate dates proposed",
+        message: `${rentalCompany?.name ?? "The Rental Company"} proposed alternate dates for quotation ${record.reference_number}.`,
+        relatedResourceType: "quotation",
+        relatedResourceId: record.id,
+      });
+    }
+    return toQuotation(record);
+  }
+
+  // The Renter's side — must explicitly accept or reject before the
+  // proposal takes effect.
+  async respondToAlternateDates(
+    userId: string,
+    renterOrganizationId: string,
+    quotationId: string,
+    decision: "accepted" | "rejected",
+  ): Promise<CommercialQuotation> {
+    await this.permissionService.requirePermission(
+      userId,
+      renterOrganizationId,
+      "quotation.respond",
+    );
+    const existing = await this.loadAsParty(renterOrganizationId, quotationId);
+    if (existing.renter_organization_id !== renterOrganizationId) {
+      throw new NotFoundError("Quotation not found in this organization");
+    }
+    if (existing.alternate_date_status !== "pending") {
+      throw new ConflictError("No alternate-date request is pending on this quotation");
+    }
+    const record = await this.quotationRepository.respondToAlternateDates(quotationId, decision);
+    const renter = await this.organizationRepository.findById(renterOrganizationId);
+    await this.notify({
+      recipientOrganizationId: record.rental_company_organization_id,
+      type: "quotation.alternate_dates_responded",
+      title: decision === "accepted" ? "Alternate dates accepted" : "Alternate dates rejected",
+      message: `${renter?.name ?? "The Renter"} ${decision} the proposed alternate dates on quotation ${record.reference_number}.`,
+      relatedResourceType: "quotation",
+      relatedResourceId: record.id,
+    });
+    return toQuotation(record);
   }
 }

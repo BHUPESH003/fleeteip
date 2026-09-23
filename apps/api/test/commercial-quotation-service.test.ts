@@ -181,8 +181,20 @@ function fakeOrganizationTypeRepository(
     create: async () => {
       throw new Error("not used in this test");
     },
-    findById: async () => {
-      throw new Error("not used in this test");
+    // Notification messages now interpolate the acting org's name — several
+    // notify() sites across CommercialQuotationService/RentalService resolve
+    // it via this method.
+    findById: async (id) => {
+      const organizationTypeCode = organizationTypes[id];
+      if (!organizationTypeCode) return undefined;
+      return {
+        id,
+        organization_type_id: `type-${organizationTypeCode}`,
+        name: "Test Org",
+        code: "TESTORG",
+        status: "active",
+        created_at: new Date(),
+      };
     },
     findWithTypeById: async (id) => {
       const organizationTypeCode = organizationTypes[id];
@@ -568,6 +580,10 @@ function fakeRentalRepository(): RentalRepositoryPort {
         operator_scope: input.operatorScope ?? null,
         notice_period_days: input.noticePeriodDays ?? null,
         dehire_terms: input.dehireTerms ?? null,
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_dates_verification_status: null,
+        actual_dates_dispute_reason: null,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -586,10 +602,32 @@ function fakeRentalRepository(): RentalRepositoryPort {
       rentals.set(id, updated);
       return updated;
     },
-    updateStatus: async (id, status) => {
+    updateStatus: async (id, status, actualDate) => {
       const existing = rentals.get(id);
       if (!existing) throw new Error("not used in this test");
-      const updated = { ...existing, status, updated_at: new Date() };
+      const updated = {
+        ...existing,
+        status,
+        ...(status === "active" && actualDate !== undefined
+          ? { actual_start_date: actualDate, actual_dates_verification_status: "pending" as const }
+          : {}),
+        ...(status === "off_rent" && actualDate !== undefined
+          ? { actual_end_date: actualDate, actual_dates_verification_status: "pending" as const }
+          : {}),
+        updated_at: new Date(),
+      };
+      rentals.set(id, updated);
+      return updated;
+    },
+    setActualDatesVerification: async (id, status, disputeReason) => {
+      const existing = rentals.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated = {
+        ...existing,
+        actual_dates_verification_status: status,
+        actual_dates_dispute_reason: status === "disputed" ? (disputeReason ?? null) : null,
+        updated_at: new Date(),
+      };
       rentals.set(id, updated);
       return updated;
     },
@@ -652,6 +690,10 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         company_terms: input.companyTerms ?? null,
         status: "draft",
         renter_accepted_at: null,
+        proposed_alternate_start_date: null,
+        proposed_alternate_end_date: null,
+        alternate_date_status: "none",
+        alternate_date_reason: null,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -774,6 +816,40 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
           q.renter_organization_id === renterOrganizationId &&
           (q.reference_number.includes(query) || q.client_snapshot?.name?.includes(query)),
       ),
+    proposeAlternateDates: async (id, input) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated: CommercialQuotationRecord = {
+        ...existing,
+        proposed_alternate_start_date: input.startDate,
+        proposed_alternate_end_date: input.endDate ?? null,
+        alternate_date_status: "pending",
+        alternate_date_reason: input.reason ?? null,
+        updated_at: new Date(),
+      };
+      quotations.set(id, updated);
+      return updated;
+    },
+    respondToAlternateDates: async (id, decision) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not used in this test");
+      const updated: CommercialQuotationRecord = {
+        ...existing,
+        ...(decision === "accepted"
+          ? {
+              start_date: existing.proposed_alternate_start_date ?? existing.start_date,
+              end_date: existing.proposed_alternate_end_date,
+            }
+          : {}),
+        alternate_date_status: "none",
+        proposed_alternate_start_date: null,
+        proposed_alternate_end_date: null,
+        alternate_date_reason: null,
+        updated_at: new Date(),
+      };
+      quotations.set(id, updated);
+      return updated;
+    },
   };
 }
 
@@ -965,6 +1041,46 @@ describe("CommercialQuotationService", () => {
       rateUnit: "day",
     });
     expect(quotation.rateUnit).toBe("day");
+  });
+
+  it("locks the quotation's dates to the requirement's own requestedStartDate and computed duration, ignoring the caller's choice", async () => {
+    const service = buildService(
+      [machine()],
+      [
+        requirement({
+          requested_start_date: "2026-05-01",
+          expected_duration_value: 2,
+          expected_duration_unit: "week",
+        }),
+      ],
+    );
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      startDate: "2099-01-01",
+      endDate: "2099-02-01",
+    });
+    expect(quotation.startDate).toBe("2026-05-01");
+    expect(quotation.endDate).toBe("2026-05-15");
+  });
+
+  it("locks startDate to the requirement but leaves endDate to the caller when the requirement has no duration", async () => {
+    const service = buildService(
+      [machine()],
+      [requirement({ requested_start_date: "2026-04-01" })],
+    );
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      requirementId: OPEN_REQUIREMENT_ID,
+      startDate: "2026-03-01",
+      endDate: "2026-03-10",
+    });
+    expect(quotation.startDate).toBe("2026-04-01");
+    expect(quotation.endDate).toBe("2026-03-10");
   });
 
   it("rejects quoting against a requirement that is not open", async () => {
@@ -1490,6 +1606,103 @@ describe("CommercialQuotationService", () => {
       await expect(
         service.removeScopeItem("user-1", RC_ORG_ID, quotationB.id, item.id),
       ).rejects.toThrow(NotFoundError);
+    });
+  });
+
+  describe("alternate dates", () => {
+    it("lets the Rental Company propose alternate dates on a sent quotation, and the Renter accept them", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+
+      const proposed = await service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
+        startDate: "2026-04-01",
+        endDate: "2026-04-10",
+        reason: "Machine tied up on another job until April",
+      });
+      expect(proposed.alternateDateStatus).toBe("pending");
+      expect(proposed.proposedAlternateStartDate).toBe("2026-04-01");
+      // The quotation's real dates don't move until the Renter accepts.
+      expect(proposed.startDate).toBe(pathBInput.startDate);
+
+      const accepted = await service.respondToAlternateDates(
+        "user-2",
+        RENTER_ORG_ID,
+        quotation.id,
+        "accepted",
+      );
+      expect(accepted.alternateDateStatus).toBe("none");
+      expect(accepted.startDate).toBe("2026-04-01");
+      expect(accepted.endDate).toBe("2026-04-10");
+      expect(accepted.proposedAlternateStartDate).toBeNull();
+    });
+
+    it("leaves the quotation's dates untouched when the Renter rejects the proposal", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
+        startDate: "2026-04-01",
+      });
+
+      const rejected = await service.respondToAlternateDates(
+        "user-2",
+        RENTER_ORG_ID,
+        quotation.id,
+        "rejected",
+      );
+      expect(rejected.alternateDateStatus).toBe("none");
+      expect(rejected.startDate).toBe(pathBInput.startDate);
+      expect(rejected.proposedAlternateStartDate).toBeNull();
+    });
+
+    it("rejects a second proposal while one is already pending", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
+        startDate: "2026-04-01",
+      });
+      await expect(
+        service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
+          startDate: "2026-05-01",
+        }),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects responding when nothing is pending", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await expect(
+        service.respondToAlternateDates("user-2", RENTER_ORG_ID, quotation.id, "accepted"),
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it("rejects proposing on a draft quotation — must be sent first", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      await expect(
+        service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
+          startDate: "2026-04-01",
+        }),
+      ).rejects.toThrow(ConflictError);
     });
   });
 });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isPastIsoDate } from "../shared/dates.js";
+import { isFutureIsoDate, isPastIsoDate } from "../shared/dates.js";
 
 // FleetIP recommendation, not extracted from legacy — the source schema has
 // no reliable status vocabulary (every status-like legacy column is a bare
@@ -22,6 +22,9 @@ export type RateUnit = z.infer<typeof rateUnitSchema>;
 
 export const operatorScopeSchema = z.enum(["with_operator", "without_operator"]);
 export type OperatorScope = z.infer<typeof operatorScopeSchema>;
+
+export const actualDatesVerificationStatusSchema = z.enum(["pending", "verified", "disputed"]);
+export type ActualDatesVerificationStatus = z.infer<typeof actualDatesVerificationStatusSchema>;
 
 // Minimal, immutable-once-set snapshot of an external (non-FleetIP) customer
 // — deliberately not the full rentalclients shape (no GST/payment-terms/KAM,
@@ -60,6 +63,16 @@ export const rentalSchema = z.object({
   operatorScope: operatorScopeSchema.nullable(),
   noticePeriodDays: z.number().int().nonnegative().nullable(),
   dehireTerms: z.string().min(1).max(1000).nullable(),
+  // Buffer tracking: what actually happened vs. the planned startDate/
+  // endDate above. Recorded by the Rental Company on the matching status
+  // transition (active -> actualStartDate, off_rent -> actualEndDate);
+  // verified or disputed by the Renter — modeled after QuotationOffer's
+  // pending/accepted/rejected shape, not another silent self-attested
+  // boolean like Logsheet's customerConfirmed.
+  actualStartDate: z.string().date().nullable(),
+  actualEndDate: z.string().date().nullable(),
+  actualDatesVerificationStatus: actualDatesVerificationStatusSchema.nullable(),
+  actualDatesDisputeReason: z.string().min(1).max(500).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   // Resolved server-side, only for a Renter viewing their own rentals (they
@@ -131,10 +144,25 @@ export const updateRentalTermsRequestSchema = z.object({
 });
 export type UpdateRentalTermsRequest = z.infer<typeof updateRentalTermsRequestSchema>;
 
-export const updateRentalStatusRequestSchema = z.object({
-  status: rentalStatusSchema,
-});
+export const updateRentalStatusRequestSchema = z
+  .object({
+    status: rentalStatusSchema,
+    // Only meaningful alongside status "active" (-> actualStartDate) or
+    // "off_rent" (-> actualEndDate); ignored for any other transition.
+    // Optional and overridable — defaults to today when omitted, same
+    // auto-capture-on-transition precedent as Transport's own actualDate.
+    actualDate: z.string().date().optional(),
+  })
+  .refine((data) => !data.actualDate || !isFutureIsoDate(data.actualDate), {
+    message: "Actual date cannot be in the future",
+    path: ["actualDate"],
+  });
 export type UpdateRentalStatusRequest = z.infer<typeof updateRentalStatusRequestSchema>;
+
+export const disputeActualDatesRequestSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type DisputeActualDatesRequest = z.infer<typeof disputeActualDatesRequestSchema>;
 
 export const checkMachineAvailabilityQuerySchema = z.object({
   machineId: z.string().uuid(),

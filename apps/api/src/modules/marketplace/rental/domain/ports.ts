@@ -1,4 +1,5 @@
 import type {
+  ActualDatesVerificationStatus,
   ClientSnapshot,
   OperatorScope,
   RateUnit,
@@ -28,6 +29,10 @@ export interface RentalRecord {
   operator_scope: OperatorScope | null;
   notice_period_days: number | null;
   dehire_terms: string | null;
+  actual_start_date: string | null;
+  actual_end_date: string | null;
+  actual_dates_verification_status: ActualDatesVerificationStatus | null;
+  actual_dates_dispute_reason: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -86,7 +91,16 @@ export interface RentalRepositoryPort {
   listByOrganization(rentalCompanyOrganizationId: string): Promise<RentalRecord[]>;
   listByRenterOrganization(renterOrganizationId: string): Promise<RentalRecord[]>;
   updateTerms(id: string, updates: UpdateRentalTermsInput): Promise<RentalRecord>;
-  updateStatus(id: string, status: RentalStatus): Promise<RentalRecord>;
+  // On "active"/"off_rent", actualDate also writes actual_start_date/
+  // actual_end_date and resets actual_dates_verification_status to
+  // "pending" — folded into the same status write, mirroring Transport's
+  // own combined {status, actualDate} update.
+  updateStatus(id: string, status: RentalStatus, actualDate?: string): Promise<RentalRecord>;
+  setActualDatesVerification(
+    id: string,
+    status: "verified" | "disputed",
+    disputeReason?: string,
+  ): Promise<RentalRecord>;
   // Application-level pre-check (docs/rental-domain-design.md §10 layer 1) —
   // the real guarantee is the DB exclusion constraint, this exists only for
   // a fast, friendly error before ever reaching the database.

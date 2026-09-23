@@ -1,5 +1,6 @@
 import type { ClientSnapshot, OperatorScope, RateUnit } from "@fleetip/contracts/rental";
 import type {
+  AlternateDateStatus,
   CommercialQuotationStatus,
   QuotationOfferStatus,
   ResponsibleParty,
@@ -41,6 +42,10 @@ export interface CommercialQuotationRecord {
   company_terms: string | null;
   status: CommercialQuotationStatus;
   renter_accepted_at: Date | string | null;
+  proposed_alternate_start_date: string | null;
+  proposed_alternate_end_date: string | null;
+  alternate_date_status: AlternateDateStatus;
+  alternate_date_reason: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -111,6 +116,12 @@ export interface ApplyAcceptedOfferInput {
   endDate: string | null;
 }
 
+export interface ProposeAlternateDatesInput {
+  startDate: string;
+  endDate?: string;
+  reason?: string;
+}
+
 export interface CommercialQuotationRepositoryPort {
   nextReferenceNumber(rentalCompanyOrganizationId: string): Promise<string>;
   create(input: CreateCommercialQuotationInput): Promise<CommercialQuotationRecord>;
@@ -143,6 +154,21 @@ export interface CommercialQuotationRepositoryPort {
     query: string,
   ): Promise<CommercialQuotationRecord[]>;
   searchByRenter(renterOrganizationId: string, query: string): Promise<CommercialQuotationRecord[]>;
+  // Sets alternate_date_status to "pending" with the proposed dates/reason —
+  // the Rental Company's side of the one sanctioned post-creation
+  // date-change channel (see commercialQuotationSchema.alternateDateStatus).
+  proposeAlternateDates(
+    id: string,
+    input: ProposeAlternateDatesInput,
+  ): Promise<CommercialQuotationRecord>;
+  // "accepted": atomically copies proposed_alternate_start/end_date onto
+  // start_date/end_date, resets alternate_date_status to "none", and nulls
+  // the proposed_* columns. "rejected": just resets status to "none" and
+  // nulls the proposed_* columns, leaving start_date/end_date untouched.
+  respondToAlternateDates(
+    id: string,
+    decision: "accepted" | "rejected",
+  ): Promise<CommercialQuotationRecord>;
 }
 
 export interface QuotationOfferRecord {

@@ -1,6 +1,7 @@
 import {
   checkMachineAvailabilityQuerySchema,
   createRentalRequestSchema,
+  disputeActualDatesRequestSchema,
   updateRentalStatusRequestSchema,
   updateRentalTermsRequestSchema,
 } from "@fleetip/contracts/rental";
@@ -85,6 +86,33 @@ export async function rentalRoutes(fastify: FastifyInstance): Promise<void> {
         request.params.organizationId,
         request.params.rentalId,
         body.status,
+        body.actualDate,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/actual-dates/verify",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.rentalService.verifyActualDates(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/actual-dates/dispute",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(disputeActualDatesRequestSchema, request.body);
+      return container.rentalService.disputeActualDates(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
+        body.reason,
       );
     },
   );

@@ -10,7 +10,7 @@ import type { Requirement } from "@fleetip/contracts/rfq";
 import { Button, Dialog, EmptyState, Input, LoadingState, Select } from "@fleetip/ui";
 import { type FormEvent, useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { todayIsoDate } from "../../../lib/format";
+import { addDuration, todayIsoDate } from "../../../lib/format";
 
 const RATE_UNIT_OPTIONS = [
   { value: "shift", label: "Per shift" },
@@ -95,7 +95,12 @@ export function CreateQuotationDialog({
   // drops off the Quotations page's "Requested" filter once formalized.
   const [responseId, setResponseId] = useState<string | null>(null);
   const [subcategoryName, setSubcategoryName] = useState<string | null>(null);
-  const [prefilledRate, setPrefilledRate] = useState<number | null>(null);
+  // Two separate sources, resolved independently by two separate effects —
+  // response rate wins when both exist (it's the more specific, already-
+  // stated figure for this exact requirement).
+  const [responseRate, setResponseRate] = useState<number | null>(null);
+  const [auctionBidRate, setAuctionBidRate] = useState<number | null>(null);
+  const prefilledRate = responseRate ?? auctionBidRate;
   const [customerMode, setCustomerMode] = useState<"external" | "renter">(
     isFromRequirement ? "renter" : "external",
   );
@@ -119,6 +124,7 @@ export function CreateQuotationDialog({
     // initializer above, which only ran at first mount.
     setLoadingContext(true);
     setResponseId(null);
+    setResponseRate(null);
     void (async () => {
       try {
         const req = (await apiClient.getRequirementForDiscovery(
@@ -138,11 +144,12 @@ export function CreateQuotationDialog({
         // an "interested" response first (e.g. straight from Open Market)
         // is valid; there's just nothing to link back to in that case.
         try {
-          const response = (await apiClient.getMyResponse(
-            organizationId,
-            requirementIdParam,
-          )) as { id: string };
+          const response = (await apiClient.getMyResponse(organizationId, requirementIdParam)) as {
+            id: string;
+            indicativeRate: number | null;
+          };
           setResponseId(response.id);
+          if (response.indicativeRate != null) setResponseRate(response.indicativeRate);
         } catch {
           // No response on file for this requirement — fine.
         }
@@ -167,7 +174,7 @@ export function CreateQuotationDialog({
         const ownParticipantId = detail.participants[0]?.id;
         const ownBids = detail.bids.filter((bid) => bid.participantId === ownParticipantId);
         const lastBid = ownBids[ownBids.length - 1];
-        if (lastBid) setPrefilledRate(lastBid.amount);
+        if (lastBid) setAuctionBidRate(lastBid.amount);
       } catch {
         // Best-effort pre-fill only — the form still works without it.
       } finally {
@@ -209,6 +216,12 @@ export function CreateQuotationDialog({
       rate: Number(form.get("rate")),
       rateUnit: (lockedRateUnit ?? String(form.get("rateUnit"))) as RateUnit,
       validityDate,
+      mobilizationCharge: form.get("mobilizationCharge")
+        ? Number(form.get("mobilizationCharge"))
+        : undefined,
+      demobilizationCharge: form.get("demobilizationCharge")
+        ? Number(form.get("demobilizationCharge"))
+        : undefined,
       fuelScope: form.get("fuelScope") ? (String(form.get("fuelScope")) as ResponsibleParty) : undefined,
       accommodationScope: form.get("accommodationScope")
         ? (String(form.get("accommodationScope")) as ResponsibleParty)
@@ -259,6 +272,21 @@ export function CreateQuotationDialog({
   // server-side regardless; this just avoids showing a picker whose choice
   // would be silently overridden.
   const lockedRateUnit = requirement?.expectedDurationUnit ?? null;
+  // Same reasoning, for dates — the requirement's own requestedStartDate and
+  // computed duration, not whatever the Rental Company would otherwise pick.
+  const lockedStartDate = requirement?.requestedStartDate ?? null;
+  const lockedEndDate =
+    lockedStartDate && requirement?.expectedDurationValue && requirement.expectedDurationUnit
+      ? addDuration(lockedStartDate, requirement.expectedDurationValue, requirement.expectedDurationUnit)
+      : null;
+  // A one-line summary of the requirement's shift info — a reasonable
+  // starting point for the free-text commercialNotes field, not a real
+  // mapping (Requirement has no numeric workingHours field to prefill).
+  const shiftSummary = requirement
+    ? [requirement.shiftPattern, requirement.crewRequirement, requirement.shiftRequirement]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
   const activeMachines = machines.filter((m) => m.status === "active");
   const renterName = (id: string) =>
     renterOrganizations.find((o) => o.id === id)?.name ?? `Renter ${id.slice(0, 8)}…`;
@@ -344,15 +372,24 @@ export function CreateQuotationDialog({
           <div className="flex flex-col gap-1 border-t border-border pt-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-meta">Schedule &amp; rate</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Input
-                label="Start date"
-                name="startDate"
-                type="date"
-                min={todayIsoDate()}
-                required
-                defaultValue={requirement?.requestedStartDate}
-              />
-              <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
+              {lockedStartDate ? (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-ink-muted">Start date</span>
+                  <p className="flex h-[34px] items-center text-sm text-ink">{lockedStartDate}</p>
+                  <input type="hidden" name="startDate" value={lockedStartDate} />
+                </div>
+              ) : (
+                <Input label="Start date" name="startDate" type="date" min={todayIsoDate()} required />
+              )}
+              {lockedEndDate ? (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-ink-muted">End date</span>
+                  <p className="flex h-[34px] items-center text-sm text-ink">{lockedEndDate}</p>
+                  <input type="hidden" name="endDate" value={lockedEndDate} />
+                </div>
+              ) : (
+                <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
+              )}
               <Input label="Rate" name="rate" type="number" step="0.01" required defaultValue={prefilledRate ?? undefined} />
               {lockedRateUnit ? (
                 <div className="flex flex-col gap-1.5">
@@ -385,6 +422,8 @@ export function CreateQuotationDialog({
               <Select label="Accommodation scope" name="accommodationScope" options={RESPONSIBLE_PARTY_OPTIONS} />
               <Input label="Minimum rental period" name="minimumRentalPeriodValue" type="number" min={1} />
               <Select label="Period unit" name="minimumRentalPeriodUnit" options={RATE_UNIT_OPTIONS} />
+              <Input label="Mobilization charge" name="mobilizationCharge" type="number" step="0.01" min={0} />
+              <Input label="Demobilization charge" name="demobilizationCharge" type="number" step="0.01" min={0} />
             </div>
             <Input label="GST terms" name="gstTerms" placeholder="e.g. GST extra @ 18%" />
           </div>
@@ -393,7 +432,11 @@ export function CreateQuotationDialog({
             <p className="text-xs font-semibold uppercase tracking-wide text-meta">
               Terms &amp; conditions
             </p>
-            <Input label="Special / site conditions" name="commercialNotes" />
+            <Input
+              label="Special / site conditions"
+              name="commercialNotes"
+              defaultValue={shiftSummary || undefined}
+            />
             <Input label="Company-specific T&Cs" name="companyTerms" />
           </div>
 

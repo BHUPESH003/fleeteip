@@ -42,6 +42,7 @@ import type {
   CreateCommercialQuotationRequest,
   CreateQuotationOfferRequest,
   CreateQuotationScopeItemRequest,
+  ProposeAlternateDatesRequest,
   QuotationOffer,
   QuotationScopeItem,
   QuotationResponse,
@@ -50,6 +51,7 @@ import type {
 } from "@fleetip/contracts/quotation";
 import type {
   CreateRentalRequest,
+  DisputeActualDatesRequest,
   Rental,
   RentalStatus,
   UpdateRentalTermsRequest,
@@ -275,10 +277,24 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify(updates),
     }),
-  updateRentalStatus: (organizationId: string, rentalId: string, status: RentalStatus) =>
+  updateRentalStatus: (
+    organizationId: string,
+    rentalId: string,
+    status: RentalStatus,
+    actualDate?: string,
+  ) =>
     apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/status`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, actualDate }),
+    }),
+  verifyActualDates: (organizationId: string, rentalId: string) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/actual-dates/verify`, {
+      method: "POST",
+    }),
+  disputeActualDates: (organizationId: string, rentalId: string, input: DisputeActualDatesRequest) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/actual-dates/dispute`, {
+      method: "POST",
+      body: JSON.stringify(input),
     }),
   checkRentalAvailability: (
     organizationId: string,
@@ -422,6 +438,24 @@ export const apiClient = {
     apiRequest<CommercialQuotation>(
       `/organizations/${organizationId}/quotations/${quotationId}/terms`,
       { method: "PATCH", body: JSON.stringify(updates) },
+    ),
+  proposeAlternateDates: (
+    organizationId: string,
+    quotationId: string,
+    input: ProposeAlternateDatesRequest,
+  ) =>
+    apiRequest<CommercialQuotation>(
+      `/organizations/${organizationId}/quotations/${quotationId}/alternate-dates`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  respondToAlternateDates: (
+    organizationId: string,
+    quotationId: string,
+    decision: "accepted" | "rejected",
+  ) =>
+    apiRequest<CommercialQuotation>(
+      `/organizations/${organizationId}/quotations/${quotationId}/alternate-dates/respond`,
+      { method: "POST", body: JSON.stringify({ decision }) },
     ),
   sendQuotation: (organizationId: string, quotationId: string) =>
     apiRequest<CommercialQuotation>(
