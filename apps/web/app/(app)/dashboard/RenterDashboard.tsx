@@ -1,7 +1,7 @@
 "use client";
 
 import type { AuctionSummary } from "@fleetip/contracts/auction";
-import { InvoiceStatus, type Invoice } from "@fleetip/contracts/billing";
+import { InvoiceStatus, type InvoiceListItem } from "@fleetip/contracts/billing";
 import type { Notification } from "@fleetip/contracts/notification";
 import type { Organization } from "@fleetip/contracts/organization";
 import {
@@ -28,7 +28,7 @@ import {
   count,
   dataOf,
   isUnpaid,
-  loadInvoiceViews,
+  toInvoiceViews,
   notificationsToActivity,
   overdueBy,
   relativeDay,
@@ -72,7 +72,7 @@ async function loadRenterDashboard(organizationId: string, access: Access): Prom
     settle(access.requirements, () => apiClient.listRequirements(organizationId), [] as Requirement[]),
     settle(access.quotations, () => apiClient.listQuotations(organizationId), [] as CommercialQuotation[]),
     settle(access.rentals, () => apiClient.listRentals(organizationId), [] as Rental[]),
-    settle(access.invoices, () => apiClient.listInvoices(organizationId), [] as Invoice[]),
+    settle(access.invoices, () => apiClient.listInvoices(organizationId), [] as InvoiceListItem[]),
     settle(true, () => apiClient.listNotifications(organizationId).then((r) => r?.notifications), [] as Notification[]),
     // Enrichment only: without it names fall back to what rentals carry, then "Rental company".
     optional(access.quotations, () => apiClient.listRentalCompanyOrganizations(organizationId), [] as Organization[]),
@@ -96,7 +96,7 @@ async function loadRenterDashboard(organizationId: string, access: Access): Prom
   });
 
   const invoiceViews: Settled<InvoiceView[]> = invoices.ok
-    ? { ok: true, data: await loadInvoiceViews(organizationId, invoices.data) }
+    ? { ok: true, data: toInvoiceViews(invoices.data) }
     : { ok: false, error: invoices.error };
 
   const rentalCompanyNames = new Map(rentalCompanies.map((org) => [org.id, org.name]));

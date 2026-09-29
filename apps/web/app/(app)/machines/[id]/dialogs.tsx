@@ -3,14 +3,14 @@
 import { MachineStatus } from "@fleetip/contracts/equipment";
 import { MaintenanceStatus, MaintenanceType, maintenanceTypeSchema, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
 import type { Rental } from "@fleetip/contracts/rental";
-import { ConfirmDialog, FormBanner, Input, Select, Textarea, useToast } from "@fleetip/ui";
+import { Checkbox, ConfirmDialog, FormBanner, Input, Select, Textarea, useToast } from "@fleetip/ui";
 import { useEffect, useMemo } from "react";
 import { z } from "zod";
 import { apiClient } from "../../../../lib/api-client";
 import { describeError } from "../../../../lib/errors";
 import { useAction, useForm } from "../../../../lib/form";
-import { formatDate, formatDateRange, formatMoney, rentalRef, todayIsoDate } from "../../../../lib/format";
-import { MAINTENANCE_TYPE_LABEL, MAINTENANCE_TYPE_OPTIONS, conflictingRental } from "../shared";
+import { formatDate, formatMoney, rentalRef, todayIsoDate } from "../../../../lib/format";
+import { MAINTENANCE_TYPE_LABEL, MAINTENANCE_TYPE_OPTIONS } from "../shared";
 import { activeRental, inProgressJob, receivables, type MachineData } from "./derive";
 
 interface DialogBase {
@@ -21,87 +21,69 @@ interface DialogBase {
   onChanged: () => void;
 }
 
-type WorkshopValues = Record<"maintenanceType" | "startDate" | "endDate" | "notes", string>;
+type WorkshopValues = Record<"maintenanceType" | "startDate" | "endDate" | "notes", string> & { linkRental: boolean };
 
-function workshopInitial(today: string): WorkshopValues {
-  return { maintenanceType: MaintenanceType.breakdown, startDate: today, endDate: "", notes: "" };
+function workshopInitial(today: string, active: Rental | null): WorkshopValues {
+  // A machine going in while on rent is almost always a breakdown on site, so the link to that rental starts ticked.
+  return { maintenanceType: MaintenanceType.breakdown, startDate: today, endDate: "", notes: "", linkRental: Boolean(active) };
 }
 
-/** Field names match createMaintenanceRequestSchema so API issues land under the right field. */
-function workshopSchema(machineId: string, rentals: Rental[]) {
+/**
+ * Field names match createMaintenanceRequestSchema so API issues land under
+ * the right field. Overlaps with other rentals are the API's to refuse: its
+ * 409 names the rental and lands under "startDate".
+ */
+function workshopSchema(machineId: string, active: Rental | null) {
   return z
     .object({
       maintenanceType: z.string().min(1, "Choose a reason.").pipe(maintenanceTypeSchema),
       startDate: z.string().min(1, "Pick the day the machine goes in."),
       endDate: z.string(),
       notes: z.string().max(2000, "Notes are up to 2,000 characters."),
+      linkRental: z.boolean(),
     })
-    .superRefine(({ startDate: start, endDate: end }, ctx) => {
-      const blocker = start ? conflictingRental(rentals, start, end || null) : null;
-      if (blocker)
-        ctx.addIssue({
-          code: "custom",
-          path: ["startDate"],
-          message: `${rentalRef(blocker.id)} is booked ${formatDateRange(blocker.startDate, blocker.endDate)}. Workshop dates can't overlap a booked rental — end or mark it off rent first, or pick later dates.`,
-        });
-      if (end && start && end < start) ctx.addIssue({ code: "custom", path: ["endDate"], message: "End date cannot be before the start date." });
+    .refine(({ startDate, endDate }) => !endDate || !startDate || endDate >= startDate, {
+      path: ["endDate"],
+      message: "End date cannot be before the start date.",
     })
-    .transform(({ maintenanceType, startDate, endDate, notes }) => ({
+    .transform(({ maintenanceType, startDate, endDate, notes, linkRental }) => ({
       machineId,
       maintenanceType,
       startDate,
       endDate: endDate || undefined,
       notes: notes.trim() || undefined,
+      rentalId: linkRental && active ? active.id : undefined,
     }));
 }
 
 /**
- * Send to workshop — three writes, said out loud: create the job (the API
- * always creates it Scheduled), mark it In progress, set the machine Under
- * maintenance. Undo reverses the last two (cancel the job, machine Active).
+ * Send to workshop — one write (the API creates the job In progress and sets
+ * the machine Under maintenance in one transaction). Undo is one write too:
+ * cancel the job and set the machine Active together.
  */
 export function WorkshopDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
   const toast = useToast();
   const today = todayIsoDate();
   const { machine } = data;
-  const schema = useMemo(() => workshopSchema(machine.id, data.rentals), [machine.id, data.rentals]);
-  const form = useForm({ schema, initial: workshopInitial(today), failTitle: "Nothing was changed" });
+  const active = activeRental(data);
+  const schema = useMemo(() => workshopSchema(machine.id, active), [machine.id, active]);
+  // eager: the confirm button stays disabled while anything is invalid, so rule errors show from the start.
+  const form = useForm({ schema, initial: workshopInitial(today, active), failTitle: "Nothing was changed", eager: true });
   const { reset } = form;
 
   useEffect(() => {
-    if (open) reset(workshopInitial(today));
-  }, [open, today, reset]);
-
-  // The confirm button stays disabled while anything is invalid, so rule errors show from the start rather than after a submit.
-  const check = schema.safeParse(form.values);
-  const errorOf = (name: keyof WorkshopValues) =>
-    form.errors[name] ?? (check.success ? undefined : check.error.issues.find((issue) => issue.path[0] === name)?.message);
-
-  const active = activeRental(data);
+    if (open) reset(workshopInitial(today, active));
+  }, [open, today, active, reset]);
 
   const confirm = form.submit(async (request) => {
-    const job = (await apiClient.createMaintenance(organizationId, request)) as MaintenanceRecord;
-    // Partial success: the job exists now, so a failed follow-up write is a toast that says what was saved, not the banner.
-    try {
-      await apiClient.updateMaintenanceStatus(organizationId, job.id, MaintenanceStatus.in_progress);
-      await apiClient.updateMachineStatus(organizationId, machine.id, MachineStatus.under_maintenance);
-    } catch (err) {
-      toast.error({
-        title: `The workshop job was created, but ${machine.assetCode} isn't marked Under maintenance`,
-        body: `${describeError(err).body} Use Send to workshop again or open the job in Maintenance.`,
-      });
-      onClose();
-      onChanged();
-      return;
-    }
+    const job = (await apiClient.sendToWorkshop(organizationId, request)) as MaintenanceRecord;
     toast.success({
       title: `${machine.assetCode} is under maintenance`,
-      body: `${MAINTENANCE_TYPE_LABEL[request.maintenanceType]} job created and in progress. Status changed from Active.`,
+      body: `${MAINTENANCE_TYPE_LABEL[request.maintenanceType]} job created and in progress${request.rentalId ? ` against ${rentalRef(request.rentalId)}` : ""}. Status changed from Active.`,
       undo: async () => {
         // Undo runs from the toast after the dialog has closed, so its failure is a toast too.
         try {
-          await apiClient.updateMaintenanceStatus(organizationId, job.id, MaintenanceStatus.cancelled);
-          await apiClient.updateMachineStatus(organizationId, machine.id, MachineStatus.active);
+          await apiClient.updateMaintenanceStatus(organizationId, job.id, MaintenanceStatus.cancelled, MachineStatus.active);
           toast.info({ title: "Undone", body: `${machine.assetCode} is Active again and the workshop job was cancelled.` });
         } catch (err) {
           toast.error({ title: "Couldn't undo", body: describeError(err).body });
@@ -121,7 +103,7 @@ export function WorkshopDialog({ open, onClose, organizationId, data, onChanged 
       icon="maintenance"
       tone="warning"
       title={`Send ${machine.assetCode} to the workshop?`}
-      description="This saves three changes:"
+      description="This saves two changes together:"
       consequences={[
         "Creates a workshop job with the reason and dates below, marked In progress.",
         "Sets machine status to Under maintenance — it won't show as available for new quotations or rentals.",
@@ -140,31 +122,37 @@ export function WorkshopDialog({ open, onClose, organizationId, data, onChanged 
           {form.banner.body}
         </FormBanner>
       )}
-      <Select label="Reason for workshop" required options={MAINTENANCE_TYPE_OPTIONS} {...form.field("maintenanceType")} error={errorOf("maintenanceType")} />
+      <Select label="Reason for workshop" required options={MAINTENANCE_TYPE_OPTIONS} {...form.field("maintenanceType")} />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        <Input label="In workshop from" required type="date" mono {...form.field("startDate")} error={errorOf("startDate")} />
+        <Input label="In workshop from" required type="date" mono {...form.field("startDate")} />
         <Input
           label="Expected back"
           type="date"
           mono
           min={form.values.startDate || undefined}
           {...form.field("endDate")}
-          error={errorOf("endDate")}
           hint="Leave empty if not known. It can't be added later yet."
         />
       </div>
-      <Textarea label="Notes" rows={2} {...form.field("notes")} error={errorOf("notes")} hint="What happened, where the machine is." />
+      <Textarea label="Notes" rows={2} {...form.field("notes")} hint="What happened, where the machine is." />
+      {active && (
+        <Checkbox
+          label={`Log it against ${rentalRef(active.id)}`}
+          description="The job shows on that rental's Workshop tab, and the rental's dates don't block it."
+          checked={form.values.linkRental}
+          onChange={(event) => form.set("linkRental", event.target.checked)}
+        />
+      )}
     </ConfirmDialog>
   );
 }
 
 /**
- * Mark job complete — two writes (job Completed, machine Active), or only
- * the status write when no job is in progress. Completing is final, so
- * there's no Undo.
+ * Mark job complete — one write: the job Completed and the machine Active
+ * together, or only the machine status when no job is in progress.
+ * Completing is final, so there's no Undo.
  */
 export function CompleteJobDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
-  const toast = useToast();
   const { machine } = data;
   const job = inProgressJob(data);
   const active = activeRental(data);
@@ -178,27 +166,16 @@ export function CompleteJobDialog({ open, onClose, organizationId, data, onChang
   const confirm = () =>
     action.run(
       async () => {
-        if (job) await apiClient.updateMaintenanceStatus(organizationId, job.id, MaintenanceStatus.completed);
-        // Partial success: once the job is completed (or when there's no job), a failed status write is a toast, not "Nothing was changed".
-        try {
-          await apiClient.updateMachineStatus(organizationId, machine.id, MachineStatus.active);
-          return true;
-        } catch (err) {
-          toast.error({
-            title: job ? `The job is completed, but ${machine.assetCode} is still Under maintenance` : `Couldn't set ${machine.assetCode} to Active`,
-            body: describeError(err).body,
-          });
-          return false;
-        }
+        if (job) await apiClient.updateMaintenanceStatus(organizationId, job.id, MaintenanceStatus.completed, MachineStatus.active);
+        else await apiClient.updateMachineStatus(organizationId, machine.id, MachineStatus.active);
       },
       {
         failTitle: "Nothing was changed",
-        onDone: (activeAgain) => {
-          if (activeAgain)
-            toast.success({
-              title: `${machine.assetCode} is Active again`,
-              body: job ? `${MAINTENANCE_TYPE_LABEL[job.maintenanceType]} job completed. Status changed from Under maintenance.` : "Status changed from Under maintenance.",
-            });
+        success: () => ({
+          title: `${machine.assetCode} is Active again`,
+          body: job ? `${MAINTENANCE_TYPE_LABEL[job.maintenanceType]} job completed. Status changed from Under maintenance.` : "Status changed from Under maintenance.",
+        }),
+        onDone: () => {
           onClose();
           onChanged();
         },
@@ -213,7 +190,7 @@ export function CompleteJobDialog({ open, onClose, organizationId, data, onChang
       icon="check"
       tone="success"
       title={job ? `Mark the ${MAINTENANCE_TYPE_LABEL[job.maintenanceType].toLowerCase()} job complete?` : `Set ${machine.assetCode} back to Active?`}
-      description={job ? "This makes two changes at once:" : "No workshop job is in progress on this machine, so only the status changes:"}
+      description={job ? "This makes two changes together:" : "No workshop job is in progress on this machine, so only the status changes:"}
       consequences={[
         ...(job
           ? [
@@ -237,7 +214,7 @@ export function CompleteJobDialog({ open, onClose, organizationId, data, onChang
   );
 }
 
-/** Retire — final (the API refuses to leave Retired). Guarded here against booked rentals; the API doesn't check. */
+/** Retire — final (the API refuses to leave Retired). The API also refuses while a rental is booked or a workshop job is open, and its 409 names it. */
 export function RetireDialog({
   open,
   onClose,

@@ -126,6 +126,9 @@ export function parseValidationIssues(error: unknown): {
 
 export const OFFLINE_HINT = "You're offline. Changes can't be saved until the connection is back.";
 
+/** Banner copy per HTTP status, for statuses a screen words itself. */
+export type StatusCopy = Partial<Record<number, { title: string; body: string }>>;
+
 /** What a failed save shows: messages under fields, and/or one banner. */
 export interface FormFailure {
   fieldErrors: Record<string, string>;
@@ -138,7 +141,15 @@ export interface FormFailure {
  * titled with what didn't happen ("RN-1234 wasn't started").
  * `conflicts` overrides the 409 copy for a form that knows better.
  */
-export function toFormFailure(error: unknown, failTitle: string, conflicts?: Record<string, string>): FormFailure {
+export function toFormFailure(
+  error: unknown,
+  failTitle: string,
+  conflicts?: Record<string, string>,
+  /** Screen copy for a status the generic wording gets wrong (e.g. 401 on a sign-in form). */
+  statusCopy?: StatusCopy,
+): FormFailure {
+  const special = error instanceof ApiError ? statusCopy?.[error.status] : undefined;
+  if (special) return { fieldErrors: {}, banner: special };
   if (error instanceof ApiError && error.status === 400) {
     const { fieldErrors, formError } = parseValidationIssues(error);
     const hasFields = Object.keys(fieldErrors).length > 0;

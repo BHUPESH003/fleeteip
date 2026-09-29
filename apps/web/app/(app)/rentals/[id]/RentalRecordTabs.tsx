@@ -29,7 +29,7 @@ const linkClass = "text-xs font-medium text-accent-text no-underline hover:text-
 /**
  * The rental's records, in a card with its own tablist (?tab= in the URL).
  * Transport and logsheets are the shared panels, read-only for a Renter.
- * There's no Activity tab: FleetIP keeps no per-rental audit log.
+ * The activity log is its own card in the page's aside.
  */
 export function RentalRecordTabs({
   data,
@@ -108,8 +108,11 @@ export function RentalRecordTabs({
           ) : (
             <div className="flex flex-col gap-2.5">
               <p className="m-0 text-xs leading-[1.5] text-ink-soft">
-                Every workshop job on {data.machine.assetCode}. FleetIP doesn&apos;t link a job to a rental, so check the dates against{" "}
-                {rentalRef(rental.id)} (<span className="font-mono">{formatDateRange(rental.startDate, rental.endDate)}</span>).
+                Every workshop job on {data.machine.assetCode}.{" "}
+                {linkedJobs(data) === 0
+                  ? `None is logged against ${rentalRef(rental.id)}`
+                  : `${linkedJobs(data)} logged against ${rentalRef(rental.id)}`}
+                ; check the rest against its dates (<span className="font-mono">{formatDateRange(rental.startDate, rental.endDate)}</span>).
               </p>
               <MaintenancePanel
                 organizationId={organizationId}
@@ -123,6 +126,10 @@ export function RentalRecordTabs({
       </TabPanel>
     </section>
   );
+}
+
+function linkedJobs(data: RentalData): number {
+  return data.maintenance.filter((job) => job.rentalId === data.rental.id).length;
 }
 
 function NotVisible({ title, body }: { title: string; body: string }) {
@@ -188,8 +195,7 @@ function InvoicesTab({ data }: { data: RentalData }) {
           </Thead>
           <Tbody>
             {data.invoices.map((invoice) => {
-              const detail = data.invoiceDetails.get(invoice.id);
-              const status = invoiceStatus(data, invoice);
+              const status = invoiceStatus(invoice);
               const overdue = status === InvoiceStatus.overdue;
               return (
                 <Tr key={invoice.id} className={overdue ? "bg-destructive-row" : undefined}>
@@ -209,18 +215,12 @@ function InvoicesTab({ data }: { data: RentalData }) {
                     {formatMoney(invoice.totalAmount)}
                   </Td>
                   <Td align="right" className="font-mono text-xs font-semibold">
-                    {detail ? (
-                      detail.balanceDue > 0 ? (
-                        formatMoney(detail.balanceDue)
-                      ) : (
-                        <span className="font-normal text-disabled-text">Nothing due</span>
-                      )
-                    ) : status === InvoiceStatus.paid || status === InvoiceStatus.cancelled || status === InvoiceStatus.draft ? (
+                    {status === InvoiceStatus.cancelled || status === InvoiceStatus.draft ? (
                       <span className="font-normal text-disabled-text">—</span>
+                    ) : invoice.balanceDue > 0 ? (
+                      formatMoney(invoice.balanceDue)
                     ) : (
-                      <span className="font-normal text-meta-light" title="The balance comes from the invoice's detail, which didn't load">
-                        Open the invoice
-                      </span>
+                      <span className="font-normal text-disabled-text">Nothing due</span>
                     )}
                   </Td>
                   <Td>

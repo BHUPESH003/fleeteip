@@ -20,8 +20,8 @@ import {
 import { useState } from "react";
 import { z } from "zod";
 import { apiClient } from "../../../../lib/api-client";
-import { describeError, OFFLINE_HINT } from "../../../../lib/errors";
-import { useForm } from "../../../../lib/form";
+import { OFFLINE_HINT } from "../../../../lib/errors";
+import { useAction, useForm } from "../../../../lib/form";
 import { RESPONSIBLE_PARTY_LABEL, RESPONSIBLE_PARTY_OPTIONS } from "../shared";
 
 const EMPTY = { item: "", responsibleParty: "", notes: "" };
@@ -74,7 +74,6 @@ export function ScopeItemsCard({
 }) {
   const toast = useToast();
   const [adding, setAdding] = useState(false);
-  const [removing, setRemoving] = useState<string | null>(null);
   const form = useForm({ schema: scopeItemSchema, initial: EMPTY, failTitle: "The item wasn't added" });
   const { busy, online } = form;
 
@@ -89,36 +88,25 @@ export function ScopeItemsCard({
     setAdding(false);
   });
 
-  // Kept by hand: a row action whose failure (and Undo) lives in a toast, with
-  // `removing` tracking which row is busy. useAction only reports a banner.
-  async function remove(item: QuotationScopeItem) {
-    setRemoving(item.id);
-    try {
-      await apiClient.removeScopeItem(organizationId, quotationId, item.id);
-      onChange((current) => current.filter((i) => i.id !== item.id));
-      toast.success({
-        title: `Removed “${item.item}” from ${reference}`,
-        body: "It won't be copied onto the work order.",
-        undo: async () => {
-          try {
-            const restored = (await apiClient.addScopeItem(organizationId, quotationId, {
-              item: item.item,
-              responsibleParty: item.responsibleParty,
-              notes: item.notes ?? undefined,
-            })) as QuotationScopeItem;
-            onChange((current) => [...current, restored]);
-            toast.info({ title: "Undone", body: `“${item.item}” is back on ${reference}.` });
-          } catch (err) {
-            toast.error({ title: "Couldn't undo", body: describeError(err).body });
-          }
+  // ponytail: one undo action per card; a second Undo clicked while one is in flight is ignored.
+  const undoAction = useAction();
+  const undo = (item: QuotationScopeItem) =>
+    undoAction.run(
+      () =>
+        apiClient.addScopeItem(organizationId, quotationId, {
+          item: item.item,
+          responsibleParty: item.responsibleParty,
+          notes: item.notes ?? undefined,
+        }) as Promise<QuotationScopeItem>,
+      {
+        failTitle: "Couldn't undo",
+        report: "toast",
+        onDone: (restored) => {
+          onChange((current) => [...current, restored]);
+          toast.info({ title: "Undone", body: `“${item.item}” is back on ${reference}.` });
         },
-      });
-    } catch (err) {
-      toast.error({ title: `Couldn't remove “${item.item}”`, body: describeError(err).body });
-    } finally {
-      setRemoving(null);
-    }
-  }
+      },
+    );
 
   const bind = form.field;
 
@@ -173,14 +161,14 @@ export function ScopeItemsCard({
                 </Td>
                 {canEdit && (
                   <Td>
-                    <IconButton
-                      icon="close"
-                      label={`Remove ${item.item}`}
-                      variant="ghost"
-                      size="sm"
-                      disabled={!online || removing === item.id}
-                      onClick={() => void remove(item)}
-                      tooltipSide="left"
+                    <RemoveScopeItemButton
+                      organizationId={organizationId}
+                      quotationId={quotationId}
+                      reference={reference}
+                      item={item}
+                      online={online}
+                      onRemoved={() => onChange((current) => current.filter((i) => i.id !== item.id))}
+                      onUndo={() => void undo(item)}
                     />
                   </Td>
                 )}
@@ -226,5 +214,44 @@ export function ScopeItemsCard({
         </form>
       )}
     </Panel>
+  );
+}
+
+/** Per-row remove, so each row keeps its own busy state; the success toast offers Undo. */
+function RemoveScopeItemButton({
+  organizationId,
+  quotationId,
+  reference,
+  item,
+  online,
+  onRemoved,
+  onUndo,
+}: {
+  organizationId: string;
+  quotationId: string;
+  reference: string;
+  item: QuotationScopeItem;
+  online: boolean;
+  onRemoved: () => void;
+  onUndo: () => void;
+}) {
+  const action = useAction();
+  return (
+    <IconButton
+      icon="close"
+      label={`Remove ${item.item}`}
+      variant="ghost"
+      size="sm"
+      disabled={!online || action.busy}
+      onClick={() =>
+        void action.run(() => apiClient.removeScopeItem(organizationId, quotationId, item.id), {
+          failTitle: `Couldn't remove “${item.item}”`,
+          report: "toast",
+          success: () => ({ title: `Removed “${item.item}” from ${reference}`, body: "It won't be copied onto the work order.", undo: onUndo }),
+          onDone: onRemoved,
+        })
+      }
+      tooltipSide="left"
+    />
   );
 }

@@ -15,7 +15,7 @@ import {
   Textarea,
   useToast,
 } from "@fleetip/ui";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { z } from "zod";
 import { ApiError, apiClient } from "../../../lib/api-client";
 import { useForm } from "../../../lib/form";
@@ -352,6 +352,7 @@ export function CreateInvoiceDialog({
     try {
       created = (await apiClient.createInvoice(organizationId, input)) as Invoice;
     } catch (err) {
+      // A 404 means the rental id (typed or stale) isn't this organization's: say it under the field, not in a banner.
       if (err instanceof ApiError && err.status === 404) return setRentalMissing(`${ref} isn't one of your organization's rentals. Pick another rental.`);
       throw err;
     }
@@ -363,12 +364,6 @@ export function CreateInvoiceDialog({
     onCreated(created);
     onClose();
   });
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    const saved = await save(event);
-    // The rental picker has no `name` for the hook to focus, so it's done here.
-    if (!saved && !values.rentalId.trim()) document.querySelector<HTMLElement>('[data-field="rentalId"] input')?.focus();
-  }
 
   const rentalOptions = useMemo(
     () =>
@@ -403,7 +398,7 @@ export function CreateInvoiceDialog({
       tone="info"
       size="lg"
       dismissible={!form.busy}
-      onSubmit={handleSubmit}
+      onSubmit={save}
       footer={
         <>
           <Button variant="tertiary" onClick={onClose} disabled={form.busy}>
@@ -446,6 +441,7 @@ export function CreateInvoiceDialog({
               ) : (
                 <SearchSelect
                   label="Rental"
+                  name="rentalId"
                   required
                   options={rentalOptions}
                   loading={rentals === undefined}

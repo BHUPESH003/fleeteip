@@ -59,7 +59,7 @@ import {
   quoted,
   sortRows,
   useListView,
-} from "../maintenance/list-kit";
+} from "../../../components/list-kit";
 import { TransportPanel } from "../rentals/panels";
 import { LEG_LABEL } from "./TransportDialogs";
 
@@ -518,8 +518,8 @@ export default function TransportPage() {
                               </Td>
                               <Td>
                                 <CellStack
-                                  title={record.pickupLocation ?? "Pickup not recorded"}
-                                  sub={`→ ${record.destination ?? "destination not recorded"}`}
+                                  title={record.pickupLocation ?? "Pickup not specified"}
+                                  sub={`→ ${record.destination ?? "destination not specified"}`}
                                 />
                               </Td>
                               <Td>

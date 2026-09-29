@@ -32,7 +32,6 @@ import {
 } from "@fleetip/ui";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { z } from "zod";
-import { useStatusCopy } from "../../../components/status-copy";
 import { apiClient } from "../../../lib/api-client";
 import { OFFLINE_HINT, describeError } from "../../../lib/errors";
 import { useAction, useForm } from "../../../lib/form";
@@ -475,21 +474,20 @@ function DeleteRoleDialog({
   onClose: () => void;
   onDeleted: (role: RoleWithPermissions) => void;
 }) {
-  const toast = useToast();
   const action = useAction();
-  // The API refuses (409, no field) while a member or a pending invite still references the role.
-  const status = useStatusCopy({
-    409: {
-      title: `${role.roleName} is still in use`,
-      body: "A member or a pending invite link still uses this role. Move those members to another role first; an unused invite link keeps blocking it until it expires.",
-    },
-  });
-  const problem = status.banner ?? action.banner;
+  const problem = action.banner;
   const inUse = (memberCount ?? 0) > 0;
 
   const confirm = async () => {
-    await action.run(() => status.guard(() => apiClient.deleteRole(organizationId, role.id)), {
+    await action.run(() => apiClient.deleteRole(organizationId, role.id), {
       failTitle: "The role wasn't deleted",
+      // The API refuses (409, no field) while a member or a pending invite still references the role.
+      statusCopy: {
+        409: {
+          title: `${role.roleName} is still in use`,
+          body: "A member or a pending invite link still uses this role. Move those members to another role first; an unused invite link keeps blocking it until it expires.",
+        },
+      },
       success: () => ({ title: `Role ${role.roleName} deleted`, body: "It's no longer offered when inviting or moving members." }),
       onDone: () => {
         onDeleted(role);

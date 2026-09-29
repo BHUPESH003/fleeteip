@@ -18,7 +18,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
 import { apiClient, type CreateMachineInput } from "../../../lib/api-client";
 import { categoryIcon } from "../../../lib/category-icon";
-import { describeError, errorStatus } from "../../../lib/errors";
+import { describeError } from "../../../lib/errors";
 import { useForm } from "../../../lib/form";
 import { capacityLabel, productName, specGroups } from "./shared";
 
@@ -157,10 +157,10 @@ export function RegisterMachineDialog({
         return `${form.values.assetCode.trim()} is already used by another machine in your organization.`;
       },
     },
+    // A 404 on create means the product left the catalogue.
+    statusCopy: { 404: { title: "The machine wasn't registered", body: "This product isn't in the catalogue any more. Choose another one." } },
   });
   const { values, set, reset } = form;
-  // A 404 on create means the product left the catalogue; useForm can only route 400/409 to a field, so this one is local.
-  const [productGone, setProductGone] = useState<string | null>(null);
   // Each cascade level ignores answers that arrive after its parent changed again.
   const requests = useRef({ categories: 0, subcategories: 0, products: 0 });
 
@@ -188,7 +188,7 @@ export function RegisterMachineDialog({
     setProducts(null);
     setLoading((l) => ({ ...l, subcategories: true, products: false }));
     try {
-      const list: ProductSubcategory[] = (await apiClient.listProductSubcategories(categoryId)) ?? [];
+      const list: ProductSubcategory[] = (await apiClient.listProductSubcategories(categoryId, false)) ?? [];
       if (token !== requests.current.subcategories) return;
       setSubcategories(list);
       const pick =
@@ -218,7 +218,7 @@ export function RegisterMachineDialog({
     setCatalogueError(null);
     setLoading({ categories: true, subcategories: false, products: false });
     try {
-      const list: ProductCategory[] = (await apiClient.listProductCategories()) ?? [];
+      const list: ProductCategory[] = (await apiClient.listProductCategories(false)) ?? [];
       if (token !== requests.current.categories) return;
       setCategories(list);
       const pick =
@@ -242,7 +242,6 @@ export function RegisterMachineDialog({
   useEffect(() => {
     if (!open) return;
     reset(EMPTY);
-    setProductGone(null);
     void loadCategories();
     // loadCategories reads the initial* props of this render
   }, [open, initialCategoryId, initialSubcategoryId, initialProductId]);
@@ -251,7 +250,6 @@ export function RegisterMachineDialog({
     set("categoryId", id);
     set("subcategoryId", "");
     set("productId", "");
-    setProductGone(null);
     if (id) void loadSubcategories(id);
     else {
       requests.current.subcategories++;
@@ -265,7 +263,6 @@ export function RegisterMachineDialog({
   function pickSubcategory(id: string) {
     set("subcategoryId", id);
     set("productId", "");
-    setProductGone(null);
     if (id) void loadProducts(id);
     else {
       requests.current.products++;
@@ -276,7 +273,6 @@ export function RegisterMachineDialog({
 
   function pickProduct(id: string) {
     set("productId", id);
-    setProductGone(null);
   }
 
   const category = categories?.find((c) => c.id === values.categoryId) ?? null;
@@ -284,14 +280,7 @@ export function RegisterMachineDialog({
   const product = products?.find((p) => p.id === values.productId) ?? null;
 
   const save = form.submit(async (body) => {
-    let machine: Machine;
-    try {
-      machine = (await apiClient.createMachine(organizationId, body)) as Machine;
-    } catch (err) {
-      if (errorStatus(err) !== 404) throw err;
-      setProductGone("This product isn't in the catalogue any more. Choose another one.");
-      return;
-    }
+    const machine = (await apiClient.createMachine(organizationId, body)) as Machine;
     toast.success({
       title: `${machine.assetCode} registered`,
       body: `${productName(product) ?? "Catalogue product"} · registration ${machine.registrationNumber}. It's Active, so it can be quoted and rented now.`,
@@ -403,7 +392,7 @@ export function RegisterMachineDialog({
           onChange={pickProduct}
           placeholder={values.subcategoryId ? "Search by make or model" : "Choose a subcategory first"}
           emptyText="No product matches."
-          error={productGone ?? cascadeField("productId").error}
+          error={cascadeField("productId").error}
           hint="The product can't be changed after registration."
         />
 

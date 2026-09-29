@@ -10,7 +10,13 @@ import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/cont
 import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization } from "@fleetip/contracts/logsheet";
 import { MaintenanceStatus, MaintenanceType, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
-import { ActualDatesVerificationStatus, RentalStatus, type Rental } from "@fleetip/contracts/rental";
+import {
+  ActualDatesVerificationStatus,
+  AvailabilityConflictKind,
+  RentalStatus,
+  type MachineAvailability,
+  type Rental,
+} from "@fleetip/contracts/rental";
 import { TransportLeg, TransportStatus, type TransportRecord } from "@fleetip/contracts/transport";
 import { WorkOrderStatus, type WorkOrder } from "@fleetip/contracts/work-order";
 import type { AttentionSeverity, ChainStep, KeyFigure, LaneBlock, LaneMonth, LaneRow } from "@fleetip/ui";
@@ -35,7 +41,6 @@ import {
   COMMITTING_RENTAL_STATUSES,
   MAINTENANCE_TYPE_LABEL,
   blocksAvailability,
-  conflictingMaintenance,
   conflictingRental,
   currentRentalFor,
   deploymentFor,
@@ -940,37 +945,34 @@ export type FreeResult =
   | { kind: "warn"; title: string; body: string };
 
 /**
- * Combines the API's yes/no (rentals only) with the rentals and workshop
- * jobs already on the page, so a conflict names the blocking record and the
- * earliest free date (the API doesn't return either — ticket b).
+ * Words the API's answer: it names the first blocking rental or workshop job
+ * (rentals and jobs both count server-side); the customer name comes from the
+ * rentals already on the page.
  */
 export function freeCheckResult(
   data: MachineData,
   from: string,
   to: string | null,
-  apiAvailable: boolean | null,
+  availability: MachineAvailability | null,
 ): FreeResult {
-  const names = data.customerNames;
-  if (data.machine.status === MachineStatus.retired) {
+  if (data.machine.status === MachineStatus.retired || !availability) {
     return { kind: "no", title: "Retired machines can't be booked", body: "This machine's status is Retired, which is final." };
   }
-  const rental = conflictingRental(data.rentals, from, to);
-  if (rental || apiAvailable === false) {
-    if (!rental) {
-      return { kind: "no", title: "Not free for these dates", body: "Another rental is booked over part of these dates." };
-    }
+  const blocker = availability.conflicts[0];
+  if (blocker?.kind === AvailabilityConflictKind.rental) {
+    const rental = data.rentals.find((r) => r.id === blocker.id);
     return {
       kind: "no",
-      title: `Not free — ${rentalRef(rental.id)} overlaps`,
-      body: `${rentalRef(rental.id)} (${customerName(rental, names)}) runs ${formatDateRange(rental.startDate, rental.endDate)}.${rental.endDate ? ` Earliest start after it: ${formatDate(addDays(rental.endDate, 1))}.` : " It's open-ended, so there's no free date after it yet."}`,
+      title: `Not free — ${blocker.reference} overlaps`,
+      body: `${blocker.reference}${rental ? ` (${customerName(rental, data.customerNames)})` : ""} runs ${formatDateRange(blocker.startDate, blocker.endDate)}.${blocker.endDate ? ` Earliest start after it: ${formatDate(addDays(blocker.endDate, 1))}.` : " It's open-ended, so there's no free date after it yet."}`,
     };
   }
-  const job = conflictingMaintenance(data.maintenance, from, to);
-  if (job) {
+  if (blocker) {
+    const job = data.maintenance.find((m) => m.id === blocker.id);
     return {
       kind: "warn",
-      title: "Free of rentals, but a workshop job overlaps",
-      body: `A ${MAINTENANCE_TYPE_LABEL[job.maintenanceType].toLowerCase()} job is ${statusLabel("maintenance", job.status).toLowerCase()} ${formatDateRange(job.startDate, job.endDate, "with no end date")}. A rental can't be created over it — pick other dates.`,
+      title: "Not free — a workshop job overlaps",
+      body: `${job ? `A ${MAINTENANCE_TYPE_LABEL[job.maintenanceType].toLowerCase()} job is ${statusLabel("maintenance", job.status).toLowerCase()}` : "A workshop job is booked"} ${formatDateRange(blocker.startDate, blocker.endDate, "with no end date")}. A rental can't be created over it — pick other dates.`,
     };
   }
   return {
@@ -989,14 +991,23 @@ export function lastInspection(data: MachineData): MaintenanceRecord | null {
 
 // ------------------------------------------------------------------ menu guards
 
-/** Rental that blocks retiring (the API doesn't check — plan §1). */
+/** Rental that blocks retiring — shown on the menu item up front; the API refuses it too (and open workshop jobs). */
 export function retireBlocker(data: MachineData): Rental | null {
   return committingRentals(data)[0] ?? null;
 }
 
-/** Rental whose dates include today — sending to the workshop from today would 409. */
+/**
+ * A rental booked over today other than the active one — sending to the
+ * workshop from today would 409. The active rental doesn't block: the job is
+ * logged against it (a breakdown on site).
+ */
 export function workshopBlocker(data: MachineData): Rental | null {
-  return conflictingRental(data.rentals, data.today, data.today);
+  const active = activeRental(data);
+  return conflictingRental(
+    data.rentals.filter((r) => r.id !== active?.id),
+    data.today,
+    data.today,
+  );
 }
 
 export type RecordTab = "rentals" | "logsheets" | "workshop" | "transport" | "invoices";

@@ -14,8 +14,8 @@ const UNREAD_POLL_INTERVAL_MS = 25_000;
 
 
 /**
- * Bell with the count of stored, unread notifications (FleetIP sends no
- * time-based reminders — that needs a scheduler, backend ticket i).
+ * Bell with the count of stored, unread notifications — workflow events plus
+ * the API's daily reminders (reminder.*), all routed by related resource type.
  */
 export function NotificationBell({ tone = "light" }: { tone?: "light" | "dark" }) {
   const { currentOrganizationId } = useSession();

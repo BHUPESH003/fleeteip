@@ -42,7 +42,7 @@ import {
   quoted,
   sortRows,
   useListView,
-} from "../maintenance/list-kit";
+} from "../../../components/list-kit";
 import { productName } from "../machines/shared";
 import { workOrderMismatch } from "./shared";
 

@@ -129,4 +129,14 @@ export const adminApiClient = {
       `/admin/catalogue/products/${productId}/${disabled ? "disable" : "enable"}`,
       { method: "POST" },
     ),
+  setCategoryDisabled: (categoryId: string, disabled: boolean) =>
+    adminRequest<ProductCategory>(
+      `/admin/catalogue/categories/${categoryId}/${disabled ? "disable" : "enable"}`,
+      { method: "POST" },
+    ),
+  setSubcategoryDisabled: (subcategoryId: string, disabled: boolean) =>
+    adminRequest<ProductSubcategory>(
+      `/admin/catalogue/subcategories/${subcategoryId}/${disabled ? "disable" : "enable"}`,
+      { method: "POST" },
+    ),
 };

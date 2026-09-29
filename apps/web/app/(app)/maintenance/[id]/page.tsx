@@ -26,10 +26,10 @@ import {
   type AttentionListItem,
   type MenuItem,
 } from "@fleetip/ui";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useState } from "react";
 import { ForbiddenPage, PageLoadError } from "../../../../components/PageStates";
-import { ApiError, apiClient } from "../../../../lib/api-client";
+import { apiClient } from "../../../../lib/api-client";
 import { useConnection } from "../../../../lib/connection";
 import { OFFLINE_HINT } from "../../../../lib/errors";
 import { daysBetween, formatDate, formatDateRange, formatDateTime, plural, rentalRef, todayIsoDate } from "../../../../lib/format";
@@ -39,7 +39,7 @@ import { Status } from "../../../../lib/status";
 import { optional, useLoad } from "../../../../lib/use-load";
 import { MaintenanceFormDialog } from "../../machines/MaintenanceFormDialog";
 import { MAINTENANCE_TYPE_LABEL, blocksAvailability, productName } from "../../machines/shared";
-import { DetailColumns, TEXT_LINK } from "../list-kit";
+import { DetailColumns, TEXT_LINK } from "../../../../components/list-kit";
 import {
   MaintenanceTransitionDialog,
   canCancelMaintenance,
@@ -62,29 +62,17 @@ interface JobData {
 async function loadJob(
   orgId: string,
   id: string,
-  machineIdParam: string | null,
   access: { machines: boolean; rentals: boolean },
 ): Promise<JobData> {
-  // There's no GET-by-id for maintenance: the job is found in its machine's
-  // list (the ?machineId= every in-app link carries) or, for a link
-  // without it, in the org-wide list.
-  const [scoped, machines, products, rentals] = await Promise.all([
-    machineIdParam
-      ? (apiClient.listMaintenanceForMachine(orgId, machineIdParam) as Promise<MaintenanceRecord[]>)
-      : (apiClient.listMaintenanceRecords(orgId) as Promise<MaintenanceRecord[]>),
+  // The job by id (a 404 becomes the page's not-found state); older links'
+  // ?machineId= is no longer needed and is ignored.
+  const [found, machines, products, rentals] = await Promise.all([
+    apiClient.getMaintenanceRecord(orgId, id) as Promise<MaintenanceRecord>,
     optional(access.machines, () => apiClient.listMachines(orgId) as Promise<Machine[]>, [] as Machine[]),
     optional(true, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
     optional(access.rentals, () => apiClient.listRentals(orgId) as Promise<Rental[]>, [] as Rental[]),
   ]);
-  let list = scoped;
-  let record = list.find((r) => r.id === id);
-  if (!record && machineIdParam) {
-    // A stale ?machineId= shouldn't hide a job that exists.
-    list = (await apiClient.listMaintenanceRecords(orgId)) as MaintenanceRecord[];
-    record = list.find((r) => r.id === id);
-  }
-  if (!record) throw new ApiError("Maintenance record not found", 404, "not_found");
-  const found = record;
+  const list = (await apiClient.listMaintenanceForMachine(orgId, found.machineId)) as MaintenanceRecord[];
   const machine = machines.find((m) => m.id === found.machineId) ?? null;
   return {
     record: found,
@@ -99,8 +87,6 @@ async function loadJob(
 
 export default function MaintenanceDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
-  const machineIdParam = searchParams.get("machineId");
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
   // Maintenance is Rental-Company-only by design: every MaintenanceService
@@ -111,8 +97,8 @@ export default function MaintenanceDetailPage() {
   const access = { machines: hasPermission("equipment.manage"), rentals: hasPermission("rental.manage") };
 
   const { data, error, loading, reload } = useLoad(
-    () => loadJob(organizationId!, id, machineIdParam, access),
-    [organizationId, id, machineIdParam, access.machines, access.rentals],
+    () => loadJob(organizationId!, id, access),
+    [organizationId, id, access.machines, access.rentals],
     Boolean(organizationId) && canView,
   );
 
@@ -248,7 +234,10 @@ function JobView({ data, organizationId, reload }: { data: JobData; organization
       key: "on-rent",
       severity: "warning",
       title: `${rentalRef(activeRental.id)} is still Active while the machine is in the workshop`,
-      context: "Workshop jobs don't carry a rental, so this job can't be linked to it. Decide with the customer whether the rental goes off rent.",
+      context:
+        record.rentalId === activeRental.id
+          ? "This job is logged against it. Decide with the customer whether the rental goes off rent."
+          : "Decide with the customer whether the rental goes off rent.",
       action: { label: `Open ${rentalRef(activeRental.id)}`, href: `/rentals/${activeRental.id}` },
     });
   }
@@ -349,6 +338,16 @@ function JobView({ data, organizationId, reload }: { data: JobData; organization
                       mono: true,
                     },
                     { label: "Length", value: length, mono: true, emptyText: "Open-ended" },
+                    {
+                      label: "Logged against",
+                      value: record.rentalId ? (
+                        <UILink href={`/rentals/${record.rentalId}`} className={TEXT_LINK}>
+                          {rentalRef(record.rentalId)}
+                        </UILink>
+                      ) : null,
+                      mono: true,
+                      emptyText: "No rental",
+                    },
                     {
                       label: "Blocks new rentals",
                       value: blocking ? "Yes — no new rental can overlap these dates while it's open" : "No — it's closed",

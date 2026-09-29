@@ -2,10 +2,9 @@
 
 import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import { MaintenanceStatus, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
-import { Checkbox, ConfirmDialog, FormBanner, useToast } from "@fleetip/ui";
+import { Checkbox, ConfirmDialog, FormBanner } from "@fleetip/ui";
 import { useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { describeError } from "../../../lib/errors";
 import { useAction } from "../../../lib/form";
 import { formatDate } from "../../../lib/format";
 import { MAINTENANCE_TYPE_LABEL } from "../machines/shared";
@@ -37,8 +36,8 @@ export function canCancelMaintenance(record: MaintenanceRecord): boolean {
 /**
  * Start / complete / cancel a workshop job. The job's status and the
  * machine's own status are stored separately, so — like MaintenancePanel —
- * the confirmation offers the matching machine write and says it's a
- * second write. Without the machine record (no Equipment permission) only
+ * the confirmation offers the matching machine write; the API saves both in
+ * one transaction. Without the machine record (no Equipment permission) only
  * the job changes, and the dialog says so. None of these can be undone:
  * the API has no way back to Scheduled or out of Completed/Cancelled.
  */
@@ -59,7 +58,6 @@ export function MaintenanceTransitionDialog({
   onClose: () => void;
   onDone: (result: { machineMoved: boolean }) => void;
 }) {
-  const toast = useToast();
   const [alsoMachine, setAlsoMachine] = useState(true);
   const action = useAction();
 
@@ -95,21 +93,11 @@ export function MaintenanceTransitionDialog({
 
   const writeMachine = machine && machineWrite && alsoMachine ? { machine, status: machineWrite } : null;
   const confirm = () =>
+    // One write: the machine status (if any) moves in the same transaction as the job.
     action.run(
       async () => {
-        await apiClient.updateMaintenanceStatus(organizationId, record.id, to);
-        if (!writeMachine) return false;
-        // Partial success: the job is already updated, so a failed machine write is a toast, not "Nothing was changed".
-        try {
-          await apiClient.updateMachineStatus(organizationId, writeMachine.machine.id, writeMachine.status);
-          return true;
-        } catch (err) {
-          toast.error({
-            title: `The job was ${verb.past}, but ${writeMachine.machine.assetCode}'s status didn't change`,
-            body: `${describeError(err).body} Change it from the machine page.`,
-          });
-          return false;
-        }
+        await apiClient.updateMaintenanceStatus(organizationId, record.id, to, writeMachine?.status);
+        return Boolean(writeMachine);
       },
       {
         failTitle: "Nothing was changed",
@@ -139,7 +127,7 @@ export function MaintenanceTransitionDialog({
     ? "The machine's own status isn't changed from here — your role can't view machines. Change it from the machine page if needed."
     : machineWrite
       ? alsoMachine
-        ? `Also sets ${machine.assetCode} to ${machineWrite === MachineStatus.active ? "Active" : "Under maintenance"} — a second write.`
+        ? `Also sets ${machine.assetCode} to ${machineWrite === MachineStatus.active ? "Active" : "Under maintenance"}, saved together with the job.`
         : `${machine.assetCode} stays ${machine.status === MachineStatus.active ? "Active" : "Under maintenance"}.`
       : machine.status === MachineStatus.retired
         ? `${machine.assetCode} is retired, so its status isn't changed.`

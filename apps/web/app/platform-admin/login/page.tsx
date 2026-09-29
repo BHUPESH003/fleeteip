@@ -8,7 +8,6 @@ import { adminApiClient } from "../../../lib/admin-api-client";
 import { useForm } from "../../../lib/form";
 import { AuthCard } from "../../(public)/AuthShell";
 import { PasswordInput, emailField } from "../../(public)/fields";
-import { useStatusCopy } from "../../../components/status-copy";
 import { staffCall } from "../staff-api";
 
 const schema = z.object({
@@ -44,17 +43,15 @@ export default function PlatformAdminLoginPage() {
 function StaffLoginForm() {
   const router = useRouter();
   const sessionEnded = useSearchParams().get("ended") === "1";
-  const form = useForm({ schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
-  const status = useStatusCopy(STATUS_COPY);
-  const problem = status.banner ?? form.banner;
+  const form = useForm({ statusCopy: STATUS_COPY, schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
+  const problem = form.banner;
 
   // staffCall turns AdminApiError into ApiError, so useForm and the status copy can read it.
   const save = form.submit(async (body) => {
-    await status.guard(() => staffCall(() => adminApiClient.login(body)));
+    await staffCall(() => adminApiClient.login(body));
     router.push("/platform-admin");
   });
   const handleSubmit = (event: FormEvent) => {
-    status.clear();
     void save(event);
   };
 

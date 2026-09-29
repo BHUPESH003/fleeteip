@@ -2,11 +2,10 @@
 
 import type { Rental } from "@fleetip/contracts/rental";
 import { TransportLeg, TransportStatus, type TransportRecord, type UpdateTransportRequest } from "@fleetip/contracts/transport";
-import { Button, ConfirmDialog, Dialog, FormBanner, Input, Textarea, useToast, type ToastApi } from "@fleetip/ui";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Button, ConfirmDialog, Dialog, FormBanner, Input, Textarea, useToast } from "@fleetip/ui";
+import { useEffect, useMemo } from "react";
 import { z } from "zod";
 import { apiClient } from "../../../lib/api-client";
-import { describeError, errorStatus } from "../../../lib/errors";
 import { useAction, useForm } from "../../../lib/form";
 import { formatDate, formatMoney, rentalRef, todayIsoDate } from "../../../lib/format";
 
@@ -24,25 +23,6 @@ export const LEG_PURPOSE: Record<TransportLeg, string> = {
   mobilization: "The trip that takes the machine to site.",
   demobilization: "The trip that brings the machine back.",
 };
-
-/**
- * Mark dispatched — no confirmation, like TransportPanel; the toast names the leg and rental.
- * ponytail: stays a plain function — its failure is a toast (there's no dialog for a banner), which useAction doesn't offer.
- */
-export async function dispatchLeg(organizationId: string, record: TransportRecord, toast: ToastApi): Promise<boolean> {
-  try {
-    await apiClient.updateTransport(organizationId, record.rentalId, record.leg, { status: TransportStatus.dispatched } satisfies UpdateTransportRequest);
-    toast.success({
-      title: `${LEG_LABEL[record.leg]} dispatched`,
-      body: `${rentalRef(record.rentalId)} · status changed from Planned.`,
-    });
-    return true;
-  } catch (err) {
-    const friendly = describeError(err, `${LEG_LABEL[record.leg]} wasn't updated`);
-    toast.error({ title: friendly.title, body: friendly.body });
-    return false;
-  }
-}
 
 type PlanValues = Record<"pickupLocation" | "destination" | "plannedDate" | "charges" | "transportDetails" | "notes", string>;
 
@@ -126,20 +106,27 @@ export function TransportPlanDialog({
 }) {
   const toast = useToast();
   const schema = useMemo(() => planSchema(record), [record]);
-  const form = useForm({ schema, initial: planDefaults(leg, rental, record), failTitle: "The trip wasn't saved" });
-  const { reset } = form;
-  // A 409 here is always the one-record-per-leg rule. useForm can't retitle a 409 that isn't about one field, so this banner stays local.
-  const [duplicate, setDuplicate] = useState<{ title: string; body: string } | null>(null);
-  const banner = duplicate ?? form.banner;
+  const ref = rentalRef(rentalId);
+  const form = useForm({
+    schema,
+    initial: planDefaults(leg, rental, record),
+    failTitle: "The trip wasn't saved",
+    // A 409 here is always the one-record-per-leg rule.
+    statusCopy: {
+      409: {
+        title: `${ref} already has a ${leg} record`,
+        body: "FleetIP keeps one record per leg, so it can't be planned twice — a cancelled leg can't be planned again either. Reload to see it.",
+      },
+    },
+  });
+  const { reset, banner } = form;
 
   useEffect(() => {
     if (!open) return;
     reset(planDefaults(leg, rental, record));
-    setDuplicate(null);
     // defaults are read once per opening
   }, [open]);
 
-  const ref = rentalRef(rentalId);
   const planned = form.values.plannedDate;
   const plannedWarning =
     planned && rental && leg === TransportLeg.mobilization && planned > rental.startDate
@@ -149,17 +136,8 @@ export function TransportPlanDialog({
         : undefined;
 
   const save = form.submit(async (body) => {
-    try {
-      if (record) await apiClient.updateTransport(organizationId, rentalId, leg, body);
-      else await apiClient.createTransport(organizationId, rentalId, { leg, ...body });
-    } catch (err) {
-      if (errorStatus(err) !== 409) throw err;
-      setDuplicate({
-        title: `${ref} already has a ${leg} record`,
-        body: "FleetIP keeps one record per leg, so it can't be planned twice — a cancelled leg can't be planned again either. Reload to see it.",
-      });
-      return;
-    }
+    if (record) await apiClient.updateTransport(organizationId, rentalId, leg, body);
+    else await apiClient.createTransport(organizationId, rentalId, { leg, ...body });
     toast.success({
       title: record ? `${LEG_LABEL[leg]} plan updated` : `${LEG_LABEL[leg]} planned`,
       body: `${ref}${body.plannedDate ? ` · ${formatDate(body.plannedDate)}` : " · no date set yet"}.`,
@@ -167,11 +145,6 @@ export function TransportPlanDialog({
     onSaved();
     onClose();
   });
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    setDuplicate(null);
-    void save(event);
-  }
 
   return (
     <Dialog
@@ -182,7 +155,7 @@ export function TransportPlanDialog({
       icon="transport"
       size="md"
       dismissible={!form.busy}
-      onSubmit={handleSubmit}
+      onSubmit={save}
       footer={
         <>
           <Button variant="tertiary" onClick={onClose} disabled={form.busy}>

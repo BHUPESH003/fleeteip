@@ -11,8 +11,8 @@ import {
   CellStack,
   EmptyState,
   ErrorState,
+  FilterChip,
   Icon,
-  IconButton,
   Input,
   PageBody,
   PageHeader,
@@ -35,7 +35,7 @@ import {
   type SortDirection,
 } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { useMemo, useState, type MouseEvent } from "react";
 import { ForbiddenPage } from "../../../components/PageStates";
 import { apiClient } from "../../../lib/api-client";
 import { useConnection } from "../../../lib/connection";
@@ -808,29 +808,6 @@ function RateCell({ rental }: { rental: Rental }) {
       <span className="font-mono text-[13px] font-semibold leading-tight text-ink">{formatMoney(rental.rate)}</span>
       <span className="text-[11px] leading-tight text-meta-light">{formatRateUnit(rental.rateUnit)}</span>
     </div>
-  );
-}
-
-function FilterChip({ label, mono, onRemove }: { label: ReactNode; mono?: boolean; onRemove: () => void }) {
-  return (
-    <span
-      className={cx(
-        "inline-flex h-7 items-center gap-1 rounded-cell border border-accent-wash-border bg-accent-wash pl-2.5 pr-0.5 text-xs font-medium text-ink-strong",
-        mono && "font-mono",
-      )}
-    >
-      {label}
-      <IconButton
-        icon="close"
-        label={`Remove filter: ${typeof label === "string" ? label : "this filter"}`}
-        variant="ghost"
-        size="sm"
-        iconSize={12}
-        noTooltip
-        className="!h-6 !w-6"
-        onClick={onRemove}
-      />
-    </span>
   );
 }
 

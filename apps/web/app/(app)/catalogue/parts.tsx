@@ -1,13 +1,13 @@
 "use client";
 
-import type { Product } from "@fleetip/contracts/catalogue";
+import { CatalogueDisabledBy, type Product, type ProductCategory, type ProductSubcategory } from "@fleetip/contracts/catalogue";
 import { Badge, ConfirmDialog, FormBanner, Menu, Skeleton, Table, TableSkeleton, Th, Thead, Tr, UILink, type MenuItem } from "@fleetip/ui";
 import { apiClient } from "../../../lib/api-client";
 import { useConnection } from "../../../lib/connection";
 import { OFFLINE_HINT } from "../../../lib/errors";
 import { useAction } from "../../../lib/form";
-import { formatDateTime } from "../../../lib/format";
-import { NO_DISABLE_REASON } from "./shared";
+import { formatDateTime, plural } from "../../../lib/format";
+import type { CatalogueIndex } from "./shared";
 
 const OPEN_LINK =
   "inline-flex h-7 items-center rounded-cell border border-border-control bg-surface px-[11px] text-xs font-medium text-ink-strong no-underline hover:bg-surface-hover";
@@ -22,11 +22,6 @@ export function RowActions({ href, label, items }: { href: string; label: string
       {items.length > 0 && <Menu label={`More actions for ${label}`} items={items} triggerSize="sm" width={300} />}
     </span>
   );
-}
-
-/** Disable/delete has no endpoint: the item stays visible, disabled, and says why. */
-export function disabledRemoveItem(label: string): MenuItem {
-  return { key: "disable", label, icon: "retire", disabled: true, hint: NO_DISABLE_REASON, separatorBefore: true };
 }
 
 /** "Disable product" / "Enable product" for a product's menu (catalogue.manage — the caller gates it). */
@@ -112,13 +107,176 @@ export function ProductToggleDialog({
   );
 }
 
-/** Shown next to a disabled product (hidden from pickers, never deleted). */
-export function DisabledBadge({ disabledAt }: { disabledAt: string | null }) {
-  if (!disabledAt) return null;
+type CatalogueItem = ProductCategory | ProductSubcategory | Product;
+type CatalogueLookup = Pick<CatalogueIndex, "categoriesById" | "subcategoriesById">;
+
+/** Name of the ancestor that disables this item ("Cranes"), or null when it's enabled or disabled on its own. */
+export function disabledViaName(item: CatalogueItem, catalogue: CatalogueLookup): string | null {
+  if (item.disabledBy === CatalogueDisabledBy.subcategory && "productSubcategoryId" in item) {
+    return catalogue.subcategoriesById.get(item.productSubcategoryId)?.name ?? "its subcategory";
+  }
+  if (item.disabledBy === CatalogueDisabledBy.category) {
+    const categoryId =
+      "productCategoryId" in item
+        ? item.productCategoryId
+        : "productSubcategoryId" in item
+          ? catalogue.subcategoriesById.get(item.productSubcategoryId)?.productCategoryId
+          : undefined;
+    return (categoryId && catalogue.categoriesById.get(categoryId)?.name) || "its category";
+  }
+  return null;
+}
+
+/** "Disabled" (its own flag) or "Disabled via Cranes" (inherited); hidden from pickers, never deleted. */
+export function DisabledBadge({ item, catalogue }: { item: CatalogueItem; catalogue: CatalogueLookup }) {
+  if (!item.disabledBy) return null;
+  const via = disabledViaName(item, catalogue);
+  const title = via
+    ? `Hidden from pickers because ${via} is disabled. Existing records keep it.`
+    : `Disabled ${item.disabledAt ? formatDateTime(item.disabledAt) : ""}. Existing records keep it.`;
   return (
-    <Badge size="sm" tone="neutral" title={`Disabled ${formatDateTime(disabledAt)}. Machines already using it keep it.`}>
-      Disabled
+    <Badge size="sm" tone="neutral" title={title}>
+      {via ? `Disabled via ${via}` : "Disabled"}
     </Badge>
+  );
+}
+
+// ------------------------------------------------------------------ category/subcategory disable (soft cascade)
+
+export type TaxonomyTarget =
+  | { kind: "category"; item: ProductCategory }
+  | { kind: "subcategory"; item: ProductSubcategory };
+
+/** "Disable category" / "Enable subcategory" for a menu (catalogue.manage — the caller gates it). */
+export function taxonomyToggleItem(target: TaxonomyTarget, offline: boolean, onSelect: () => void): MenuItem {
+  const disabled = Boolean(target.item.disabledAt);
+  const inherited = target.item.disabledBy === CatalogueDisabledBy.category;
+  return {
+    key: "disable",
+    label: `${disabled ? "Enable" : "Disable"} ${target.kind}`,
+    icon: disabled ? "success" : "retire",
+    danger: !disabled,
+    disabled: offline,
+    hint: offline
+      ? OFFLINE_HINT
+      : disabled
+        ? inherited
+          ? "Its category is disabled too, so it stays hidden until that is enabled."
+          : "Everything inside that isn't disabled on its own comes back to pickers."
+        : "Hides it and everything inside from pickers. Existing records keep working.",
+    separatorBefore: true,
+    onSelect,
+  };
+}
+
+/** What a disable/enable changes in pickers: counts of subcategories and products inside the branch. */
+function branchImpact(target: TaxonomyTarget, catalogue: CatalogueIndex) {
+  const subs =
+    target.kind === "category"
+      ? catalogue.subcategories.filter((s) => s.productCategoryId === target.item.id)
+      : [target.item];
+  const subsById = new Map(subs.map((s) => [s.id, s]));
+  const products = catalogue.products.filter((p) => subsById.has(p.productSubcategoryId));
+  const children = target.kind === "category" ? subs : [];
+  return {
+    // Disabling hides what's visible now.
+    hides: {
+      subs: children.filter((s) => !s.disabledBy).length,
+      products: products.filter((p) => !p.disabledBy).length,
+    },
+    // Enabling restores what isn't disabled on its own (a subcategory under
+    // a disabled category restores nothing until the category is enabled).
+    restores:
+      target.item.disabledBy === CatalogueDisabledBy.category && target.kind === "subcategory"
+        ? { subs: 0, products: 0 }
+        : {
+            subs: children.filter((s) => !s.disabledAt).length,
+            products: products.filter((p) => !p.disabledAt && !subsById.get(p.productSubcategoryId)?.disabledAt).length,
+          },
+  };
+}
+
+function impactLine(verb: string, counts: { subs: number; products: number }, kind: TaxonomyTarget["kind"]) {
+  const parts = [
+    ...(kind === "category" ? [plural(counts.subs, "subcategory", "subcategories")] : []),
+    plural(counts.products, "product"),
+  ];
+  return `${verb} ${parts.join(" and ")} from pickers (registering machines, posting requirements, quotations).`;
+}
+
+/**
+ * Confirms disabling (or enabling) a category or subcategory. `setDisabled`
+ * is the tenant or staff write; `action` lets Platform Admin pass its own
+ * staff-aware runner (defaults to useAction with an in-dialog banner).
+ */
+export function TaxonomyToggleDialog({
+  target,
+  catalogue,
+  setDisabled,
+  action: external,
+  onClose,
+  onChanged,
+}: {
+  target: TaxonomyTarget;
+  catalogue: CatalogueIndex;
+  setDisabled: (disabled: boolean) => Promise<unknown>;
+  action?: { run: ReturnType<typeof useAction>["run"]; busy: boolean };
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { online } = useConnection();
+  const own = useAction();
+  const action = external ?? own;
+  const disable = !target.item.disabledAt;
+  const { name } = target.item;
+  const impact = branchImpact(target, catalogue);
+
+  const confirm = async () => {
+    await action.run(() => setDisabled(disable), {
+      failTitle: disable ? `${name} wasn't disabled` : `${name} wasn't enabled`,
+      success: () =>
+        disable
+          ? { title: `${name} disabled`, body: "It and everything inside are hidden from pickers. Existing records keep working." }
+          : { title: `${name} enabled`, body: "Everything inside that isn't disabled on its own is back in pickers." },
+      onDone: () => {
+        onChanged();
+        onClose();
+      },
+    });
+  };
+
+  return (
+    <ConfirmDialog
+      open
+      onClose={onClose}
+      onConfirm={confirm}
+      title={`${disable ? "Disable" : "Enable"} ${name}?`}
+      icon={disable ? "retire" : "success"}
+      tone={disable ? "danger" : "success"}
+      consequences={
+        disable
+          ? [
+              impactLine("Hides", impact.hides, target.kind),
+              "Existing machines, requirements, quotations and rentals keep working and still show its name.",
+              "Nothing is deleted. Enabling it brings back everything inside that isn't disabled on its own.",
+            ]
+          : target.item.disabledBy === CatalogueDisabledBy.category
+            ? ["Its category is also disabled, so it stays hidden from pickers until the category is enabled."]
+            : [impactLine("Brings back", impact.restores, target.kind), "Items disabled on their own stay disabled."]
+      }
+      confirmLabel={`${disable ? "Disable" : "Enable"} ${target.kind}`}
+      confirmVariant={disable ? "danger" : "primary"}
+      cancelLabel={disable ? "Keep enabled" : "Keep disabled"}
+      busy={action.busy}
+      busyLabel={disable ? "Disabling…" : "Enabling…"}
+      confirmDisabled={!online}
+    >
+      {!external && own.banner && (
+        <FormBanner tone="error" title={own.banner.title}>
+          {own.banner.body}
+        </FormBanner>
+      )}
+    </ConfirmDialog>
   );
 }
 

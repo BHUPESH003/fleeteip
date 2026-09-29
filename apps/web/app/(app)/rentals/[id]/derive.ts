@@ -2,16 +2,16 @@
  * Rental detail — every derived value on the page, as pure functions over
  * records already loaded (backend tier B). Mirrors machines/[id]/derive.ts,
  * scoped to one rental. Facts respected (docs/redesign-plan.md §1): overdue
- * and balanceDue only come from invoice detail (an issued invoice past its
- * due date also counts as overdue), maintenance has no rentalId, one
- * transport record per leg, a work order isn't cascaded from the rental.
+ * and balanceDue come on the invoice list rows (InvoiceListItem), maintenance
+ * has no rentalId, one transport record per leg, a work order isn't cascaded
+ * from the rental.
  */
-import { InvoiceStatus, type Invoice, type InvoiceDetail } from "@fleetip/contracts/billing";
+import { InvoiceStatus, type InvoiceListItem } from "@fleetip/contracts/billing";
 import type { Product } from "@fleetip/contracts/catalogue";
 import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Logsheet } from "@fleetip/contracts/logsheet";
 import { MaintenanceStatus, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
-import { ActualDatesVerificationStatus, RentalStatus, type Rental } from "@fleetip/contracts/rental";
+import { ActualDatesVerificationStatus, RentalStatus, type Rental, type RentalEvent } from "@fleetip/contracts/rental";
 import { TransportLeg, TransportStatus, type TransportRecord } from "@fleetip/contracts/transport";
 import { WorkOrderStatus, type WorkOrder } from "@fleetip/contracts/work-order";
 import type { AttentionSeverity, ChainStep, DescriptionItem, KeyFigure } from "@fleetip/ui";
@@ -68,10 +68,10 @@ export interface RentalData {
   machineRentals: Rental[];
   /** This rental's transport records — at most one per leg. */
   transport: TransportRecord[];
-  /** This rental's invoices, newest period first. */
-  invoices: Invoice[];
-  /** Detail (balanceDue, lazily-flipped overdue) for issued/overdue invoices. */
-  invoiceDetails: Map<string, InvoiceDetail>;
+  /** This rental's invoices, newest period first, with balanceDue/overdue. */
+  invoices: InvoiceListItem[];
+  /** The rental's activity log, newest first. */
+  events: RentalEvent[];
   logsheets: Logsheet[];
   workOrder: WorkOrder | null;
   /** Workshop jobs on the rental's machine (not linked to the rental — there's no rentalId). */
@@ -191,14 +191,14 @@ export interface Receivables {
   invoicedCount: number;
   drafts: number;
   outstanding: number;
-  overdue: Array<{ invoice: Invoice; detail: InvoiceDetail | null; daysOverdue: number; balance: number }>;
+  overdue: Array<{ invoice: InvoiceListItem; daysOverdue: number; balance: number }>;
   issuedCount: number;
   lastBilledTo: string | null;
 }
 
-export function invoiceStatus(data: RentalData, invoice: Invoice): Invoice["status"] {
-  const status = data.invoiceDetails.get(invoice.id)?.invoice.status ?? invoice.status;
-  return status === InvoiceStatus.issued && invoice.dueDate < data.today ? InvoiceStatus.overdue : status;
+/** The list row's `overdue` counts before the lazy issued → overdue flip has run. */
+export function invoiceStatus(invoice: InvoiceListItem): InvoiceListItem["status"] {
+  return invoice.overdue ? InvoiceStatus.overdue : invoice.status;
 }
 
 export function receivables(data: RentalData): Receivables {
@@ -210,7 +210,7 @@ export function receivables(data: RentalData): Receivables {
   const overdue: Receivables["overdue"] = [];
   let lastBilledTo: string | null = null;
   for (const invoice of data.invoices) {
-    const status = invoiceStatus(data, invoice);
+    const status = invoiceStatus(invoice);
     if (status === InvoiceStatus.cancelled) continue;
     if (!lastBilledTo || invoice.billingPeriodEnd > lastBilledTo) lastBilledTo = invoice.billingPeriodEnd;
     if (status === InvoiceStatus.draft) {
@@ -220,11 +220,10 @@ export function receivables(data: RentalData): Receivables {
     invoiced += invoice.totalAmount;
     invoicedCount++;
     if (status !== InvoiceStatus.issued && status !== InvoiceStatus.overdue) continue;
-    const detail = data.invoiceDetails.get(invoice.id) ?? null;
-    const balance = detail ? detail.balanceDue : invoice.totalAmount;
+    const balance = invoice.balanceDue;
     if (balance <= 0) continue;
     outstanding += balance;
-    if (status === InvoiceStatus.overdue) overdue.push({ invoice, detail, daysOverdue: daysBetween(invoice.dueDate, data.today), balance });
+    if (status === InvoiceStatus.overdue) overdue.push({ invoice, daysOverdue: daysBetween(invoice.dueDate, data.today), balance });
     else issuedCount++;
   }
   overdue.sort((a, b) => b.daysOverdue - a.daysOverdue);
@@ -269,8 +268,8 @@ export function attentionRows(data: RentalData, coverage: Coverage | null): Atte
 
   // Overdue money first — the costliest thing to miss. Both sides see it.
   if (access.billing) {
-    for (const { invoice, detail, daysOverdue, balance } of money.overdue) {
-      const received = detail?.amountPaid ?? 0;
+    for (const { invoice, daysOverdue, balance } of money.overdue) {
+      const received = invoice.totalAmount - balance;
       rows.push({
         key: `overdue:${invoice.id}`,
         severity: "error",
@@ -554,7 +553,7 @@ export function chainSteps(data: RentalData, coverage: Coverage | null): ChainSt
   const wo = data.workOrder;
   const { mob, demob } = legsOf(data);
   const money = access.billing ? receivables(data) : null;
-  const invoices = data.invoices.filter((i) => invoiceStatus(data, i) !== InvoiceStatus.cancelled);
+  const invoices = data.invoices.filter((i) => invoiceStatus(i) !== InvoiceStatus.cancelled);
   const overdue = money?.overdue.length ?? 0;
   const ended = rental.status === RentalStatus.completed || rental.status === RentalStatus.cancelled;
   const inWorkshop = rental.status === RentalStatus.active && data.machine?.status === MachineStatus.under_maintenance;
@@ -725,5 +724,5 @@ export function termItems(rental: Rental): DescriptionItem[] {
   ];
 }
 
-export const TERMS_LOCKED = "Terms lock when a rental starts. Dates can't be changed on any rental yet.";
-export const TERMS_OPEN = "Terms can be edited until the rental starts. Dates can't be changed here.";
+export const TERMS_LOCKED = "Terms lock when a rental starts. Dates change through Change dates in the More menu.";
+export const TERMS_OPEN = "Terms can be edited until the rental starts. Dates change through Change dates in the More menu.";

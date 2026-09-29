@@ -17,6 +17,7 @@ import {
   EmptyState,
   ErrorState,
   FieldMessage,
+  FilterChip,
   Icon,
   IconButton,
   Input,
@@ -46,7 +47,7 @@ import {
   type SortDirection,
 } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { ForbiddenPage } from "../../../components/PageStates";
 import { apiClient } from "../../../lib/api-client";
 import { categoryIcon } from "../../../lib/category-icon";
@@ -71,7 +72,7 @@ import { optional, useLoad } from "../../../lib/use-load";
 import { CreateRentalDialog } from "../rentals/CreateRentalDialog";
 import { IDLE_DAYS, LANE_DAYS, LANE_LEGEND, gapLabelFor, idleSince, laneBlocksFor, laneMonths, type IdleInfo } from "./lane";
 import { RegisterMachineDialog } from "./RegisterMachineDialog";
-import { capacityLabel, catalogueFor, conflictingMaintenance, currentRentalFor, deploymentFor, productName } from "./shared";
+import { capacityLabel, catalogueFor, currentRentalFor, deploymentFor, productName } from "./shared";
 
 // ------------------------------------------------------------------ data
 
@@ -229,20 +230,6 @@ function compareRows(a: Row, b: Row, key: SortKey): number {
   return byAsset;
 }
 
-/** Runs `fn` over `items` with at most `limit` requests in flight. */
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index] as T);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 // ------------------------------------------------------------------ page
 
 export default function MachinesPage() {
@@ -350,15 +337,14 @@ function MachinesList({
   );
   const candidateKey = candidateIds.join(",");
 
-  // "Free between" queries checkRentalAvailability per candidate machine — a
+  // "Free between" asks checkMachinesAvailability for every candidate at once — a
   // genuinely different endpoint than the client-side "Right now" filter,
   // which is why it gets its own blue-tinted pill rather than folding into
   // that select (design system controls: "the availability range gets its
   // own blue because it queries a different endpoint"). Only machines that
   // match the other filters are checked, and answers are kept per date range
   // (until the page reloads) so changing another filter only checks what's
-  // new. The endpoint counts rentals only (plan §1), so workshop jobs over
-  // the window are checked here in the browser.
+  // new. The server counts both committing rentals and open workshop jobs.
   const [availability, setAvailability] = useState<{
     key: string;
     data: FleetData;
@@ -381,15 +367,12 @@ function MachinesList({
       return;
     }
     setAvailability({ key: rangeKey, data, free: known, running: true, error: null });
-    mapPool(missing, 6, async (id): Promise<[string, boolean]> => {
-      const result = await apiClient.checkRentalAvailability(organizationId, id, checkFrom, checkTo || undefined);
-      const jobs = data.maintenance.filter((j) => j.machineId === id);
-      return [id, Boolean(result?.available) && !conflictingMaintenance(jobs, checkFrom, checkTo || null)];
-    })
-      .then((answers) => {
+    apiClient
+      .checkMachinesAvailability(organizationId, { machineIds: missing, startDate: checkFrom, endDate: checkTo || undefined })
+      .then((response) => {
         if (run !== checkRun.current) return;
         const free = new Map(known);
-        for (const [id, isFree] of answers) free.set(id, isFree);
+        for (const result of response?.results ?? []) free.set(result.machineId, result.available);
         setAvailability({ key: rangeKey, data, free, running: false, error: null });
       })
       .catch((err: unknown) => {
@@ -1397,24 +1380,6 @@ function FreeBetween({
         </FieldMessage>
       ) : null}
     </div>
-  );
-}
-
-function FilterChip({ label, onRemove }: { label: ReactNode; onRemove: () => void }) {
-  return (
-    <span className="inline-flex h-7 items-center gap-1 rounded-cell border border-accent-wash-border bg-accent-wash pl-2.5 pr-0.5 text-xs font-medium text-ink-strong">
-      {label}
-      <IconButton
-        icon="close"
-        label={`Remove filter: ${typeof label === "string" ? label : "this filter"}`}
-        variant="ghost"
-        size="sm"
-        iconSize={12}
-        noTooltip
-        className="!h-6 !w-6"
-        onClick={onRemove}
-      />
-    </span>
   );
 }
 

@@ -37,7 +37,6 @@ import {
   Tr,
   UILink,
   cx,
-  useToast,
   type AttentionListItem,
   type KeyFigure,
   type MenuItem,
@@ -48,7 +47,7 @@ import { PageLoadError } from "../../../components/PageStates";
 import { ApiError, apiClient } from "../../../lib/api-client";
 import { useConnection } from "../../../lib/connection";
 import { downloadCsv } from "../../../lib/csv";
-import { describeError, OFFLINE_HINT } from "../../../lib/errors";
+import { OFFLINE_HINT } from "../../../lib/errors";
 import { useAction } from "../../../lib/form";
 import { formatDateTime, formatMoney, formatRelativeTime, plural } from "../../../lib/format";
 import { useListBackHref } from "../../../lib/list-state";
@@ -181,7 +180,6 @@ function RenterAuctionScreen({
   reload: () => void;
   paused: boolean;
 }) {
-  const toast = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -197,6 +195,7 @@ function RenterAuctionScreen({
   const rejectTarget = useSticky(rejecting);
   const [choice, setChoice] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const reviewAction = useAction();
 
   const detail = live.detail;
   const auction = detail?.auction ?? null;
@@ -219,29 +218,23 @@ function RenterAuctionScreen({
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }, [createParam]);
 
-  // Kept by hand: a row action whose failure is a toast, with `reviewing` tracking which row is busy. useAction only reports a banner.
-  async function review(participant: AuctionParticipant, status: typeof ParticipantStatus.approved | typeof ParticipantStatus.rejected) {
+  // Row button: failures are a toast. One action for the table (rows run one at a time); `reviewing` is the busy row.
+  // Rejecting goes through its own confirm dialog below.
+  function approve(participant: AuctionParticipant) {
     if (!auction) return;
+    const name = participant.rentalCompanyOrganizationName;
     setReviewing(participant.id);
-    try {
-      await apiClient.reviewParticipant(organizationId, auction.id, participant.id, status);
-      toast.success(
-        status === ParticipantStatus.approved
-          ? {
-              title: `${participant.rentalCompanyOrganizationName} approved to bid`,
-              body: `They're notified and can bid in ${auctionRef(auction.id)} ${auction.status === AuctionStatus.live ? "now" : "once it opens"}.`,
-            }
-          : {
-              title: `${participant.rentalCompanyOrganizationName} not approved`,
-              body: "They can't bid in this auction. They aren't notified.",
-            },
-      );
-      reload();
-    } catch (err) {
-      toast.error({ title: `Couldn't update ${participant.rentalCompanyOrganizationName}`, body: describeError(err).body });
-    } finally {
-      setReviewing(null);
-    }
+    void reviewAction
+      .run(() => apiClient.reviewParticipant(organizationId, auction.id, participant.id, ParticipantStatus.approved), {
+        failTitle: `Couldn't update ${name}`,
+        report: "toast",
+        success: () => ({
+          title: `${name} approved to bid`,
+          body: `They're notified and can bid in ${auctionRef(auction.id)} ${auction.status === AuctionStatus.live ? "now" : "once it opens"}.`,
+        }),
+        onDone: reload,
+      })
+      .finally(() => setReviewing(null));
   }
 
   // ------------------------------------------------------------------ no auction on this requirement
@@ -637,7 +630,7 @@ function RenterAuctionScreen({
                                     <Button
                                       size="sm"
                                       variant="secondary"
-                                      onClick={() => void review(p, ParticipantStatus.approved)}
+                                      onClick={() => approve(p)}
                                       busy={reviewing === p.id}
                                       busyLabel="Saving…"
                                       disabled={offline || (reviewing !== null && reviewing !== p.id)}
@@ -653,7 +646,7 @@ function RenterAuctionScreen({
                                   <Button
                                     size="sm"
                                     variant="secondary"
-                                    onClick={() => void review(p, ParticipantStatus.approved)}
+                                    onClick={() => approve(p)}
                                     busy={reviewing === p.id}
                                     busyLabel="Saving…"
                                     disabled={offline || (reviewing !== null && reviewing !== p.id)}
@@ -923,8 +916,7 @@ function AuctionConfirm({
 
   useEffect(() => {
     if (open) clear();
-    // `clear` isn't memoised in lib/form.ts, so it can't be a dep (it would wipe the banner on every render).
-  }, [open]);
+  }, [open, clear]);
 
   async function confirm() {
     await action.run(run, {

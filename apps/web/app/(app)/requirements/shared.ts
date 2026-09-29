@@ -110,13 +110,14 @@ export interface SubcategoryEntry {
  * Every subcategory with its category — the catalogue has no flat list
  * endpoint, so this is one call per category (open reads, no permission).
  * A failed call leaves that category's subcategories out rather than
- * failing the page.
+ * failing the page. Includes disabled ones (name lookups); the post
+ * requirement picker passes includeDisabled=false.
  */
-export async function loadSubcategoryIndex(): Promise<Map<string, SubcategoryEntry>> {
-  const categories = await optional(true, () => apiClient.listProductCategories() as Promise<ProductCategory[]>, [] as ProductCategory[]);
+export async function loadSubcategoryIndex(includeDisabled = true): Promise<Map<string, SubcategoryEntry>> {
+  const categories = await optional(true, () => apiClient.listProductCategories(includeDisabled) as Promise<ProductCategory[]>, [] as ProductCategory[]);
   const lists = await Promise.all(
     categories.map((category) =>
-      optional(true, () => apiClient.listProductSubcategories(category.id) as Promise<ProductSubcategory[]>, [] as ProductSubcategory[]),
+      optional(true, () => apiClient.listProductSubcategories(category.id, includeDisabled) as Promise<ProductSubcategory[]>, [] as ProductSubcategory[]),
     ),
   );
   const byCategory = new Map(categories.map((c) => [c.id, c]));
@@ -131,7 +132,8 @@ export async function loadSubcategoryIndex(): Promise<Map<string, SubcategoryEnt
  * Some requirement 400s come back without a field path (the service checks
  * merged values, not the request shape). When the server text names the
  * field, re-tag the error so useForm shows it under that field instead of
- * in the banner. Matches on message text on purpose.
+ * in the banner. Matches on message text on purpose: the rfq service (not
+ * owned here) gives no path; drop this once it throws with issue paths.
  */
 export function underField(pattern: RegExp, path: string) {
   return (error: unknown): never => {

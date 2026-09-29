@@ -2,15 +2,22 @@
  * Display formats (design tokens: "Money: ₹ + en-IN grouping (₹24,08,316).
  * Dates: 29 Sep 2026; short 29 Sep."). Calendar dates (YYYY-MM-DD) are
  * parsed and formatted in UTC so a date never shifts by a day with the
- * browser's timezone; "today" is the UTC date, matching the API's own
- * validation (packages/contracts/src/shared/dates.ts).
+ * browser's timezone; "today" is the business day in Asia/Kolkata, matching
+ * the API's own validation (packages/contracts/src/shared/dates.ts).
  */
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "Today" as YYYY-MM-DD — same UTC basis the server validates against. */
+const BUSINESS_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Kolkata",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** "Today" as YYYY-MM-DD in the business time zone (Asia/Kolkata), whatever the browser's zone — same basis the server uses (risk register §2.5). */
 export function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  return BUSINESS_DAY.format(new Date());
 }
 
 function isDateOnly(value: string): boolean {

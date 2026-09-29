@@ -32,11 +32,12 @@ import {
   useToast,
 } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { apiClient } from "../../../lib/api-client";
-import { useConnection } from "../../../lib/connection";
+import { useEffect, useMemo, useState } from "react";
+import { z } from "zod";
+import { ApiError, apiClient } from "../../../lib/api-client";
 import { describeError, OFFLINE_HINT, parseValidationIssues } from "../../../lib/errors";
 import { addDuration, formatDate, formatRateUnit, plural, todayIsoDate } from "../../../lib/format";
+import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
 import { statusLabel } from "../../../lib/status";
 import { optional } from "../../../lib/use-load";
@@ -150,12 +151,136 @@ const PATH_TO_FIELD: Record<string, Key> = {
   ...Object.fromEntries(FIELD_ORDER.filter((k) => !k.startsWith("client") && k !== "machines").map((k) => [k, k])),
 };
 
-type Values = Record<Exclude<Key, "machines">, string>;
+type TextValues = Record<Exclude<Key, "machines">, string>;
+/** `machines` is the selected machine ids; every other field is the raw input string. */
+type Values = TextValues & { machines: string[] };
 
-function blank(): Values {
-  const out = {} as Values;
+function blank(machineIds: string[]): Values {
+  const out = { machines: machineIds } as Values;
   for (const key of FIELD_ORDER) if (key !== "machines") out[key] = "";
   return out;
+}
+
+/** Re-key 400 issue paths from the request shape to form fields ("clientSnapshot.name" → clientName). */
+function toFormPaths(error: unknown): unknown {
+  if (!(error instanceof ApiError) || !error.issues.length) return error;
+  const issues = error.issues.map((issue) => ({ ...issue, path: issue.path ? (PATH_TO_FIELD[issue.path] ?? issue.path) : issue.path }));
+  return new ApiError(error.message, error.status, error.code, issues, error.field);
+}
+const FORM_FIELDS = new Set<string>(Object.values(PATH_TO_FIELD));
+
+const passedStartMessage = (date: string) =>
+  `The requirement's start date (${formatDate(date)}) has passed, so it can't be quoted as it stands. Ask the customer to move it.`;
+
+interface QuotationContext {
+  customerMode: "external" | "renter";
+  /** The requirement's renter when quoting against one; otherwise the picker value is used. */
+  lockedRenterId: string | null;
+  lockedStartDate: string | null;
+  lockedEndDate: string | null;
+  lockedRateUnit: RateUnit | null;
+  today: string;
+  /** Only Active machines can be quoted. */
+  activeIds: Set<string>;
+  requirementId: string | null;
+  responseId: string | null;
+  sourceAuctionId: string | null;
+}
+
+/**
+ * Mirrors createCommercialQuotationRequestSchema, plus what the form knows
+ * (locked requirement dates/unit, Active machines). Issues are added in
+ * FIELD_ORDER so a failed submit focuses the first one on screen.
+ * Output: the machines to quote and the shared terms for each call.
+ */
+function quotationSchema(ctx: QuotationContext) {
+  return z
+    .custom<Values>(() => true)
+    .superRefine((values, issues) => {
+      const errors: Partial<Record<Key, string>> = {};
+      const startDate = ctx.lockedStartDate ?? values.startDate;
+      const endDate = ctx.lockedEndDate ?? values.endDate;
+      const renterId = ctx.lockedRenterId ?? values.renterOrganizationId;
+      if (!values.machines.some((id) => ctx.activeIds.has(id))) errors.machines = "Choose at least one Active machine to quote.";
+      if (ctx.customerMode === "renter" && !renterId) errors.renterOrganizationId = "Choose the FleetIP customer this is for.";
+      if (ctx.customerMode === "external") {
+        if (!values.clientName.trim()) errors.clientName = "Enter the customer's name as it should appear on the quotation.";
+        if (values.clientEmail.trim() && !/^\S+@\S+\.\S+$/.test(values.clientEmail.trim())) errors.clientEmail = "Enter a valid email address, or leave it empty.";
+      }
+      for (const [key, max] of Object.entries(MAX_LENGTH) as [TextKey, number][]) {
+        if (values[key].trim().length > max) errors[key] = `This is up to ${max.toLocaleString("en-IN")} characters.`;
+      }
+      if (ctx.lockedStartDate && ctx.lockedStartDate < ctx.today) errors.startDate = passedStartMessage(ctx.lockedStartDate);
+      else if (!startDate) errors.startDate = "Pick the day the rental would start.";
+      else if (startDate < ctx.today) errors.startDate = `The start date can't be in the past. The earliest is today, ${formatDate(ctx.today)}.`;
+      if (endDate && startDate && endDate < startDate) errors.endDate = "The end date can't be before the start date.";
+      if (!values.rate.trim()) errors.rate = "Enter the rate you're quoting.";
+      else if (!(Number(values.rate) > 0)) errors.rate = "Enter a rate above ₹0.";
+      if (!(ctx.lockedRateUnit ?? values.rateUnit)) errors.rateUnit = "Choose what the rate is per.";
+      if (!values.validityDate) errors.validityDate = "Pick the last day the customer can accept.";
+      else if (values.validityDate < ctx.today) errors.validityDate = `The validity date can't be in the past. The earliest is today, ${formatDate(ctx.today)}.`;
+      else if (startDate && values.validityDate > startDate) errors.validityDate = "Validity date can't be after the start date.";
+      for (const key of ["mobilizationCharge", "demobilizationCharge", "overtimeRate"] as const) {
+        if (values[key].trim() && !(Number(values[key]) >= 0)) errors[key] = "Enter 0 or more, or leave it empty.";
+      }
+      if (values.workingHours.trim() && !(Number(values.workingHours) > 0)) errors.workingHours = "Enter hours per shift above 0, e.g. 10.";
+      if (values.workingDaysPerWeek.trim()) {
+        const d = Number(values.workingDaysPerWeek);
+        if (!Number.isInteger(d) || d < 1 || d > 7) errors.workingDaysPerWeek = "Enter whole days from 1 to 7.";
+      }
+      if (values.minimumRentalPeriodValue.trim()) {
+        const p = Number(values.minimumRentalPeriodValue);
+        if (!Number.isInteger(p) || p < 1) errors.minimumRentalPeriodValue = "Enter a whole number above 0, e.g. 1.";
+      }
+      if (values.noticePeriodDays.trim() && !(Number.isInteger(Number(values.noticePeriodDays)) && Number(values.noticePeriodDays) >= 0))
+        errors.noticePeriodDays = "Enter whole days, e.g. 15.";
+      for (const key of FIELD_ORDER) {
+        const message = errors[key];
+        if (message) issues.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
+      }
+    })
+    .transform((values): { machineIds: string[]; terms: Omit<CreateCommercialQuotationRequest, "machineId"> } => ({
+      machineIds: values.machines.filter((id) => ctx.activeIds.has(id)),
+      terms: {
+        requirementId: ctx.requirementId ?? undefined,
+        quotationResponseId: ctx.responseId ?? undefined,
+        sourceAuctionId: ctx.sourceAuctionId ?? undefined,
+        ...(ctx.customerMode === "renter"
+          ? { renterOrganizationId: ctx.lockedRenterId ?? values.renterOrganizationId }
+          : {
+              clientSnapshot: {
+                name: values.clientName.trim(),
+                contactPerson: text(values.clientContactPerson),
+                phone: text(values.clientPhone),
+                email: text(values.clientEmail),
+              },
+            }),
+        startDate: ctx.lockedStartDate ?? values.startDate,
+        endDate: (ctx.lockedEndDate ?? values.endDate) || undefined,
+        rate: Number(values.rate),
+        rateUnit: (ctx.lockedRateUnit ?? values.rateUnit) as RateUnit,
+        validityDate: values.validityDate,
+        mobilizationCharge: num(values.mobilizationCharge),
+        demobilizationCharge: num(values.demobilizationCharge),
+        overtimeRate: num(values.overtimeRate),
+        fuelScope: (values.fuelScope || undefined) as ResponsibleParty | undefined,
+        accommodationScope: (values.accommodationScope || undefined) as ResponsibleParty | undefined,
+        operatorScope: (values.operatorScope || undefined) as OperatorScope | undefined,
+        workingHours: num(values.workingHours),
+        workingDaysPerWeek: num(values.workingDaysPerWeek),
+        minimumRentalPeriodValue: num(values.minimumRentalPeriodValue),
+        minimumRentalPeriodUnit: (values.minimumRentalPeriodUnit || undefined) as RateUnit | undefined,
+        noticePeriodDays: num(values.noticePeriodDays),
+        gstTerms: text(values.gstTerms),
+        paymentTerms: text(values.paymentTerms),
+        shiftStructure: text(values.shiftStructure),
+        sundayCondition: text(values.sundayCondition),
+        fuelNorms: text(values.fuelNorms),
+        dehireTerms: text(values.dehireTerms),
+        commercialNotes: text(values.commercialNotes),
+        companyTerms: text(values.companyTerms),
+      },
+    }));
 }
 
 interface MachineResult {
@@ -166,6 +291,7 @@ interface MachineResult {
   reason?: string;
 }
 
+const wholeAbove0 = (raw: string) => Number.isInteger(Number(raw)) && Number(raw) >= 1;
 const text = (raw: string) => (raw.trim() ? raw.trim() : undefined);
 const num = (raw: string) => (raw.trim() === "" ? undefined : Number(raw));
 
@@ -189,7 +315,6 @@ export function CreateQuotationDialog({
   const { hasPermission } = useSession();
   const toast = useToast();
   const router = useRouter();
-  const { online } = useConnection();
   const canListMachines = hasPermission("equipment.manage");
   const isFromRequirement = Boolean(requirementId);
 
@@ -214,30 +339,55 @@ export function CreateQuotationDialog({
   const [contextError, setContextError] = useState<string | null>(null);
 
   const [mode, setMode] = useState<"external" | "renter">("external");
-  const [values, setValues] = useState<Values>(blank);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [machineFilter, setMachineFilter] = useState("");
-  const [touched, setTouched] = useState<Partial<Record<Key, boolean>>>({});
-  const [tried, setTried] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [serverErrors, setServerErrors] = useState<Partial<Record<Key, string>>>({});
-  const [formError, setFormError] = useState<{ title: string; body: string } | null>(null);
   const [results, setResults] = useState<MachineResult[] | null>(null);
 
   const initialKey = initialMachineIds.join(",");
 
+  // Locked to the requirement's own unit and dates when it has them —
+  // CommercialQuotationService.createQuotation enforces this server-side
+  // regardless; this avoids showing pickers whose choice would be overridden.
+  const lockedRateUnit = requirement?.expectedDurationUnit ?? null;
+  const lockedStartDate = requirement?.requestedStartDate ?? null;
+  const lockedEndDate =
+    lockedStartDate && requirement?.expectedDurationValue && requirement.expectedDurationUnit
+      ? addDuration(lockedStartDate, requirement.expectedDurationValue, requirement.expectedDurationUnit)
+      : null;
+  const customerMode: "external" | "renter" = isFromRequirement ? "renter" : mode;
+  const today = todayIsoDate();
+
+  const machineList = useMemo(() => machines ?? [], [machines]);
+  // Only Active machines can be quoted (retired ones are refused by the API; under-maintenance ones aren't offered).
+  const activeMachines = useMemo(() => machineList.filter((m) => m.status === MachineStatus.active), [machineList]);
+  const activeIds = useMemo(() => new Set(activeMachines.map((m) => m.id)), [activeMachines]);
+
+  const lockedRenterId = isFromRequirement ? (requirement?.renterOrganizationId ?? "") : null;
+  const schema = useMemo(
+    () =>
+      quotationSchema({
+        customerMode,
+        lockedRenterId,
+        lockedStartDate,
+        lockedEndDate,
+        lockedRateUnit,
+        today,
+        activeIds,
+        requirementId,
+        responseId,
+        sourceAuctionId,
+      }),
+    [customerMode, lockedRenterId, lockedStartDate, lockedEndDate, lockedRateUnit, today, activeIds, requirementId, responseId, sourceAuctionId],
+  );
+  const form = useForm({ schema, initial: blank(initialMachineIds), failTitle: "No quotation was created" });
+  const { values, busy, online, reset } = form;
+
   // Reset and load the pickers every time the dialog opens.
   useEffect(() => {
     if (!open) return;
-    setValues(blank());
-    setSelected(new Set(initialMachineIds));
+    reset(blank(initialMachineIds));
     setMachineFilter("");
     setMode("external");
-    setTouched({});
-    setTried(false);
-    setServerErrors({});
-    setFormError(null);
     setResults(null);
     setProgress(null);
     let cancelled = false;
@@ -330,6 +480,7 @@ export function CreateQuotationDialog({
 
   // Prefill from the requirement: validity, a starting point for the site
   // conditions (Requirement has no numeric working-hours field to map).
+  // Runs after the open reset (the requirement loads after it), so `values` is current.
   useEffect(() => {
     if (!requirement) return;
     const shiftSummary = [
@@ -339,38 +490,18 @@ export function CreateQuotationDialog({
     ]
       .filter(Boolean)
       .join(" · ");
-    setValues((current) => ({
-      ...current,
-      validityDate: current.validityDate || requirement.validityDate,
-      commercialNotes: current.commercialNotes || shiftSummary,
-    }));
+    if (!values.validityDate) form.set("validityDate", requirement.validityDate);
+    if (!values.commercialNotes) form.set("commercialNotes", shiftSummary);
   }, [requirement]);
 
   const prefilledRate = responseRate ?? auctionBidRate;
   useEffect(() => {
-    if (prefilledRate == null) return;
-    setValues((current) => (current.rate ? current : { ...current, rate: String(prefilledRate) }));
+    if (prefilledRate != null && !values.rate) form.set("rate", String(prefilledRate));
   }, [prefilledRate]);
 
-  // Locked to the requirement's own unit and dates when it has them —
-  // CommercialQuotationService.createQuotation enforces this server-side
-  // regardless; this avoids showing pickers whose choice would be overridden.
-  const lockedRateUnit = requirement?.expectedDurationUnit ?? null;
-  const lockedStartDate = requirement?.requestedStartDate ?? null;
-  const lockedEndDate =
-    lockedStartDate && requirement?.expectedDurationValue && requirement.expectedDurationUnit
-      ? addDuration(lockedStartDate, requirement.expectedDurationValue, requirement.expectedDurationUnit)
-      : null;
-  const customerMode: "external" | "renter" = isFromRequirement ? "renter" : mode;
-  const renterId = isFromRequirement ? (requirement?.renterOrganizationId ?? "") : values.renterOrganizationId;
   const startDate = lockedStartDate ?? values.startDate;
-  const endDate = lockedEndDate ?? values.endDate;
-  const rateUnit = lockedRateUnit ?? values.rateUnit;
-  const today = todayIsoDate();
-
-  const machineList = useMemo(() => machines ?? [], [machines]);
-  // Only Active machines can be quoted (retired ones are refused by the API; under-maintenance ones aren't offered).
-  const activeMachines = useMemo(() => machineList.filter((m) => m.status === MachineStatus.active), [machineList]);
+  const renterId = lockedRenterId ?? values.renterOrganizationId;
+  const selected = new Set(values.machines);
   const unquotable = machineList.filter((m) => selected.has(m.id) && m.status !== MachineStatus.active);
   const missing = machines === null ? [] : initialMachineIds.filter((id) => !machineList.some((m) => m.id === id));
   const selectedActive = activeMachines.filter((m) => selected.has(m.id));
@@ -382,137 +513,34 @@ export function CreateQuotationDialog({
       .sort((a, b) => Number(matchesRequirement(b)) - Number(matchesRequirement(a)) || a.assetCode.localeCompare(b.assetCode));
   }, [activeMachines, machineFilter, products, requirement]);
 
-  // ------------------------------------------------------------------ validation (createCommercialQuotationRequestSchema)
-  const errors: Partial<Record<Key, string>> = {};
-  const warnings: Partial<Record<Key, string>> = {};
-  if (selectedActive.length === 0) errors.machines = "Choose at least one Active machine to quote.";
-  if (customerMode === "renter" && !renterId) errors.renterOrganizationId = "Choose the FleetIP customer this is for.";
-  if (customerMode === "external") {
-    if (!values.clientName.trim()) errors.clientName = "Enter the customer's name as it should appear on the quotation.";
-    if (values.clientEmail.trim() && !/^\S+@\S+\.\S+$/.test(values.clientEmail.trim())) errors.clientEmail = "Enter a valid email address, or leave it empty.";
-  }
-  for (const [key, max] of Object.entries(MAX_LENGTH) as [TextKey, number][]) {
-    if (values[key].trim().length > max) errors[key] = `This is up to ${max.toLocaleString("en-IN")} characters.`;
-  }
-  if (lockedStartDate && lockedStartDate < today)
-    errors.startDate = `The requirement's start date (${formatDate(lockedStartDate)}) has passed, so it can't be quoted as it stands. Ask the customer to move it.`;
-  else if (!startDate) errors.startDate = "Pick the day the rental would start.";
-  else if (startDate < today) errors.startDate = `The start date can't be in the past. The earliest is today, ${formatDate(today)}.`;
-  if (endDate && startDate && endDate < startDate) errors.endDate = "The end date can't be before the start date.";
-  if (!values.rate.trim()) errors.rate = "Enter the rate you're quoting.";
-  else if (!(Number(values.rate) > 0)) errors.rate = "Enter a rate above ₹0.";
-  if (!rateUnit) errors.rateUnit = "Choose what the rate is per.";
-  if (!values.validityDate) errors.validityDate = "Pick the last day the customer can accept.";
-  else if (values.validityDate < today) errors.validityDate = `The validity date can't be in the past. The earliest is today, ${formatDate(today)}.`;
-  else if (startDate && values.validityDate > startDate) errors.validityDate = "Validity date can't be after the start date.";
-  for (const key of ["mobilizationCharge", "demobilizationCharge", "overtimeRate"] as const) {
-    if (values[key].trim() && !(Number(values[key]) >= 0)) errors[key] = "Enter 0 or more, or leave it empty.";
-  }
-  if (values.workingHours.trim() && !(Number(values.workingHours) > 0)) errors.workingHours = "Enter hours per shift above 0, e.g. 10.";
-  if (values.workingDaysPerWeek.trim()) {
-    const d = Number(values.workingDaysPerWeek);
-    if (!Number.isInteger(d) || d < 1 || d > 7) errors.workingDaysPerWeek = "Enter whole days from 1 to 7.";
-  }
-  if (values.minimumRentalPeriodValue.trim()) {
-    const p = Number(values.minimumRentalPeriodValue);
-    if (!Number.isInteger(p) || p < 1) errors.minimumRentalPeriodValue = "Enter a whole number above 0, e.g. 1.";
-    else if (!values.minimumRentalPeriodUnit) warnings.minimumRentalPeriodUnit = "Choose days, weeks, months or shifts, or the minimum period can't be read.";
-  }
-  if (values.noticePeriodDays.trim() && !(Number.isInteger(Number(values.noticePeriodDays)) && Number(values.noticePeriodDays) >= 0))
-    errors.noticePeriodDays = "Enter whole days, e.g. 15.";
-
-  function fieldError(key: Key) {
-    return ((tried || touched[key]) && errors[key]) || serverErrors[key] || undefined;
-  }
+  // Warnings never block; they show when errors would.
+  const periodUnitWarning =
+    wholeAbove0(values.minimumRentalPeriodValue) && !values.minimumRentalPeriodUnit
+      ? "Choose days, weeks, months or shifts, or the minimum period can't be read."
+      : undefined;
 
   function bind(key: Exclude<Key, "machines">) {
-    return {
-      value: values[key],
-      onChange: (event: { target: { value: string } }) => {
-        setValues((current) => ({ ...current, [key]: event.target.value }));
-        if (serverErrors[key]) setServerErrors((current) => ({ ...current, [key]: undefined }));
-      },
-      onBlur: () => setTouched((current) => ({ ...current, [key]: true })),
-      error: fieldError(key),
-      warning: tried || touched[key] ? warnings[key] : undefined,
-    };
+    return { ...form.field(key), warning: key === "minimumRentalPeriodUnit" && form.shown(key) ? periodUnitWarning : undefined };
   }
 
   function toggleMachine(id: string, checked: boolean) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-    setTouched((t) => ({ ...t, machines: true }));
-  }
-
-  function buildInput(machineId: string): CreateCommercialQuotationRequest {
-    return {
-      requirementId: requirementId ?? undefined,
-      quotationResponseId: responseId ?? undefined,
-      sourceAuctionId: sourceAuctionId ?? undefined,
-      ...(customerMode === "renter"
-        ? { renterOrganizationId: renterId }
-        : {
-            clientSnapshot: {
-              name: values.clientName.trim(),
-              contactPerson: text(values.clientContactPerson),
-              phone: text(values.clientPhone),
-              email: text(values.clientEmail),
-            },
-          }),
-      machineId,
-      startDate,
-      endDate: endDate || undefined,
-      rate: Number(values.rate),
-      rateUnit: rateUnit as RateUnit,
-      validityDate: values.validityDate,
-      mobilizationCharge: num(values.mobilizationCharge),
-      demobilizationCharge: num(values.demobilizationCharge),
-      overtimeRate: num(values.overtimeRate),
-      fuelScope: (values.fuelScope || undefined) as ResponsibleParty | undefined,
-      accommodationScope: (values.accommodationScope || undefined) as ResponsibleParty | undefined,
-      operatorScope: (values.operatorScope || undefined) as OperatorScope | undefined,
-      workingHours: num(values.workingHours),
-      workingDaysPerWeek: num(values.workingDaysPerWeek),
-      minimumRentalPeriodValue: num(values.minimumRentalPeriodValue),
-      minimumRentalPeriodUnit: (values.minimumRentalPeriodUnit || undefined) as RateUnit | undefined,
-      noticePeriodDays: num(values.noticePeriodDays),
-      gstTerms: text(values.gstTerms),
-      paymentTerms: text(values.paymentTerms),
-      shiftStructure: text(values.shiftStructure),
-      sundayCondition: text(values.sundayCondition),
-      fuelNorms: text(values.fuelNorms),
-      dehireTerms: text(values.dehireTerms),
-      commercialNotes: text(values.commercialNotes),
-      companyTerms: text(values.companyTerms),
-    };
+    form.set("machines", checked ? [...values.machines, id] : values.machines.filter((m) => m !== id));
+    form.field("machines").onBlur();
   }
 
   const customerName =
     customerMode === "renter" ? (renters?.find((r) => r.id === renterId)?.name ?? "the customer") : values.clientName.trim() || "the customer";
 
-  // Not on useForm on purpose: one create call per machine, and the result
-  // must say which machines were quoted and which weren't (partial success).
-  // useForm can only report one failure for the whole save.
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setTried(true);
-    setFormError(null);
-    const firstInvalid = FIELD_ORDER.find((key) => errors[key]);
-    if (firstInvalid) {
-      document
-        .querySelector<HTMLElement>(`[data-field="${firstInvalid}"] input:not([disabled]), [data-field="${firstInvalid}"] select, [data-field="${firstInvalid}"] textarea`)
-        ?.focus();
-      return;
-    }
-    setBusy(true);
-    const targets = selectedActive;
+  // One create call per machine (the data model has no multi-machine
+  // quotation), so the save reports per machine: form.fail() puts a
+  // shared-terms problem under its fields, and the results list says which
+  // machines were quoted and which weren't.
+  const handleSubmit = form.submit(async ({ machineIds, terms }) => {
+    const targets = activeMachines.filter((m) => machineIds.includes(m.id));
     const out: MachineResult[] = [];
     let stopReason: string | null = null;
     let fieldProblem = false;
+    let lastError: unknown = null;
     setProgress({ done: 0, total: targets.length });
     for (const machine of targets) {
       if (stopReason) {
@@ -520,60 +548,55 @@ export function CreateQuotationDialog({
         continue;
       }
       try {
-        const quotation = (await apiClient.createQuotation(organizationId, buildInput(machine.id))) as CommercialQuotation;
+        const quotation = (await apiClient.createQuotation(organizationId, { ...terms, machineId: machine.id })) as CommercialQuotation;
         out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "created", quotation });
       } catch (err) {
-        const { fieldErrors, formError: unpathed } = parseValidationIssues(err);
-        const mapped: Partial<Record<Key, string>> = {};
-        for (const [path, message] of Object.entries(fieldErrors)) {
-          const field = PATH_TO_FIELD[path];
-          if (field) mapped[field] = message;
-        }
-        if (Object.keys(mapped).length) {
+        const error = toFormPaths(err);
+        lastError = error;
+        const { fieldErrors, formError: unpathed } = parseValidationIssues(error);
+        const onFields = Object.entries(fieldErrors).filter(([path]) => FORM_FIELDS.has(path));
+        if (onFields.length) {
           // A problem with the shared terms, not this machine — every
           // remaining machine would fail the same way, so stop here.
-          setServerErrors(mapped);
+          form.fail(error);
           fieldProblem = true;
           stopReason = "Not tried — the terms need fixing first.";
-          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: Object.values(mapped).join(" ") });
-        } else if (describeError(err).network) {
+          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: onFields.map(([, message]) => message).join(" ") });
+        } else if (describeError(error).network) {
           stopReason = "Not tried — the connection dropped.";
-          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: describeError(err).body });
+          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: describeError(error).body });
         } else {
-          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: unpathed ?? describeError(err, "Not created").body });
+          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: unpathed ?? describeError(error, "Not created").body });
         }
       }
       setProgress({ done: out.length, total: targets.length });
     }
-    setBusy(false);
     setProgress(null);
 
     const created = out.filter((r) => r.outcome === "created");
     if (created.length > 0) onCreated();
     // Created machines leave the selection, so going back and trying again never duplicates them.
-    setSelected(new Set(out.filter((r) => r.outcome !== "created").map((r) => r.machineId)));
+    form.set("machines", out.filter((r) => r.outcome !== "created").map((r) => r.machineId));
 
     const single = out.length === 1 ? out[0] : undefined;
+    if (single?.outcome === "created" && single.quotation) {
+      const quotation = single.quotation;
+      toast.success({
+        title: `Quotation ${quotation.referenceNumber} created`,
+        body: `Saved as a draft for ${customerName} on ${single.assetCode}. Send it from its page when it's ready.`,
+        action: { label: "Open", onClick: () => router.push(`/quotations/${quotation.id}`) },
+      });
+      onClose();
+      return;
+    }
+    // One machine, one failure: keep the form (input kept) and say why — on
+    // the fields when the API named them (done above), otherwise in the banner.
     if (single) {
-      if (single.outcome === "created" && single.quotation) {
-        const quotation = single.quotation;
-        toast.success({
-          title: `Quotation ${quotation.referenceNumber} created`,
-          body: `Saved as a draft for ${customerName} on ${single.assetCode}. Send it from its page when it's ready.`,
-          action: { label: "Open", onClick: () => router.push(`/quotations/${quotation.id}`) },
-        });
-        onClose();
-        return;
-      }
-      // One machine, one failure: keep the form (input kept) and say why —
-      // on the fields when the API named them, otherwise in a banner.
-      if (!fieldProblem) setFormError({ title: `No quotation was created for ${single.assetCode}`, body: single.reason ?? "" });
+      if (!fieldProblem) form.fail(lastError);
       return;
     }
-    if (created.length === 0 && fieldProblem) {
-      setFormError({ title: "No quotations were created", body: "The terms need a fix before any machine can be quoted. See the highlighted fields." });
-      return;
-    }
+    // Nothing created because the shared terms need a fix: the fields say so.
+    if (created.length === 0 && fieldProblem) return;
     if (created.length > 0) {
       toast.success({
         title: `${plural(created.length, "quotation")} created`,
@@ -581,7 +604,7 @@ export function CreateQuotationDialog({
       });
     }
     setResults(out);
-  }
+  });
 
   // ------------------------------------------------------------------ render
   const loading = machines === null || loadingContext || loadingAuctionPrefill;
@@ -636,9 +659,9 @@ export function CreateQuotationDialog({
         <ResultsList results={results} />
       ) : (
         <>
-          {formError && (
-            <FormBanner tone="error" title={formError.title}>
-              {formError.body}
+          {form.banner && (
+            <FormBanner tone="error" title={form.banner.title}>
+              {form.banner.body}
             </FormBanner>
           )}
           {contextError && (
@@ -702,6 +725,8 @@ export function CreateQuotationDialog({
                   <Input
                     size="sm"
                     type="search"
+                    // name: the focus target when no machine is chosen on submit.
+                    name="machines"
                     aria-label="Filter machines"
                     placeholder="Filter by asset code, registration or model"
                     prefix={<Icon name="search" size={13} />}
@@ -714,7 +739,7 @@ export function CreateQuotationDialog({
                     aria-describedby="quote-machines-msg"
                     className={cx(
                       "flex max-h-[220px] flex-col overflow-y-auto rounded-control border bg-surface",
-                      fieldError("machines") ? "border-[1.5px] border-danger-edge" : "border-border-control",
+                      form.errors.machines ? "border-[1.5px] border-danger-edge" : "border-border-control",
                     )}
                   >
                     {visibleMachines.length === 0 ? (
@@ -738,8 +763,8 @@ export function CreateQuotationDialog({
                       ))
                     )}
                   </div>
-                  <span id="quote-machines-msg" className={cx("text-[11px] leading-[1.4]", fieldError("machines") ? "text-destructive" : "text-meta-light")}>
-                    {fieldError("machines") ?? `${plural(selectedActive.length, "machine")} selected. Only Active machines are listed.`}
+                  <span id="quote-machines-msg" className={cx("text-[11px] leading-[1.4]", form.errors.machines ? "text-destructive" : "text-meta-light")}>
+                    {form.errors.machines ?? `${plural(selectedActive.length, "machine")} selected. Only Active machines are listed.`}
                   </span>
                   {unquotable.length > 0 && (
                     <FormBanner tone="warning" title={`${plural(unquotable.length, "preselected machine")} can't be quoted`}>
@@ -797,15 +822,16 @@ export function CreateQuotationDialog({
                       <div data-field="renterOrganizationId">
                         <SearchSelect
                           label="FleetIP customer"
+                          name="renterOrganizationId"
                           required
                           options={(renters ?? []).map((r) => ({ value: r.id, label: r.name, description: r.code }))}
                           loading={renters === null}
                           value={values.renterOrganizationId}
-                          onChange={(value) => setValues((v) => ({ ...v, renterOrganizationId: value }))}
-                          onBlur={() => setTouched((t) => ({ ...t, renterOrganizationId: true }))}
+                          onChange={(value) => form.set("renterOrganizationId", value)}
+                          onBlur={form.field("renterOrganizationId").onBlur}
                           placeholder="Search renter organizations"
                           emptyText={rentersFailed ? "Customers didn't load." : "No renter organization matches."}
-                          error={fieldError("renterOrganizationId")}
+                          error={form.errors.renterOrganizationId}
                           hint={rentersFailed ? "FleetIP customers didn't load. Close the form and open it again to retry." : undefined}
                         />
                       </div>
@@ -825,7 +851,8 @@ export function CreateQuotationDialog({
                         readOnly
                         disabled
                         suffix={<Icon name="lock" size={12} />}
-                        error={fieldError("startDate") ?? (lockedStartDate < today ? errors.startDate : undefined)}
+                        // A passed requirement start shows straight away: nothing on this form can fix it.
+                        error={form.errors.startDate ?? (lockedStartDate < today ? passedStartMessage(lockedStartDate) : undefined)}
                         hint="The requirement's start date. Propose other dates after sending, if needed."
                       />
                     ) : (

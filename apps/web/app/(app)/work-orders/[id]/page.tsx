@@ -44,7 +44,7 @@ import { useSession } from "../../../../lib/session-context";
 import { Status, statusLabel } from "../../../../lib/status";
 import { optional, useLoad } from "../../../../lib/use-load";
 import { productName } from "../../machines/shared";
-import { TEXT_LINK } from "../../maintenance/list-kit";
+import { TEXT_LINK } from "../../../../components/list-kit";
 import { RESPONSIBLE_WORD, accommodationScopeText, fuelScopeText, periodText, workOrderMismatch } from "../shared";
 
 interface WorkOrderData {

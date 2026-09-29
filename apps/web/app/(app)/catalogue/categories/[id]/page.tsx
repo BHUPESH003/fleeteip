@@ -34,13 +34,22 @@ import { useSession } from "../../../../../lib/session-context";
 import { optional, useLoad } from "../../../../../lib/use-load";
 import { CategoryFormDialog, ProductFormDialog, SubcategoryFormDialog } from "../../AdminDialogs";
 import { OFFLINE_HINT } from "../../../../../lib/errors";
-import { CatalogueDetailSkeleton, RecordInfoLine, RowActions, disabledRemoveItem } from "../../parts";
+import {
+  CatalogueDetailSkeleton,
+  DisabledBadge,
+  RecordInfoLine,
+  RowActions,
+  TaxonomyToggleDialog,
+  taxonomyToggleItem,
+  type TaxonomyTarget,
+} from "../../parts";
 import { loadCatalogue, machineCountsByProduct, productsInSubcategory, tenantCatalogueWriter } from "../../shared";
 
 type DialogState =
   | { kind: "rename" }
   | { kind: "subcategory"; subcategory?: ProductSubcategory }
-  | { kind: "product"; fixedSubcategoryId: string };
+  | { kind: "product"; fixedSubcategoryId: string }
+  | { kind: "toggle"; target: TaxonomyTarget };
 
 export default function CategoryDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -107,7 +116,9 @@ export default function CategoryDetailPage() {
           disabled: offline,
           onSelect: () => setDialog({ kind: "rename" }),
         },
-        disabledRemoveItem("Disable category"),
+        taxonomyToggleItem({ kind: "category", item: category }, offline, () =>
+          setDialog({ kind: "toggle", target: { kind: "category", item: category } }),
+        ),
       ]
     : [];
 
@@ -130,7 +141,9 @@ export default function CategoryDetailPage() {
         disabled: offline,
         onSelect: () => setDialog({ kind: "product", fixedSubcategoryId: subcategory.id }),
       },
-      disabledRemoveItem("Disable subcategory"),
+      taxonomyToggleItem({ kind: "subcategory", item: subcategory }, offline, () =>
+        setDialog({ kind: "toggle", target: { kind: "subcategory", item: subcategory } }),
+      ),
     ];
   }
 
@@ -152,6 +165,7 @@ export default function CategoryDetailPage() {
         }
         title={category.name}
         description="Category in the shared catalogue"
+        meta={<DisabledBadge item={category} catalogue={data} />}
         actions={
           addSubcategory || menuItems.length > 0 ? (
             <>
@@ -206,17 +220,20 @@ export default function CategoryDetailPage() {
                     return (
                       <Tr key={subcategory.id} interactive>
                         <Td>
-                          <CellStack
-                            title={
-                              <UILink
-                                href={`/catalogue/subcategories/${subcategory.id}`}
-                                title={subcategory.name}
-                                className="text-ink-strong no-underline hover:underline"
-                              >
-                                {subcategory.name}
-                              </UILink>
-                            }
-                          />
+                          <span className="flex items-center gap-2">
+                            <CellStack
+                              title={
+                                <UILink
+                                  href={`/catalogue/subcategories/${subcategory.id}`}
+                                  title={subcategory.name}
+                                  className="text-ink-strong no-underline hover:underline"
+                                >
+                                  {subcategory.name}
+                                </UILink>
+                              }
+                            />
+                            <DisabledBadge item={subcategory} catalogue={data} />
+                          </span>
                         </Td>
                         <Td className="font-mono text-xs font-medium">{subcategory.code}</Td>
                         <Td align="right" className="font-mono">
@@ -286,6 +303,19 @@ export default function CategoryDetailPage() {
             openHref={(productId) => `/catalogue/products/${productId}`}
           />
         </>
+      )}
+      {organizationId && dialog?.kind === "toggle" && (
+        <TaxonomyToggleDialog
+          target={dialog.target}
+          catalogue={data}
+          setDisabled={(disabled) =>
+            dialog.target.kind === "category"
+              ? apiClient.setProductCategoryDisabled(organizationId, dialog.target.item.id, disabled)
+              : apiClient.setProductSubcategoryDisabled(organizationId, dialog.target.item.id, disabled)
+          }
+          onClose={() => setDialog(null)}
+          onChanged={() => void reload()}
+        />
       )}
     </div>
   );

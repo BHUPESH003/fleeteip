@@ -15,7 +15,7 @@ import {
 import { Status } from "../../../../lib/status";
 import { chainSteps, customerName, customerNote, type Coverage, type MachineData } from "./derive";
 
-const LOCKED_REASON = "Terms lock when a rental starts. Dates can't be changed on any rental yet.";
+const LOCKED_REASON = "Terms lock when a rental starts. Dates change through Change dates on the rental.";
 const OPEN_REASON = "Terms can be edited until the rental starts. Dates can't be changed here.";
 
 export function CurrentRentalCard({

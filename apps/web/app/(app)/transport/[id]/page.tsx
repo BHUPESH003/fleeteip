@@ -15,7 +15,6 @@ import {
   Panel,
   Skeleton,
   UILink,
-  useToast,
   type AttentionListItem,
   type Breadcrumb,
   type MenuItem,
@@ -26,6 +25,7 @@ import { ForbiddenPage, PageLoadError } from "../../../../components/PageStates"
 import { ApiError, apiClient } from "../../../../lib/api-client";
 import { useConnection } from "../../../../lib/connection";
 import { OFFLINE_HINT } from "../../../../lib/errors";
+import { useAction } from "../../../../lib/form";
 import {
   daysBetween,
   formatDate,
@@ -40,14 +40,13 @@ import { useListBackHref } from "../../../../lib/list-state";
 import { useSession } from "../../../../lib/session-context";
 import { Status } from "../../../../lib/status";
 import { optional, useLoad } from "../../../../lib/use-load";
-import { DetailColumns, TEXT_LINK } from "../../maintenance/list-kit";
+import { DetailColumns, TEXT_LINK } from "../../../../components/list-kit";
 import {
   CancelTransportDialog,
   DeliverTransportDialog,
   LEG_LABEL,
   LEG_PURPOSE,
   TransportPlanDialog,
-  dispatchLeg,
 } from "../TransportDialogs";
 
 interface TripData {
@@ -193,11 +192,10 @@ function TripView({
   canOpenRental: boolean;
   canOpenMachine: boolean;
 }) {
-  const toast = useToast();
   const { online } = useConnection();
   const backHref = useListBackHref("transport", "/transport");
   const [dialog, setDialog] = useState<"edit" | "deliver" | "cancel" | "plan-other" | null>(null);
-  const [dispatching, setDispatching] = useState(false);
+  const dispatchAction = useAction();
 
   const { record, rental, rentalId, today } = data;
   const ref = rentalRef(rentalId);
@@ -211,16 +209,18 @@ function TripView({
   const late = record.plannedDate && record.actualDate ? daysBetween(record.plannedDate, record.actualDate) : null;
   const writeHint = online ? null : OFFLINE_HINT;
 
-  async function dispatch() {
-    setDispatching(true);
-    const ok = await dispatchLeg(organizationId, record, toast);
-    setDispatching(false);
-    if (ok) void reload();
-  }
+  // Mark dispatched — no confirmation, like TransportPanel. A header button, so failures are a toast.
+  const dispatch = () =>
+    dispatchAction.run(() => apiClient.updateTransport(organizationId, record.rentalId, record.leg, { status: TransportStatus.dispatched }), {
+      failTitle: `${legLabel} wasn't updated`,
+      report: "toast",
+      success: () => ({ title: `${legLabel} dispatched`, body: `${ref} · status changed from Planned.` }),
+      onDone: () => void reload(),
+    });
 
   const primary =
     canManage && record.status === TransportStatus.planned ? (
-      <Button icon="transport" onClick={() => void dispatch()} busy={dispatching} busyLabel="Saving…" disabled={!online} title={writeHint ?? undefined}>
+      <Button icon="transport" onClick={() => void dispatch()} busy={dispatchAction.busy} busyLabel="Saving…" disabled={!online} title={writeHint ?? undefined}>
         Mark dispatched
       </Button>
     ) : canManage && record.status === TransportStatus.dispatched ? (
@@ -351,9 +351,9 @@ function TripView({
                   <DescriptionList
                     layout="grid"
                     items={[
-                      { label: "From", value: record.pickupLocation, emptyText: "Pickup not recorded" },
-                      { label: "To", value: record.destination, emptyText: "Destination not recorded" },
-                      { label: "Planned date", value: record.plannedDate ? formatDate(record.plannedDate) : null, mono: true, emptyText: "No date planned" },
+                      { label: "From", value: record.pickupLocation },
+                      { label: "To", value: record.destination },
+                      { label: "Planned date", value: record.plannedDate ? formatDate(record.plannedDate) : null, mono: true },
                       {
                         label: "Actual date",
                         value: record.actualDate
@@ -403,9 +403,9 @@ function TripView({
                           layout="grid"
                           minColumnWidth={160}
                           items={[
-                            { label: "From", value: other.pickupLocation, emptyText: "Not recorded" },
-                            { label: "To", value: other.destination, emptyText: "Not recorded" },
-                            { label: "Planned", value: other.plannedDate ? formatDate(other.plannedDate) : null, mono: true, emptyText: "No date" },
+                            { label: "From", value: other.pickupLocation },
+                            { label: "To", value: other.destination },
+                            { label: "Planned", value: other.plannedDate ? formatDate(other.plannedDate) : null, mono: true },
                             { label: "Actual", value: other.actualDate ? formatDate(other.actualDate) : null, mono: true, emptyText: "Not delivered yet" },
                           ]}
                         />

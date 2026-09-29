@@ -24,7 +24,7 @@ import {
 } from "@fleetip/ui";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { ApiError, apiClient } from "../../../lib/api-client";
+import { apiClient } from "../../../lib/api-client";
 import { OFFLINE_HINT, describeError, errorStatus } from "../../../lib/errors";
 import { useForm } from "../../../lib/form";
 import {
@@ -38,7 +38,7 @@ import {
   todayIsoDate,
 } from "../../../lib/format";
 import { Status } from "../../../lib/status";
-import { SectionLabel, TEXT_LINK } from "../maintenance/list-kit";
+import { SectionLabel, TEXT_LINK } from "../../../components/list-kit";
 import { daysOverdue, effectiveStatus, isUnpaid } from "./shared";
 
 export interface InvoiceContext {
@@ -462,10 +462,14 @@ function PaymentForm({
     schema: paymentSchema,
     initial: { amount: balance > 0 ? String(balance) : "", paidDate: today, method: "", reference: "", notes: "" } satisfies PaymentValues,
     failTitle: "The payment wasn't recorded",
+    // The API's only 409 here is "not Issued/Overdue any more".
+    statusCopy: {
+      409: {
+        title: `${invoice.invoiceNumber} can't take payments now`,
+        body: "Payments can only be recorded while an invoice is Issued or Overdue. Reload to see its current status.",
+      },
+    },
   });
-  // The API's only 409 here is "not Issued/Overdue any more", and it has its own
-  // title naming the invoice, which `conflicts` (per-field only) can't express.
-  const [notPayable, setNotPayable] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -488,14 +492,7 @@ function PaymentForm({
   if (values.paidDate && values.paidDate > today) warnings.paidDate = "That date hasn't happened yet. Check it — it's saved as entered.";
 
   const submit = form.submit(async (input) => {
-    setNotPayable(false);
-    let updated: Invoice;
-    try {
-      updated = (await apiClient.recordPayment(organizationId, invoice.id, input)) as Invoice;
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) return setNotPayable(true);
-      throw err;
-    }
+    const updated = (await apiClient.recordPayment(organizationId, invoice.id, input)) as Invoice;
     const left = balance - input.amount;
     toast.success({
       title: `Payment recorded on ${invoice.invoiceNumber}`,
@@ -514,11 +511,6 @@ function PaymentForm({
       className="flex flex-col gap-3 rounded-panel border border-border-strong bg-surface-sunk px-3.5 py-3"
     >
       <span className="text-sm font-semibold text-ink">Record a payment</span>
-      {notPayable && (
-        <FormBanner tone="error" title={`${invoice.invoiceNumber} can't take payments now`}>
-          Payments can only be recorded while an invoice is Issued or Overdue. Reload to see its current status.
-        </FormBanner>
-      )}
       {form.banner && (
         <FormBanner tone="error" title={form.banner.title}>
           {form.banner.body}

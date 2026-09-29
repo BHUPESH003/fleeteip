@@ -13,9 +13,10 @@ import { InviteDialog, MembersTab, ROLES_NEED_ORGANIZATION } from "./MembersTab"
 import { OrganizationTab } from "./OrganizationTab";
 import { ORGANIZATION_TYPE_LABEL } from "./permissions";
 import { RoleDialog, RolesTab } from "./RolesTab";
+import { SecurityTab } from "./SecurityTab";
 
-type SettingsTab = "organization" | "members" | "roles";
-const TAB_KEYS: SettingsTab[] = ["organization", "members", "roles"];
+type SettingsTab = "organization" | "members" | "roles" | "security";
+const TAB_KEYS: SettingsTab[] = ["organization", "members", "roles", "security"];
 // The old Preferences tab only showed your own account, which now lives on
 // the Organization tab — keep its deep link working.
 const LEGACY_TABS: Record<string, SettingsTab> = { preferences: "organization" };
@@ -121,6 +122,7 @@ export default function SettingsPage() {
     { key: "organization", label: "Organization" },
     { key: "members", label: "Members", count: canManageMembers ? members.data?.length : undefined },
     { key: "roles", label: "Roles and permissions", count: canManageOrganization ? roles.data?.length : undefined },
+    { key: "security", label: "Security" },
   ];
 
   /** Any change that may alter the signed-in member's own access re-reads the session. */
@@ -180,6 +182,7 @@ export default function SettingsPage() {
               onDeleted={() => void roles.reload()}
             />
           )}
+          {tab === "security" && <SecurityTab online={online} />}
         </TabPanel>
       </PageBody>
 

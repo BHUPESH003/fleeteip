@@ -11,7 +11,6 @@ import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
 import { AUTH_LINK, AuthCard } from "../AuthShell";
 import { PasswordInput, emailField, newPasswordField } from "../fields";
-import { useStatusCopy } from "../../../components/status-copy";
 import { nextQuery, safeNextPath } from "../next-param";
 
 // Mirrors packages/contracts/src/identity (signupRequestSchema): password 10–200, names 1–200.
@@ -53,13 +52,13 @@ export default function SignupPage() {
   const toast = useToast();
   const next = safeNextPath(useSearchParams().get("next"));
   const form = useForm({
+    statusCopy: STATUS_COPY,
     schema,
     initial: { displayName: "", email: "", password: "", organizationName: "", organizationTypeCode: "" },
     failTitle: "Your account wasn't created",
     conflicts: { email: EMAIL_TAKEN },
   });
-  const status = useStatusCopy(STATUS_COPY);
-  const problem = status.banner ?? form.banner;
+  const problem = form.banner;
   const password = form.values.password;
 
   const passwordHint =
@@ -70,7 +69,7 @@ export default function SignupPage() {
         : "Long enough.";
 
   const save = form.submit(async (body) => {
-    await status.guard(() => apiClient.signup(body));
+    await apiClient.signup(body);
     toast.success({
       title: `${body.organizationName} is set up`,
       body: "You're its owner. Invite your team from Organization & team.",
@@ -79,7 +78,6 @@ export default function SignupPage() {
     await refresh();
   });
   const handleSubmit = (event: FormEvent) => {
-    status.clear();
     void save(event);
   };
 

@@ -36,9 +36,8 @@ import {
 } from "@fleetip/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
-import { useStatusCopy } from "../../../components/status-copy";
 import { apiClient } from "../../../lib/api-client";
-import { OFFLINE_HINT, describeError } from "../../../lib/errors";
+import { OFFLINE_HINT, describeError, errorStatus } from "../../../lib/errors";
 import { useAction, useForm } from "../../../lib/form";
 import { formatDate, formatDateTime, formatNumber, plural } from "../../../lib/format";
 import { Status } from "../../../lib/status";
@@ -299,22 +298,21 @@ function PendingInvitesPanel({
   invites: LoadState<OrganizationInvite[]>;
   online: boolean;
 }) {
-  const toast = useToast();
   const [revoking, setRevoking] = useState<OrganizationInvite | null>(null);
   const action = useAction();
-  // The revoke endpoint's only conflict (no field): someone used or revoked it first — re-read so the row reflects that.
-  const status = useStatusCopy(
-    { 409: { title: "This invite isn't pending any more", body: "It was accepted or revoked in the meantime." } },
-    () => void invites.reload(),
-  );
-  const problem = status.banner ?? action.banner;
+  const problem = action.banner;
   // Accepted/revoked invites are history, not actions — only pending ones show.
   const pending = (invites.data ?? []).filter((invite) => invite.status === InviteStatus.pending);
 
   const confirmRevoke = async () => {
     if (!revoking) return;
-    await action.run(() => status.guard(() => apiClient.revokeInvite(organizationId, revoking.id)), {
+    await action.run(() => apiClient.revokeInvite(organizationId, revoking.id), {
       failTitle: "The invite wasn't revoked",
+      // The revoke endpoint's only conflict (no field): someone used or revoked it first — re-read so the row reflects that.
+      statusCopy: { 409: { title: "This invite isn't pending any more", body: "It was accepted or revoked in the meantime." } },
+      onFailed: (error) => {
+        if (errorStatus(error) === 409) void invites.reload();
+      },
       success: () => ({ title: "Invite revoked", body: `The ${revoking.roleName} link no longer works.` }),
       onDone: (revoked) => {
         invites.setData(
@@ -363,7 +361,6 @@ function PendingInvitesPanel({
                     size="sm"
                     onClick={() => {
                       action.clear();
-                      status.clear();
                       setRevoking(invite);
                     }}
                     disabled={!online}
@@ -470,7 +467,6 @@ function ChangeRoleDialog({
   onClose: () => void;
   onChanged: (member: OrganizationMember) => void;
 }) {
-  const toast = useToast();
   const [roleId, setRoleId] = useState("");
   const action = useAction();
   const { clear } = action;
@@ -487,19 +483,19 @@ function ChangeRoleDialog({
   const who = isSelf ? "You" : member.displayName;
   const selfLosesAdmin =
     isSelf && diff !== null && (diff.lost.includes("membership.manage") || diff.lost.includes("organization.manage"));
-  // updateMemberRole's only conflict (no field): it won't leave the organization without an active owner.
-  const status = useStatusCopy({
-    409: {
-      title: `${isSelf ? "You're" : `${member.displayName} is`} the last owner`,
-      body: "An organization always needs at least one active owner. Make someone else an owner first, then change this role.",
-    },
-  });
-  const problem = status.banner ?? action.banner;
+  const problem = action.banner;
 
   const confirm = async () => {
     if (!next) return;
-    await action.run(() => status.guard(() => apiClient.updateMemberRole(organizationId, member.id, next.id)), {
+    await action.run(() => apiClient.updateMemberRole(organizationId, member.id, next.id), {
       failTitle: "The role wasn't changed",
+      // updateMemberRole's only conflict (no field): it won't leave the organization without an active owner.
+      statusCopy: {
+        409: {
+          title: `${isSelf ? "You're" : `${member.displayName} is`} the last owner`,
+          body: "An organization always needs at least one active owner. Make someone else an owner first, then change this role.",
+        },
+      },
       success: () => ({
         title: isSelf ? `You're now ${next.roleName}` : `${member.displayName} is now ${next.roleName}`,
         body: `Was ${current?.roleName ?? member.roleName}. The new access applies straight away.`,
@@ -543,7 +539,6 @@ function ChangeRoleDialog({
         onChange={(event) => {
           setRoleId(event.target.value);
           action.clear();
-          status.clear();
         }}
         options={roles
           .filter((role) => role.id !== member.roleId)

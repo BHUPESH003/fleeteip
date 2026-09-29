@@ -16,9 +16,9 @@ import {
   useToast,
 } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { z } from "zod";
-import { ApiError, apiClient } from "../../../../lib/api-client";
+import { apiClient } from "../../../../lib/api-client";
 import { useAction, useForm } from "../../../../lib/form";
 import { daysBetween, formatDate, formatDateRange, formatMoney, plural, rentalRef, todayIsoDate } from "../../../../lib/format";
 import { statusLabel } from "../../../../lib/status";
@@ -101,12 +101,6 @@ export function StartRentalDialog({ open, onClose, organizationId, data, onChang
   const ref = rentalRef(rental.id);
   const schema = useMemo(() => actualDateSchema(today, "Enter the day the machine started work on site."), [today]);
   const form = useActualDateForm(open, schema, `${ref} wasn't started`);
-  // A 409 about maintenance gets its own copy; it's recognised by the server's message text.
-  const [workshopRefusal, setWorkshopRefusal] = useState(false);
-
-  useEffect(() => {
-    if (open) setWorkshopRefusal(false);
-  }, [open]);
 
   const date = form.values.actualDate;
   const customer = counterpartyName(data);
@@ -123,13 +117,8 @@ export function StartRentalDialog({ open, onClose, organizationId, data, onChang
 
   const confirm = form.submit(async ({ actualDate }) => {
     if (job || retired) return;
-    setWorkshopRefusal(false);
-    try {
-      await apiClient.updateRentalStatus(organizationId, rental.id, RentalStatus.active, actualDate);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && /maintenance/i.test(err.message)) return setWorkshopRefusal(true);
-      throw err;
-    }
+    // A workshop-job 409 names the job in its message; the hook's banner shows it.
+    await apiClient.updateRentalStatus(organizationId, rental.id, RentalStatus.active, actualDate);
     toast.success({
       title: `${ref} started`,
       body: `Actual start ${formatDate(actualDate)}. Status changed from Confirmed to Active.${verificationApplies(rental) ? ` ${customer} is asked to verify the date.` : ""}`,
@@ -160,11 +149,6 @@ export function StartRentalDialog({ open, onClose, organizationId, data, onChang
       confirmDisabled={Boolean(job) || retired}
     >
       <ErrorBanner banner={form.banner} />
-      {workshopRefusal && (
-        <FormBanner tone="error" title={`${ref} wasn't started`}>
-          A workshop job is booked on this machine over the rental&apos;s dates. Complete or cancel the job first, then start the rental.
-        </FormBanner>
-      )}
       {retired && (
         <FormBanner tone="error" title="The machine is retired">
           A retired machine can&apos;t go on rent, so this rental can&apos;t start. Cancel it instead.
@@ -298,7 +282,6 @@ export function OffRentDialog({ open, onClose, organizationId, data, onChanged }
 
 /** off_rent → completed. The work order isn't completed with it — offered as a separate step. */
 export function CompleteRentalDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
-  const toast = useToast();
   const router = useRouter();
   const { rental, workOrder } = data;
   const action = useDialogAction(open);
@@ -371,7 +354,6 @@ export function CompleteRentalDialog({ open, onClose, organizationId, data, onCh
 
 /** Any open status → cancelled. Frees the dates; nothing else is cancelled with it, and the customer isn't notified. */
 export function CancelRentalDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
-  const toast = useToast();
   const router = useRouter();
   const { rental, workOrder } = data;
   const action = useDialogAction(open);
@@ -441,7 +423,6 @@ function recordedDates(rental: Rental) {
 
 /** Renter (rental.respond): confirm the dates the rental company recorded. */
 export function VerifyDatesDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
-  const toast = useToast();
   const { rental } = data;
   const action = useDialogAction(open);
 
@@ -555,6 +536,206 @@ export function DisputeDatesDialog({ open, onClose, organizationId, data, onChan
         {...form.field("reason")}
         hint={`Up to ${REASON_MAX} characters. ${trimmed.length ? `${trimmed.length} so far.` : ""}`}
       />
+    </Dialog>
+  );
+}
+
+// ------------------------------------------------------------------ Rental Company: change planned dates
+
+type DateValues = { startDate: string; endDate: string; reason: string };
+
+/**
+ * proposeRentalDateChangeRequestSchema, in the words users read. Confirmed:
+ * start and end. Active: the end only (the start already happened).
+ */
+function changeDatesSchema(rental: Rental, today: string) {
+  const active = rental.status === RentalStatus.active;
+  const started = rental.actualStartDate ?? rental.startDate;
+  return z
+    .object({
+      startDate: z.string(),
+      endDate: z.string(),
+      reason: z.string().trim().max(REASON_MAX, `Reasons are up to ${REASON_MAX} characters.`),
+    })
+    .superRefine((v, ctx) => {
+      if (!active && !v.startDate) ctx.addIssue({ code: "custom", path: ["startDate"], message: "Enter the new start date." });
+      else if (!active && v.startDate < today) ctx.addIssue({ code: "custom", path: ["startDate"], message: "The start date can't be in the past." });
+      const start = active ? rental.startDate : v.startDate;
+      if (v.endDate && start && v.endDate < start)
+        ctx.addIssue({ code: "custom", path: ["endDate"], message: `The end can't be before the start, ${formatDate(start)}.` });
+      else if (active && v.endDate && v.endDate < started)
+        ctx.addIssue({ code: "custom", path: ["endDate"], message: `The end can't be before the rental started, ${formatDate(started)}.` });
+    })
+    .transform((v) => ({
+      ...(active ? {} : { startDate: v.startDate }),
+      endDate: v.endDate || null,
+      ...(v.reason ? { reason: v.reason } : {}),
+    }));
+}
+
+const datesOf = (rental: Rental): DateValues => ({ startDate: rental.startDate, endDate: rental.endDate ?? "", reason: "" });
+
+/**
+ * Rental Company (rental.manage), confirmed or active. With a customer on
+ * FleetIP it's a proposal they accept or reject; otherwise it applies now.
+ */
+export function ChangeDatesDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
+  const toast = useToast();
+  const { rental } = data;
+  const today = todayIsoDate();
+  const ref = rentalRef(rental.id);
+  const customer = counterpartyName(data);
+  const active = rental.status === RentalStatus.active;
+  const proposal = Boolean(rental.renterOrganizationId);
+  const schema = useMemo(() => changeDatesSchema(rental, today), [rental, today]);
+  const form = useForm({ schema, initial: datesOf(rental), failTitle: `The dates on ${ref} weren't changed` });
+  const { reset } = form;
+
+  useEffect(() => {
+    if (open) reset(datesOf(rental));
+  }, [open, rental, reset]);
+
+  const unchanged = form.values.startDate === rental.startDate && form.values.endDate === (rental.endDate ?? "");
+
+  const save = form.submit(async (body) => {
+    const updated = (await apiClient.proposeRentalDateChange(organizationId, rental.id, body)) as Rental;
+    const range = formatDateRange(updated.pendingDateChange?.startDate ?? updated.startDate, updated.pendingDateChange ? updated.pendingDateChange.endDate : updated.endDate);
+    toast.success(
+      updated.pendingDateChange
+        ? { title: `New dates sent to ${customer}`, body: `${ref} · ${range}. The rental keeps its current dates until they accept.` }
+        : { title: `Dates changed on ${ref}`, body: range },
+    );
+    onClose();
+    onChanged();
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`Change the dates on ${ref}`}
+      description={
+        proposal
+          ? `${customer} is notified and asked to accept or reject. Nothing changes until they accept.`
+          : "The customer isn't on FleetIP, so the new dates apply straight away."
+      }
+      icon="calendar_check"
+      size="md"
+      dismissible={!form.busy}
+      onSubmit={save}
+      footer={
+        <>
+          <Button variant="tertiary" onClick={onClose} disabled={form.busy}>
+            Cancel
+          </Button>
+          <Button type="submit" busy={form.busy} busyLabel="Saving…" disabled={unchanged}>
+            {proposal ? "Send to customer" : "Change dates"}
+          </Button>
+        </>
+      }
+    >
+      <ErrorBanner banner={form.banner} />
+      <DescriptionList layout="rows" items={[{ label: "Current dates", value: formatDateRange(rental.startDate, rental.endDate), mono: true }]} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Input
+          label="Start date"
+          type="date"
+          mono
+          required={!active}
+          disabled={active}
+          min={active ? undefined : today}
+          {...form.field("startDate")}
+          hint={active ? "The rental has started, so only the end can move." : undefined}
+        />
+        <Input
+          label="End date"
+          type="date"
+          mono
+          min={active ? (rental.actualStartDate ?? rental.startDate) : form.values.startDate || today}
+          {...form.field("endDate")}
+          hint={active ? "Later to extend, earlier to end early. Empty for open-ended." : "Empty for open-ended."}
+        />
+      </div>
+      <Textarea label="Reason" rows={2} maxLength={REASON_MAX + 100} {...form.field("reason")} hint={proposal ? `Optional. ${customer} sees it.` : "Optional. Kept in the activity log."} />
+    </Dialog>
+  );
+}
+
+// ------------------------------------------------------------------ Rental Company: correct disputed actual dates
+
+function correctSchema(rental: Rental, today: string) {
+  const hasEnd = Boolean(rental.actualEndDate);
+  return z
+    .object({ actualStartDate: z.string(), actualEndDate: z.string() })
+    .superRefine((v, ctx) => {
+      if (!v.actualStartDate) ctx.addIssue({ code: "custom", path: ["actualStartDate"], message: "Enter the day the machine started work." });
+      else if (v.actualStartDate > today)
+        ctx.addIssue({ code: "custom", path: ["actualStartDate"], message: "This records what happened, so it can't be later than today." });
+      if (!hasEnd) return;
+      if (!v.actualEndDate) ctx.addIssue({ code: "custom", path: ["actualEndDate"], message: "Enter the last day the machine worked." });
+      else if (v.actualEndDate > today)
+        ctx.addIssue({ code: "custom", path: ["actualEndDate"], message: "This records what happened, so it can't be later than today." });
+      else if (v.actualStartDate && v.actualEndDate < v.actualStartDate)
+        ctx.addIssue({ code: "custom", path: ["actualEndDate"], message: "The end can't be before the start." });
+    })
+    .transform((v) => ({ actualStartDate: v.actualStartDate, ...(hasEnd ? { actualEndDate: v.actualEndDate } : {}) }));
+}
+
+const actualsOf = (rental: Rental) => ({ actualStartDate: rental.actualStartDate ?? "", actualEndDate: rental.actualEndDate ?? "" });
+
+/** Rental Company (rental.manage): answer a dispute with corrected dates; the customer verifies again. */
+export function CorrectDatesDialog({ open, onClose, organizationId, data, onChanged }: DialogBase) {
+  const toast = useToast();
+  const { rental } = data;
+  const today = todayIsoDate();
+  const ref = rentalRef(rental.id);
+  const customer = counterpartyName(data);
+  const schema = useMemo(() => correctSchema(rental, today), [rental, today]);
+  const form = useForm({ schema, initial: actualsOf(rental), failTitle: `The dates on ${ref} weren't corrected` });
+  const { reset } = form;
+
+  useEffect(() => {
+    if (open) reset(actualsOf(rental));
+  }, [open, rental, reset]);
+
+  const save = form.submit(async (body) => {
+    await apiClient.correctActualDates(organizationId, rental.id, body);
+    toast.success({ title: `Corrected dates sent to ${customer}`, body: `${ref} · they're asked to verify them again.` });
+    onClose();
+    onChanged();
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`Correct the actual dates on ${ref}`}
+      description={`${customer} disputed these dates. Correct them and they're asked to verify again.`}
+      icon="edit"
+      size="md"
+      dismissible={!form.busy}
+      onSubmit={save}
+      footer={
+        <>
+          <Button variant="tertiary" onClick={onClose} disabled={form.busy}>
+            Cancel
+          </Button>
+          <Button type="submit" busy={form.busy} busyLabel="Sending…">
+            Send corrected dates
+          </Button>
+        </>
+      }
+    >
+      <ErrorBanner banner={form.banner} />
+      {rental.actualDatesDisputeReason && (
+        <FormBanner tone="warning" title="Their reason">
+          &ldquo;{rental.actualDatesDisputeReason}&rdquo;
+        </FormBanner>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Input label="Actual start date" type="date" mono required max={today} {...form.field("actualStartDate")} />
+        {rental.actualEndDate && <Input label="Actual end date" type="date" mono required max={today} {...form.field("actualEndDate")} />}
+      </div>
     </Dialog>
   );
 }

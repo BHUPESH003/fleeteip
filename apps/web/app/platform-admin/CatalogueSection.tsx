@@ -2,7 +2,6 @@
 
 import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import {
-  Badge,
   Button,
   CellStack,
   ConfirmDialog,
@@ -35,7 +34,8 @@ import { formatNumber } from "../../lib/format";
 import { useUrlSearch, useUrlState } from "../../lib/url-state";
 import { useLoad } from "../../lib/use-load";
 import { CategoryFormDialog, ProductFormDialog, SubcategoryFormDialog } from "../(app)/catalogue/AdminDialogs";
-import { NO_DISABLE_REASON, formatCapacity, loadCatalogue } from "../(app)/catalogue/shared";
+import { DisabledBadge, TaxonomyToggleDialog, taxonomyToggleItem, type TaxonomyTarget } from "../(app)/catalogue/parts";
+import { formatCapacity, loadCatalogue } from "../(app)/catalogue/shared";
 import { staffCatalogueWriter, useStaffAction } from "./staff-api";
 
 type Level = "categories" | "subcategories" | "products";
@@ -50,8 +50,9 @@ type DialogState =
 /**
  * The shared Product Catalogue, written through the staff endpoints
  * (/admin/catalogue/*) with the same forms tenant admins use. Reads are the
- * public catalogue lists (including disabled products). Products can be
- * disabled/enabled; categories and subcategories can't be disabled yet.
+ * public catalogue lists (including disabled items). Categories,
+ * subcategories and products can be disabled/enabled; disabling a parent
+ * hides everything inside from pickers (soft cascade).
  */
 export function CatalogueSection() {
   const { online } = useConnection();
@@ -65,6 +66,7 @@ export function CatalogueSection() {
   const page = Math.max(1, Math.floor(Number(get("page", "1"))) || 1);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [toggleTarget, setToggleTarget] = useState<Product | null>(null);
+  const [taxonomyTarget, setTaxonomyTarget] = useState<TaxonomyTarget | null>(null);
   const action = useStaffAction();
   const load = useLoad(() => loadCatalogue(), []);
 
@@ -134,8 +136,8 @@ export function CatalogueSection() {
         ? "Create a subcategory first."
         : null);
 
-  function removeItem(label: string): MenuItem {
-    return { key: "disable", label, icon: "retire", disabled: true, hint: NO_DISABLE_REASON, separatorBefore: true };
+  function toggleItem(target: TaxonomyTarget): MenuItem {
+    return taxonomyToggleItem(target, offline, () => setTaxonomyTarget(target));
   }
 
   const body = (() => {
@@ -213,6 +215,7 @@ export function CatalogueSection() {
                     <span className="flex items-center gap-2.5">
                       <Icon name={categoryIcon(category)} size={16} className="text-tile-icon" />
                       <CellStack title={category.name} />
+                      <DisabledBadge item={category} catalogue={load.data!} />
                     </span>
                   </Td>
                   <Td className="font-mono text-xs font-medium">{category.code}</Td>
@@ -233,7 +236,7 @@ export function CatalogueSection() {
                           disabled: Boolean(blocked),
                           onSelect: () => setDialog({ kind: "subcategory", fixedCategoryId: category.id }),
                         },
-                        removeItem("Disable category"),
+                        toggleItem({ kind: "category", item: category }),
                       ]}
                     />
                   </Td>
@@ -262,7 +265,10 @@ export function CatalogueSection() {
             {slice(subcategories).map((subcategory) => (
               <Tr key={subcategory.id}>
                 <Td>
-                  <CellStack title={subcategory.name} />
+                  <span className="flex items-center gap-2">
+                    <CellStack title={subcategory.name} />
+                    <DisabledBadge item={subcategory} catalogue={load.data!} />
+                  </span>
                 </Td>
                 <Td className="font-mono text-xs font-medium">{subcategory.code}</Td>
                 <Td>{load.data?.categoriesById.get(subcategory.productCategoryId)?.name ?? "Not specified"}</Td>
@@ -282,7 +288,7 @@ export function CatalogueSection() {
                         disabled: Boolean(blocked),
                         onSelect: () => setDialog({ kind: "product", fixedSubcategoryId: subcategory.id }),
                       },
-                      removeItem("Disable subcategory"),
+                      toggleItem({ kind: "subcategory", item: subcategory }),
                     ]}
                   />
                 </Td>
@@ -314,11 +320,7 @@ export function CatalogueSection() {
                 <Td>
                   <span className="flex items-center gap-2">
                     <CellStack title={label} />
-                    {product.disabledAt && (
-                      <Badge size="sm" tone="neutral">
-                        Disabled
-                      </Badge>
-                    )}
+                    <DisabledBadge item={product} catalogue={load.data!} />
                   </span>
                 </Td>
                 <Td>
@@ -442,8 +444,9 @@ export function CatalogueSection() {
         )}
       </Panel>
       <p className="m-0 px-1 text-[11px] leading-[1.5] text-meta-light">
-        Codes can&apos;t be changed once created. Nothing is ever removed: a disabled product is hidden when registering
-        machines, while machines already using it keep it. Categories and subcategories can&apos;t be disabled yet.
+        Codes can&apos;t be changed once created. Nothing is ever removed: a disabled item, and everything inside a
+        disabled category or subcategory, is hidden from pickers, while machines, requirements and quotations already
+        using it keep working.
       </p>
 
       {toggleTarget && (
@@ -469,6 +472,21 @@ export function CatalogueSection() {
           busy={action.busy}
           busyLabel={toggleTarget.disabledAt ? "Enabling…" : "Disabling…"}
           confirmDisabled={offline}
+        />
+      )}
+
+      {load.data && taxonomyTarget && (
+        <TaxonomyToggleDialog
+          target={taxonomyTarget}
+          catalogue={load.data}
+          action={action}
+          setDisabled={(disabled) =>
+            taxonomyTarget.kind === "category"
+              ? adminApiClient.setCategoryDisabled(taxonomyTarget.item.id, disabled)
+              : adminApiClient.setSubcategoryDisabled(taxonomyTarget.item.id, disabled)
+          }
+          onClose={() => setTaxonomyTarget(null)}
+          onChanged={() => void load.reload()}
         />
       )}
 

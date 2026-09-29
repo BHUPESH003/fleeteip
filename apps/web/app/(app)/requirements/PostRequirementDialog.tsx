@@ -17,7 +17,7 @@ import {
   useToast,
 } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { apiClient } from "../../../lib/api-client";
 import { categoryIcon } from "../../../lib/category-icon";
@@ -172,22 +172,17 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
   );
   const form = useForm({ schema, initial: blank(""), failTitle: "The requirement wasn't posted" });
   const { values, busy, online, reset } = form;
-  // Warnings (never block) show once a field was left or a submit was tried — same as errors.
-  const [seen, setSeen] = useState<Partial<Record<Key, boolean>>>({});
-  const [tried, setTried] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     reset(blank(initialProjectId ?? ""));
-    setSeen({});
-    setTried(false);
     let cancelled = false;
     void (async () => {
       const [projectList, index, productList] = await Promise.all([
         canListProjects
           ? optional(true, () => apiClient.listProjects(organizationId) as Promise<Project[]>, null as Project[] | null)
           : Promise.resolve(null),
-        loadSubcategoryIndex(),
+        loadSubcategoryIndex(false),
         optional(true, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
       ]);
       if (cancelled) return;
@@ -222,16 +217,9 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
   else if (!values.expectedDurationValue.trim() && values.expectedDurationUnit)
     warnings.expectedDurationValue = "Add how long you need it for, e.g. 3.";
 
+  // Warnings (never block) show when errors would: once a field was left or a submit was tried.
   function bind(key: Key) {
-    const field = form.field(key);
-    return {
-      ...field,
-      onBlur: () => {
-        field.onBlur();
-        setSeen((current) => ({ ...current, [key]: true }));
-      },
-      warning: seen[key] || tried ? warnings[key] : undefined,
-    };
+    return { ...form.field(key), warning: form.shown(key) ? warnings[key] : undefined };
   }
 
   function pick(key: Key) {
@@ -241,7 +229,7 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
   const submit = form.submit(async (input) => {
     const requirement = (await apiClient
       .createRequirement(organizationId, input)
-      // "Cannot post a requirement against a project that is not active" has no field path.
+      // "Cannot post a requirement against a project that is not active" has no field path (rfq module, not ours to change).
       .catch(underField(/project/i, "projectId"))) as Requirement;
     toast.success({
       title: `Requirement ${requirementRef(requirement.id)} posted`,
@@ -251,10 +239,6 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
     onPosted(requirement);
     onClose();
   });
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    setTried(true);
-    return submit(event);
-  };
 
   const projectOptions = activeProjects.map((p) => ({
     value: p.id,
@@ -283,7 +267,7 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
       tone="info"
       size="lg"
       dismissible={!busy}
-      onSubmit={handleSubmit}
+      onSubmit={submit}
       footer={
         <>
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
@@ -334,6 +318,7 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
         <div data-field="projectId">
           <SearchSelect
             label="Project"
+            name="projectId"
             required
             options={projectOptions}
             loading={projects === null}
@@ -357,6 +342,7 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
         <div data-field="productSubcategoryId">
           <SearchSelect
             label="Equipment type"
+            name="productSubcategoryId"
             required
             options={subcategoryOptions}
             loading={subcategories === null}

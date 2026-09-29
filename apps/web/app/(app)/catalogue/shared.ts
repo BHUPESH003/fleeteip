@@ -56,8 +56,8 @@ export interface CatalogueIndex {
 
 /**
  * The whole catalogue (reads need no permission), including disabled
- * products. Detail pages fetch their own record by id and use this for
- * the surrounding lists and dialogs. Bounded fan-out over
+ * items. Detail pages fetch their own record by id and use this for the
+ * surrounding lists and dialogs. Bounded fan-out over
  * categories (a handful, platform-wide), same pattern as
  * machines/page.tsx — not a per-machine N+1 loop.
  */
@@ -111,9 +111,6 @@ export function tenantCatalogueWriter(organizationId: string): CatalogueWriter {
     updateProduct: (id, input) => apiClient.updateProduct(organizationId, id, input),
   };
 }
-
-/** Why a category or subcategory menu can't disable or remove it (products can be disabled; nothing is ever removed). */
-export const NO_DISABLE_REASON = "Categories and subcategories can't be disabled yet, and nothing is ever removed.";
 
 // ------------------------------------------------------------------ specifications form
 

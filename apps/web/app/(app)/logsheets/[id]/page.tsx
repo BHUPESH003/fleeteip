@@ -48,7 +48,7 @@ import { useListBackHref } from "../../../../lib/list-state";
 import { useSession } from "../../../../lib/session-context";
 import { Status, statusLabel } from "../../../../lib/status";
 import { optional, useLoad } from "../../../../lib/use-load";
-import { DetailColumns, TEXT_LINK } from "../../maintenance/list-kit";
+import { DetailColumns, TEXT_LINK } from "../../../../components/list-kit";
 import { LogsheetDrawer } from "../../rentals/LogsheetDrawer";
 import { confirmation, fuelText, totalHours } from "../shared";
 

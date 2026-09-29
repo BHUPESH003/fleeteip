@@ -8,10 +8,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { apiClient } from "./api-client";
+import { ApiError, apiClient } from "./api-client";
 
 type SessionStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -54,6 +55,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthenticatedSession | null>(null);
   const [currentOrganizationId, setCurrentOrganizationIdState] = useState<string | null>(null);
 
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   const refresh = useCallback(async () => {
     try {
       const result = (await apiClient.me()) as AuthenticatedSession;
@@ -64,7 +67,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const stillMember = result.memberships.some((m) => m.organizationId === candidate);
         return stillMember ? candidate : (result.memberships[0]?.organizationId ?? null);
       });
-    } catch {
+    } catch (error) {
+      // Only a 401 means the session is gone. A 429, a 5xx or a network
+      // blip keeps whatever we have and tries again shortly.
+      if (!(error instanceof ApiError) || error.status !== 401) {
+        retryTimer.current = setTimeout(() => void refresh(), 3000);
+        return;
+      }
       setSession(null);
       setStatus("unauthenticated");
       setCurrentOrganizationIdState(null);
@@ -73,6 +82,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh();
+    return () => clearTimeout(retryTimer.current);
   }, [refresh]);
 
   const setCurrentOrganizationId = useCallback((organizationId: string) => {

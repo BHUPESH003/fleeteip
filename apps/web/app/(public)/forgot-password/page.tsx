@@ -8,7 +8,6 @@ import { apiClient } from "../../../lib/api-client";
 import { useForm } from "../../../lib/form";
 import { AUTH_LINK, AuthCard } from "../AuthShell";
 import { emailField } from "../fields";
-import { useStatusCopy } from "../../../components/status-copy";
 
 const schema = z.object({ email: emailField() });
 
@@ -16,16 +15,14 @@ const STATUS_COPY = { 429: { title: "Too many attempts", body: "For security, wa
 
 export default function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
-  const form = useForm({ schema, initial: { email: "" }, failTitle: "The reset link wasn't sent" });
-  const status = useStatusCopy(STATUS_COPY);
-  const problem = status.banner ?? form.banner;
+  const form = useForm({ statusCopy: STATUS_COPY, schema, initial: { email: "" }, failTitle: "The reset link wasn't sent" });
+  const problem = form.banner;
 
   const save = form.submit(async (body) => {
-    await status.guard(() => apiClient.requestPasswordReset(body));
+    await apiClient.requestPasswordReset(body);
     setSent(true);
   });
   const handleSubmit = (event: FormEvent) => {
-    status.clear();
     void save(event);
   };
 

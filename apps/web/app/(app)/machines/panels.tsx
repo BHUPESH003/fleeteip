@@ -21,7 +21,6 @@ import {
   Tr,
   UILink,
   cx,
-  useToast,
 } from "@fleetip/ui";
 import { useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
@@ -55,7 +54,6 @@ export function MaintenancePanel({
   onMachineChanged?: () => void;
   title?: string;
 }) {
-  const toast = useToast();
   const { online } = useConnection();
   const [records, setRecords] = useState<MaintenanceRecord[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -105,18 +103,11 @@ export function MaintenancePanel({
     if (!transition) return;
     const { record, to } = transition;
     const writeMachine = machineWrite && alsoMachine ? machineWrite : null;
+    // One write: the machine status (if any) moves in the same transaction as the job.
     void action.run(
       async () => {
-        await apiClient.updateMaintenanceStatus(organizationId, record.id, to);
-        if (!writeMachine) return false;
-        // Partial success: the job is already updated, so a failed machine write is a toast, not "Nothing was changed".
-        try {
-          await apiClient.updateMachineStatus(organizationId, machine.id, writeMachine);
-          return true;
-        } catch (err) {
-          toast.error({ title: `The job was updated, but ${machine.assetCode}'s status didn't change`, body: describeError(err).body });
-          return false;
-        }
+        await apiClient.updateMaintenanceStatus(organizationId, record.id, to, writeMachine ?? undefined);
+        return Boolean(writeMachine);
       },
       {
         failTitle: "Nothing was changed",
@@ -292,7 +283,7 @@ export function MaintenancePanel({
                 ...(machineWrite
                   ? [
                       alsoMachine
-                        ? `Also sets ${machine.assetCode} to ${machineWrite === MachineStatus.active ? "Active" : "Under maintenance"} — a second write.`
+                        ? `Also sets ${machine.assetCode} to ${machineWrite === MachineStatus.active ? "Active" : "Under maintenance"}, saved together with the job.`
                         : `${machine.assetCode} stays ${machine.status === MachineStatus.active ? "Active" : "Under maintenance"}.`,
                     ]
                   : []),

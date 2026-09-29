@@ -4,7 +4,7 @@ import { useToast, type ToastInput } from "@fleetip/ui";
 import { useCallback, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { ZodType, ZodTypeDef } from "zod";
 import { useConnection } from "./connection";
-import { OFFLINE_HINT, toFormFailure } from "./errors";
+import { OFFLINE_HINT, toFormFailure, type StatusCopy } from "./errors";
 
 /**
  * Forms and one-click writes, the same way everywhere:
@@ -31,10 +31,14 @@ export interface UseFormOptions<V extends Record<string, unknown>, Body> {
   failTitle: string;
   /** Per-field copy for a 409 the API ties to that field. */
   conflicts?: Partial<Record<keyof V & string, string>>;
+  /** Banner copy for a status this screen words itself (e.g. 401 on sign-in, 409 with no field). */
+  statusCopy?: StatusCopy;
+  /** Show rule errors before any blur or submit (confirm dialogs whose button is disabled while invalid). */
+  eager?: boolean;
 }
 
 export function useForm<V extends Record<string, unknown>, Body>(options: UseFormOptions<V, Body>) {
-  const { schema, failTitle, conflicts } = options;
+  const { schema, failTitle, conflicts, statusCopy, eager = false } = options;
   const { online } = useConnection();
   const [initial, setInitial] = useState(options.initial);
   const [values, setValues] = useState(options.initial);
@@ -44,6 +48,7 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
   const [banner, setBanner] = useState<Banner>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const initialRef = useRef(options.initial);
 
   const parsed = schema.safeParse(values);
   const ruleErrors: Errors<V> = {};
@@ -54,8 +59,31 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
     }
   }
 
+  /** Whether this field's problems should show yet (touched, submitted once, or eager). */
+  const shown = (name: keyof V & string): boolean => eager || tried || Boolean(touched[name]);
   const errorOf = (name: keyof V & string): string | undefined =>
-    serverErrors[name] ?? ((tried || touched[name]) ? ruleErrors[name] : undefined);
+    serverErrors[name] ?? (shown(name) ? ruleErrors[name] : undefined);
+
+  /** Show a failure from a save that isn't wrapped by submit() (e.g. one of several writes). */
+  const fail = useCallback(
+    (error: unknown) => {
+      const failure = toFormFailure(error, failTitle, conflicts as Record<string, string> | undefined, statusCopy);
+      // Issues for fields this form doesn't have would vanish — say them in the banner instead.
+      const known: Errors<V> = {};
+      const unknown: string[] = [];
+      for (const [path, message] of Object.entries(failure.fieldErrors)) {
+        if (path in initialRef.current) known[path as keyof V & string] = message;
+        else unknown.push(message);
+      }
+      setServerErrors(known);
+      setBanner(
+        unknown.length
+          ? { title: failure.banner?.title ?? "Some entries need attention", body: [failure.banner?.body, ...unknown].filter(Boolean).join(" ") }
+          : failure.banner,
+      );
+    },
+    [failTitle, conflicts, statusCopy],
+  );
 
   const set = useCallback(<K extends keyof V>(name: K, value: V[K]) => {
     setValues((previous) => ({ ...previous, [name]: value }));
@@ -82,7 +110,10 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
       if (busyRef.current) return false;
       if (!parsed.success) {
         const first = parsed.error.issues[0]?.path[0];
-        if (first !== undefined) document.querySelector<HTMLElement>(`[name="${String(first)}"]`)?.focus();
+        const target =
+          (first !== undefined && document.querySelector<HTMLElement>(`[name="${String(first)}"]`)) ||
+          document.querySelector<HTMLElement>('[aria-invalid="true"]');
+        target?.focus();
         return false;
       }
       if (!online) {
@@ -95,9 +126,7 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
         await save(parsed.data);
         return true;
       } catch (error) {
-        const failure = toFormFailure(error, failTitle, conflicts as Record<string, string> | undefined);
-        setServerErrors(failure.fieldErrors as Errors<V>);
-        setBanner(failure.banner);
+        fail(error);
         return false;
       } finally {
         busyRef.current = false;
@@ -108,6 +137,7 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
 
   /** Start over from these values (e.g. when a dialog reopens on another record). */
   const reset = useCallback((next: V) => {
+    initialRef.current = next;
     setInitial(next);
     setValues(next);
     setTouched({});
@@ -123,6 +153,8 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
     set,
     field,
     submit,
+    fail,
+    shown,
     reset,
     busy,
     banner,
@@ -152,14 +184,13 @@ export function useAction() {
   const [banner, setBanner] = useState<Banner>(null);
   const busyRef = useRef(false);
 
-  async function run<T>(
-    call: () => Promise<T>,
-    options: { failTitle: string; success?: (result: T) => ToastInput; onDone?: (result: T) => void },
-  ): Promise<T | undefined> {
+  async function run<T>(call: () => Promise<T>, options: ActionOptions<T>): Promise<T | undefined> {
     if (busyRef.current) return undefined;
     setBanner(null);
+    const report = (failure: NonNullable<Banner>) =>
+      options.report === "toast" ? toast.error(failure) : setBanner(failure);
     if (!online) {
-      setBanner({ title: options.failTitle, body: OFFLINE_HINT });
+      report({ title: options.failTitle, body: OFFLINE_HINT });
       return undefined;
     }
     busyRef.current = true;
@@ -170,7 +201,9 @@ export function useAction() {
       options.onDone?.(result);
       return result;
     } catch (error) {
-      setBanner(toFormFailure(error, options.failTitle).banner);
+      const failure = toFormFailure(error, options.failTitle, undefined, options.statusCopy).banner;
+      if (failure) report(failure);
+      options.onFailed?.(error);
       return undefined;
     } finally {
       busyRef.current = false;
@@ -178,5 +211,20 @@ export function useAction() {
     }
   }
 
-  return { run, busy, banner, clear: () => setBanner(null) };
+  const clear = useCallback(() => setBanner(null), []);
+  return { run, busy, banner, clear };
+}
+
+export interface ActionOptions<T> {
+  /** What didn't happen, as the banner/toast title ("RN-12 wasn't completed"). */
+  failTitle: string;
+  /** Success toast, built from the call's result. */
+  success?: (result: T) => ToastInput;
+  onDone?: (result: T) => void;
+  /** Runs after the failure is reported (e.g. reload a list that may have changed). */
+  onFailed?: (error: unknown) => void;
+  /** "banner" (default) for dialogs; "toast" for row and header buttons with nowhere to put a banner. */
+  report?: "banner" | "toast";
+  /** Banner copy for a status this screen words itself. */
+  statusCopy?: StatusCopy;
 }

@@ -30,13 +30,13 @@ import {
   type AttentionListItem,
   type KeyFigure,
 } from "@fleetip/ui";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { z } from "zod";
 import { PageLoadError } from "../../../components/PageStates";
 import { ApiError, apiClient } from "../../../lib/api-client";
 import { useConnection } from "../../../lib/connection";
-import { describeError, OFFLINE_HINT } from "../../../lib/errors";
-import { useForm } from "../../../lib/form";
+import { OFFLINE_HINT } from "../../../lib/errors";
+import { useAction, useForm } from "../../../lib/form";
 import { formatDateTime, formatMoney, formatRateUnit, formatRelativeTime, plural } from "../../../lib/format";
 import { useListBackHref } from "../../../lib/list-state";
 import { useSession } from "../../../lib/session-context";
@@ -195,7 +195,7 @@ function BidderScreen({
   const offline = !online;
   const canQuote = hasPermission("quotation.manage");
 
-  const [joining, setJoining] = useState(false);
+  const joinAction = useAction();
 
   const { auction, detail } = live;
   const leadingAmount = detail?.bids.find((b) => b.isLeading)?.amount ?? null;
@@ -259,20 +259,14 @@ function BidderScreen({
   const canBid = own?.status === ParticipantStatus.approved && auction.status === AuctionStatus.live && remaining !== 0;
   const quoteHref = live.requirementId ? `/quotations?requirementId=${live.requirementId}&sourceAuctionId=${auction.id}` : null;
 
-  // Kept by hand: its failure is a toast (the button sits in the page header, no banner there). useAction only reports a banner.
-  async function join() {
-    if (!auction) return;
-    setJoining(true);
-    try {
-      await apiClient.requestToJoinAuction(organizationId, auction.id);
-      toast.success({ title: `Asked to join ${ref}`, body: "The owner reviews requests. You're notified when you're approved to bid." });
-      reload();
-    } catch (err) {
-      toast.error({ title: `Couldn't ask to join ${ref}`, body: describeError(err).body });
-    } finally {
-      setJoining(false);
-    }
-  }
+  // Header button: nowhere to put a banner, so failures are a toast.
+  const join = () =>
+    joinAction.run(() => apiClient.requestToJoinAuction(organizationId, auction.id), {
+      failTitle: `Couldn't ask to join ${ref}`,
+      report: "toast",
+      success: () => ({ title: `Asked to join ${ref}`, body: "The owner reviews requests. You're notified when you're approved to bid." }),
+      onDone: reload,
+    });
 
   const placeBid = bidForm.submit(async (amount) => {
     // Reload either way: someone may have outbid in the meantime — the server re-checks every bid.
@@ -288,7 +282,7 @@ function BidderScreen({
   let primary: ReactNode = null;
   if (!own && running) {
     primary = (
-      <Button icon="plus" onClick={() => void join()} busy={joining} busyLabel="Asking…" disabled={offline} title={offline ? OFFLINE_HINT : undefined}>
+      <Button icon="plus" onClick={() => void join()} busy={joinAction.busy} busyLabel="Asking…" disabled={offline} title={offline ? OFFLINE_HINT : undefined}>
         Ask to join
       </Button>
     );
@@ -373,7 +367,7 @@ function BidderScreen({
         <p className="m-0 text-sm leading-[1.5] text-ink-body">
           Ask to join, and the owner approves who bids. Until then you don&apos;t see the leading bid.
         </p>
-        <Button className="mt-3" variant="secondary" icon="plus" onClick={() => void join()} busy={joining} busyLabel="Asking…" disabled={offline}>
+        <Button className="mt-3" variant="secondary" icon="plus" onClick={() => void join()} busy={joinAction.busy} busyLabel="Asking…" disabled={offline}>
           Ask to join
         </Button>
       </Panel>

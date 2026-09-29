@@ -10,7 +10,6 @@ import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
 import { AUTH_LINK, AuthCard } from "../AuthShell";
 import { PasswordInput, emailField } from "../fields";
-import { useStatusCopy } from "../../../components/status-copy";
 import { nextQuery, safeNextPath } from "../next-param";
 
 const schema = z.object({
@@ -31,17 +30,15 @@ export default function LoginPage() {
   const { refresh } = useSession();
   // Read on every render; the layout does the redirect to it once signed in.
   const next = safeNextPath(useSearchParams().get("next"));
-  const form = useForm({ schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
-  const status = useStatusCopy(STATUS_COPY);
-  const problem = status.banner ?? form.banner;
+  const form = useForm({ statusCopy: STATUS_COPY, schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
+  const problem = form.banner;
 
   const save = form.submit(async (body) => {
     // The (public) layout sends a signed-in visitor on to ?next= (or the dashboard).
-    await status.guard(() => apiClient.login(body));
+    await apiClient.login(body);
     await refresh();
   });
   const handleSubmit = (event: FormEvent) => {
-    status.clear();
     void save(event);
   };
 

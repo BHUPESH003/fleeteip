@@ -1,11 +1,13 @@
 "use client";
 
-import { ActualDatesVerificationStatus, RentalStatus } from "@fleetip/contracts/rental";
+import { ActualDatesVerificationStatus, RentalStatus, type RentalEvent } from "@fleetip/contracts/rental";
 import { WorkOrderStatus } from "@fleetip/contracts/work-order";
 import { Alert, Button, DescriptionList, Icon, RentalChain, UILink } from "@fleetip/ui";
 import { useId, type ReactNode } from "react";
-import { formatDate, formatDateTime, rentalRef } from "../../../../lib/format";
-import { Status } from "../../../../lib/status";
+import { apiClient } from "../../../../lib/api-client";
+import { useAction } from "../../../../lib/form";
+import { formatDate, formatDateRange, formatDateTime, humanizeKey, rentalRef } from "../../../../lib/format";
+import { Status, statusLabel } from "../../../../lib/status";
 import { productName } from "../../machines/shared";
 import {
   TERMS_LOCKED,
@@ -71,7 +73,7 @@ export function TermsCard({ data }: { data: RentalData }) {
         <span className="flex items-center gap-1.5 text-[11px] leading-[1.4] text-meta">
           <Icon name="lock" size={12} className="text-meta-light" />
           {access.isRenter
-            ? `Terms as agreed with ${counterpartyName(data)}. Rental dates can't be changed in FleetIP yet.`
+            ? `Terms as agreed with ${counterpartyName(data)}. They can propose new dates, which change only if you accept.`
             : locked
               ? TERMS_LOCKED
               : TERMS_OPEN}
@@ -194,7 +196,7 @@ export function MachineCard({ data }: { data: RentalData }) {
   );
 }
 
-export function ActualDatesCard({ data }: { data: RentalData }) {
+export function ActualDatesCard({ data, onCorrect, disabledReason }: { data: RentalData; onCorrect?: () => void; disabledReason?: string | null }) {
   const { rental } = data;
   const status = rental.actualDatesVerificationStatus;
   const applies = verificationApplies(rental) || data.access.isRenter;
@@ -229,19 +231,195 @@ export function ActualDatesCard({ data }: { data: RentalData }) {
             {rental.actualDatesDisputeReason ? `“${rental.actualDatesDisputeReason}”` : "No reason was recorded."}
           </p>
         )}
+        {status === ActualDatesVerificationStatus.disputed && onCorrect && (
+          <Button size="sm" variant="secondary" icon="edit" className="self-start" onClick={onCorrect} disabled={Boolean(disabledReason)} title={disabledReason ?? undefined}>
+            Correct dates
+          </Button>
+        )}
       </div>
     </Card>
   );
 }
 
-export function RecordInfo({ data }: { data: RentalData }) {
+function range(detail: Record<string, unknown> | null): string {
+  const start = typeof detail?.startDate === "string" ? detail.startDate : null;
+  const end = typeof detail?.endDate === "string" ? detail.endDate : null;
+  return start ? formatDateRange(start, end) : "";
+}
+
+function describeEvent(event: RentalEvent): string {
+  const d = event.detail;
+  const text = (key: string) => (typeof d?.[key] === "string" ? (d[key] as string) : null);
+  switch (event.type) {
+    case "created":
+      return "Rental created";
+    case "status_changed": {
+      const to = text("to");
+      const date = text("actualDate");
+      return `${text("from") ? statusLabel("rental", text("from")!) : "Status"} → ${to ? statusLabel("rental", to) : "changed"}${date ? ` · actual date ${formatDate(date)}` : ""}`;
+    }
+    case "terms_edited": {
+      const fields = Array.isArray(d?.fields) ? (d.fields as string[]) : [];
+      return `Terms edited${fields.length ? `: ${fields.map((f) => humanizeKey(f).toLowerCase()).join(", ")}` : ""}`;
+    }
+    case "actual_dates_verified":
+      return "Actual dates verified";
+    case "actual_dates_disputed":
+      return `Actual dates disputed${text("reason") ? `: “${text("reason")}”` : ""}`;
+    case "actual_dates_corrected":
+      return `Actual dates corrected: start ${formatDate(text("actualStartDate"))}${text("actualEndDate") ? `, end ${formatDate(text("actualEndDate"))}` : ""}`;
+    case "date_change_proposed":
+      return `New dates proposed: ${range(d)}${text("reason") ? ` · “${text("reason")}”` : ""}`;
+    case "date_change_accepted":
+      return `New dates accepted: ${range(d)}`;
+    case "date_change_rejected":
+      return `Proposed dates rejected (${range(d)})`;
+    case "date_change_withdrawn":
+      return `Proposed dates withdrawn (${range(d)})`;
+    case "dates_changed":
+      return `Dates changed to ${range(d)}${text("reason") ? ` · “${text("reason")}”` : ""}`;
+  }
+}
+
+/** Who did what on this rental, by organization (never the other side's people). */
+export function ActivityCard({ data, organizationId }: { data: RentalData; organizationId: string }) {
   return (
-    <section aria-label="Record information" className="px-1 py-0.5">
-      <p className="m-0 text-[11px] leading-[1.5] text-meta-light">
-        Created {formatDateTime(data.rental.createdAt)} · last changed {formatDateTime(data.rental.updatedAt)}. FleetIP doesn&apos;t keep a
-        history of who changed what on a rental, so there&apos;s no activity log here.
-      </p>
-    </section>
+    <Card title="Activity" subtitle="newest first">
+      {data.events.length === 0 ? (
+        <p className="m-0 px-4 py-3.5 text-xs leading-[1.5] text-meta">
+          Created {formatDateTime(data.rental.createdAt)}. Changes made from now on are listed here.
+        </p>
+      ) : (
+        <ol className="m-0 flex list-none flex-col gap-2.5 px-4 py-3.5">
+          {data.events.map((event) => (
+            <li key={event.id} className="flex flex-col gap-0.5">
+              <span className="text-xs leading-[1.45] text-ink-body">{describeEvent(event)}</span>
+              <span className="text-[11px] leading-[1.4] text-meta-light">
+                {event.organizationId === organizationId ? "Your organization" : (event.organizationName ?? "The other party")} · {formatDateTime(event.createdAt)}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </Card>
+  );
+}
+
+// ------------------------------------------------------------------ pending date change
+
+/**
+ * A date change waiting for the Renter. The Renter (rental.respond) accepts
+ * or rejects; the Rental Company (rental.manage) can withdraw it.
+ */
+export function DateChangeCallout({
+  data,
+  organizationId,
+  onChanged,
+  disabledReason,
+}: {
+  data: RentalData;
+  organizationId: string;
+  onChanged: () => void;
+  disabledReason: string | null;
+}) {
+  const action = useAction();
+  const { rental, access } = data;
+  const pending = rental.pendingDateChange;
+  if (!pending) return null;
+  const ref = rentalRef(rental.id);
+  const other = counterpartyName(data);
+  const proposed = formatDateRange(pending.startDate, pending.endDate);
+  const run = (call: () => Promise<unknown>, failTitle: string, title: string, body: string) =>
+    void action.run(call, { failTitle, report: "toast", success: () => ({ title, body }), onDone: onChanged });
+  const disabled = Boolean(disabledReason) || action.busy;
+
+  const summary = (
+    <>
+      Now <span className="font-mono">{formatDateRange(rental.startDate, rental.endDate)}</span> · proposed{" "}
+      <span className="font-mono">{proposed}</span>
+      {pending.reason ? ` · “${pending.reason}”` : ""}. Proposed {formatDateTime(pending.proposedAt)}.
+    </>
+  );
+
+  if (access.isRenter) {
+    return (
+      <Alert
+        tone="warning"
+        icon="calendar_check"
+        title={`${other} proposed new dates`}
+        action={
+          access.respond ? (
+            <>
+              <Button
+                size="sm"
+                icon="check"
+                disabled={disabled}
+                title={disabledReason ?? undefined}
+                onClick={() =>
+                  run(
+                    () => apiClient.respondToRentalDateChange(organizationId, rental.id, "accepted"),
+                    "The new dates weren't accepted",
+                    `New dates accepted on ${ref}`,
+                    `${proposed}. ${other} has been notified.`,
+                  )
+                }
+              >
+                Accept
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={disabled}
+                title={disabledReason ?? undefined}
+                onClick={() =>
+                  run(
+                    () => apiClient.respondToRentalDateChange(organizationId, rental.id, "rejected"),
+                    "The new dates weren't rejected",
+                    `New dates rejected on ${ref}`,
+                    `The rental keeps its dates. ${other} has been notified.`,
+                  )
+                }
+              >
+                Reject
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {summary} Nothing changes unless you accept.
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert
+      tone="neutral"
+      icon="clock"
+      title={`Waiting for ${other} to answer your date change`}
+      action={
+        access.manage ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="undo"
+            disabled={disabled}
+            title={disabledReason ?? undefined}
+            onClick={() =>
+              run(
+                () => apiClient.withdrawRentalDateChange(organizationId, rental.id),
+                "The date change wasn't withdrawn",
+                `Date change withdrawn on ${ref}`,
+                `${other} has been notified. The rental keeps its dates.`,
+              )
+            }
+          >
+            Withdraw
+          </Button>
+        ) : undefined
+      }
+    >
+      {summary}
+    </Alert>
   );
 }
 

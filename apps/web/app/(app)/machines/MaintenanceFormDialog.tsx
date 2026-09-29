@@ -1,26 +1,30 @@
 "use client";
 
 import type { Machine } from "@fleetip/contracts/equipment";
-import { MaintenanceStatus, maintenanceTypeSchema, type CreateMaintenanceRequest, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
-import type { Rental } from "@fleetip/contracts/rental";
-import { Button, Dialog, FormBanner, Input, RadioGroup, Select, Textarea, useToast } from "@fleetip/ui";
+import { MaintenanceStatus, MaintenanceType, maintenanceTypeSchema, type CreateMaintenanceRequest, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
+import { RentalStatus, type Rental } from "@fleetip/contracts/rental";
+import { Button, Checkbox, Dialog, FormBanner, Input, RadioGroup, Select, Textarea, useToast } from "@fleetip/ui";
 import { useEffect, useMemo } from "react";
 import { z } from "zod";
 import { apiClient } from "../../../lib/api-client";
 import { useForm } from "../../../lib/form";
-import { formatDate, formatDateRange, rentalRef, todayIsoDate } from "../../../lib/format";
-import { MAINTENANCE_TYPE_OPTIONS, conflictingRental } from "./shared";
+import { formatDateRange, rentalRef, todayIsoDate } from "../../../lib/format";
+import { MAINTENANCE_TYPE_OPTIONS } from "./shared";
 
 type Outcome = typeof MaintenanceStatus.scheduled | typeof MaintenanceStatus.completed;
 
-type Values = { outcome: Outcome } & Record<"maintenanceType" | "startDate" | "endDate" | "notes", string>;
+type Values = { outcome: Outcome; linkRental: boolean } & Record<"maintenanceType" | "startDate" | "endDate" | "notes", string>;
 
 function initialValues(today: string): Values {
-  return { outcome: MaintenanceStatus.scheduled, maintenanceType: "", startDate: today, endDate: "", notes: "" };
+  return { outcome: MaintenanceStatus.scheduled, maintenanceType: "", startDate: today, endDate: "", notes: "", linkRental: false };
 }
 
-/** Field names match the request so API issues land under the right field. */
-function maintenanceSchema(machine: Machine, rentals: Rental[], today: string) {
+/**
+ * Field names match the request so API issues land under the right field.
+ * Overlaps with a booked rental are the API's to refuse: its 409 names the
+ * rental and lands under "startDate".
+ */
+function maintenanceSchema(machine: Machine, active: Rental | null, today: string) {
   return z
     .object({
       outcome: z.enum([MaintenanceStatus.scheduled, MaintenanceStatus.completed]),
@@ -30,10 +34,10 @@ function maintenanceSchema(machine: Machine, rentals: Rental[], today: string) {
       notes: z.string().superRefine((notes, ctx) => {
         if (notes.length > 2000) ctx.addIssue({ code: "custom", message: `Notes are up to 2,000 characters. This has ${notes.length.toLocaleString("en-IN")}.` });
       }),
+      linkRental: z.boolean(),
     })
     .superRefine(({ outcome, startDate: start, endDate: end }, ctx) => {
       const completed = outcome === MaintenanceStatus.completed;
-      const blocker = start ? conflictingRental(rentals, start, end || null) : null;
       const message =
         end && start && end < start
           ? "The end date can't be before the start date."
@@ -41,12 +45,10 @@ function maintenanceSchema(machine: Machine, rentals: Rental[], today: string) {
             ? "A completed job needs the day it finished."
             : completed && end > today
               ? "A completed job can't finish in the future. Pick today or earlier, or plan it instead."
-              : blocker
-                ? `${rentalRef(blocker.id)} is booked ${formatDateRange(blocker.startDate, blocker.endDate)}. Workshop dates can't overlap a booked rental.`
-                : null;
+              : null;
       if (message) ctx.addIssue({ code: "custom", path: ["endDate"], message });
     })
-    .transform(({ outcome, maintenanceType, startDate, endDate, notes }) => ({
+    .transform(({ outcome, maintenanceType, startDate, endDate, notes, linkRental }) => ({
       outcome,
       request: {
         machineId: machine.id,
@@ -54,15 +56,15 @@ function maintenanceSchema(machine: Machine, rentals: Rental[], today: string) {
         startDate,
         endDate: endDate || undefined,
         notes: notes.trim() || undefined,
+        rentalId: linkRental && active ? active.id : undefined,
       } satisfies CreateMaintenanceRequest,
     }));
 }
 
 /**
  * Log or plan a workshop job without changing the machine's status (use
- * "Send to workshop" for that). The API always creates jobs as Scheduled,
- * so logging one that already happened takes three writes — create, mark
- * In progress, mark Completed — and the form says so.
+ * "Send to workshop" for that). One write either way: planned jobs are
+ * created Scheduled, jobs that already happened are created Completed.
  */
 export function MaintenanceFormDialog({
   open,
@@ -76,13 +78,14 @@ export function MaintenanceFormDialog({
   onClose: () => void;
   organizationId: string;
   machine: Machine;
-  /** This machine's rentals — a job can't overlap a booked rental (the API returns 409). */
+  /** This machine's rentals — an active one can be linked (a breakdown on site). */
   rentals: Rental[];
   onSaved: (record: MaintenanceRecord) => void;
 }) {
   const toast = useToast();
   const today = todayIsoDate();
-  const schema = useMemo(() => maintenanceSchema(machine, rentals, today), [machine, rentals, today]);
+  const active = rentals.find((r) => r.machineId === machine.id && r.status === RentalStatus.active) ?? null;
+  const schema = useMemo(() => maintenanceSchema(machine, active, today), [machine, active, today]);
   const form = useForm({ schema, initial: initialValues(today), failTitle: "The workshop job wasn't saved" });
   const { reset } = form;
   const { outcome, startDate: start } = form.values;
@@ -93,25 +96,10 @@ export function MaintenanceFormDialog({
   }, [open, today, reset]);
 
   const save = form.submit(async ({ outcome, request }) => {
-    // A create failure is the form's to show; after that the job exists.
-    let record = (await apiClient.createMaintenance(organizationId, request)) as MaintenanceRecord;
-    if (outcome === MaintenanceStatus.completed) {
-      // Partial success: a failed status write after the create must say exactly what was saved, not "wasn't saved".
-      let started = false;
-      try {
-        await apiClient.updateMaintenanceStatus(organizationId, record.id, MaintenanceStatus.in_progress);
-        started = true;
-        record = (await apiClient.updateMaintenanceStatus(organizationId, record.id, MaintenanceStatus.completed)) as MaintenanceRecord;
-      } catch {
-        toast.error({
-          title: "The job was saved, but it isn't marked completed",
-          body: `It's recorded as ${started ? "In progress" : "Scheduled"} from ${formatDate(request.startDate)}. Open it in Maintenance to complete it.`,
-        });
-        onSaved(record);
-        onClose();
-        return;
-      }
-    }
+    const record =
+      outcome === MaintenanceStatus.completed
+        ? ((await apiClient.logCompletedMaintenance(organizationId, request)) as MaintenanceRecord)
+        : ((await apiClient.createMaintenance(organizationId, request)) as MaintenanceRecord);
     toast.success({
       title: outcome === MaintenanceStatus.completed ? `Workshop job logged on ${machine.assetCode}` : `Workshop job planned on ${machine.assetCode}`,
       body: `${MAINTENANCE_TYPE_OPTIONS.find((o) => o.value === request.maintenanceType)?.label} · ${formatDateRange(request.startDate, request.endDate ?? null, "no end date")}. Machine status didn't change.`,
@@ -122,6 +110,7 @@ export function MaintenanceFormDialog({
 
   // The end date's conflicts show as soon as a date is picked, not on blur.
   const endField = form.field("endDate");
+  const typeField = form.field("maintenanceType");
 
   return (
     <Dialog
@@ -158,7 +147,7 @@ export function MaintenanceFormDialog({
         onChange={(v) => form.set("outcome", v as Outcome)}
         options={[
           { value: MaintenanceStatus.scheduled, label: "Planned", description: "Saved as Scheduled. It blocks new rentals over its dates." },
-          { value: MaintenanceStatus.completed, label: "Already done", description: "Saved in three steps: created, marked In progress, then Completed." },
+          { value: MaintenanceStatus.completed, label: "Already done", description: "Saved as Completed. It doesn't block rentals." },
         ]}
       />
       <Select
@@ -166,7 +155,12 @@ export function MaintenanceFormDialog({
         required
         placeholder="Choose a reason"
         options={MAINTENANCE_TYPE_OPTIONS}
-        {...form.field("maintenanceType")}
+        {...typeField}
+        onChange={(e) => {
+          typeField.onChange(e);
+          // A breakdown while the machine is on rent almost always happened on that rental.
+          if (active && e.target.value === MaintenanceType.breakdown) form.set("linkRental", true);
+        }}
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Input
@@ -197,6 +191,14 @@ export function MaintenanceFormDialog({
         {...form.field("notes")}
         hint="What was done or found, parts replaced, hour-meter reading."
       />
+      {active && (
+        <Checkbox
+          label={`Log it against ${rentalRef(active.id)}`}
+          description={`${rentalRef(active.id)} is on rent now. A linked job shows on its Workshop tab, and its dates don't block the job.`}
+          checked={form.values.linkRental}
+          onChange={(event) => form.set("linkRental", event.target.checked)}
+        />
+      )}
     </Dialog>
   );
 }

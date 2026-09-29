@@ -43,8 +43,9 @@ import {
   ProductToggleDialog,
   RecordInfoLine,
   RowActions,
-  disabledRemoveItem,
+  TaxonomyToggleDialog,
   productToggleItem,
+  taxonomyToggleItem,
 } from "../../parts";
 import { formatCapacity, loadCatalogue, machineCountsByProduct, productsInSubcategory, tenantCatalogueWriter } from "../../shared";
 
@@ -52,7 +53,8 @@ type DialogState =
   | { kind: "rename" }
   | { kind: "product"; product?: Product }
   | { kind: "register"; product: Product }
-  | { kind: "toggle"; product: Product };
+  | { kind: "toggle"; product: Product }
+  | { kind: "toggle-subcategory" };
 
 export default function SubcategoryDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -124,7 +126,7 @@ export default function SubcategoryDetailPage() {
           disabled: offline,
           onSelect: () => setDialog({ kind: "rename" }),
         },
-        disabledRemoveItem("Disable subcategory"),
+        taxonomyToggleItem({ kind: "subcategory", item: subcategory }, offline, () => setDialog({ kind: "toggle-subcategory" })),
       ]
     : [];
 
@@ -135,8 +137,8 @@ export default function SubcategoryDetailPage() {
         key: "register",
         label: "Register as machine",
         icon: "machine",
-        hint: offline ? OFFLINE_HINT : "Adds a machine of this product to your fleet.",
-        disabled: offline,
+        hint: offline ? OFFLINE_HINT : product.disabledBy ? "Disabled products can't be registered." : "Adds a machine of this product to your fleet.",
+        disabled: offline || Boolean(product.disabledBy),
         onSelect: () => setDialog({ kind: "register", product }),
       });
     }
@@ -176,6 +178,7 @@ export default function SubcategoryDetailPage() {
         }
         title={subcategory.name}
         description={category ? `Subcategory of ${category.name}` : "Subcategory in the shared catalogue"}
+        meta={<DisabledBadge item={subcategory} catalogue={data} />}
         actions={
           addProduct || menuItems.length > 0 ? (
             <>
@@ -245,7 +248,7 @@ export default function SubcategoryDetailPage() {
                               </UILink>
                             }
                           />
-                          <DisabledBadge disabledAt={product.disabledAt} />
+                          <DisabledBadge item={product} catalogue={data} />
                         </span>
                       </Td>
                       <Td align="right" className="font-mono">
@@ -308,6 +311,15 @@ export default function SubcategoryDetailPage() {
       )}
       {organizationId && dialog?.kind === "toggle" && (
         <ProductToggleDialog organizationId={organizationId} product={dialog.product} onClose={() => setDialog(null)} onChanged={() => void reload()} />
+      )}
+      {organizationId && dialog?.kind === "toggle-subcategory" && (
+        <TaxonomyToggleDialog
+          target={{ kind: "subcategory", item: subcategory }}
+          catalogue={data}
+          setDisabled={(disabled) => apiClient.setProductSubcategoryDisabled(organizationId, subcategory.id, disabled)}
+          onClose={() => setDialog(null)}
+          onChanged={() => void reload()}
+        />
       )}
       {organizationId && dialog?.kind === "register" && (
         <RegisterMachineDialog

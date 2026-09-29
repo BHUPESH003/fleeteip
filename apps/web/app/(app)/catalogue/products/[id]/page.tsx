@@ -112,7 +112,7 @@ export default function ProductDetailPage() {
 
   // One primary: registering a machine when the role can, else editing.
   // A disabled product can't take new machines (the API rejects it too).
-  const primary: { label: string; icon: IconName; onClick: () => void } | null = canRegister && !product.disabledAt
+  const primary: { label: string; icon: IconName; onClick: () => void } | null = canRegister && !product.disabledBy
     ? { label: "Register as machine", icon: "plus", onClick: () => setDialog("register") }
     : canManage
       ? { label: "Edit product", icon: "edit", onClick: () => setDialog("edit") }
@@ -148,7 +148,7 @@ export default function ProductDetailPage() {
           </IdentityTile>
         }
         title={label}
-        meta={<DisabledBadge disabledAt={product.disabledAt} />}
+        meta={<DisabledBadge item={product} catalogue={data} />}
         description={modelLine.length > 0 ? modelLine.join(" · ") : undefined}
         actions={
           primary || menuItems.length > 0 ? (

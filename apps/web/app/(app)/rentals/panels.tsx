@@ -70,7 +70,6 @@ export function TransportPanel({
   readOnly?: boolean;
   onChanged?: () => void;
 }) {
-  const toast = useToast();
   const { online } = useConnection();
   const [records, setRecords] = useState<TransportRecord[] | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -82,10 +81,6 @@ export function TransportPanel({
   const [target, setTarget] = useState<string | null>(null);
   const busyFor = (id: string | undefined) => action.busy && target === id;
 
-  // This panel reports failed writes as a toast rather than a banner.
-  useEffect(() => {
-    if (action.banner) toast.error(action.banner);
-  }, [action.banner]);
 
   async function refresh() {
     try {
@@ -110,6 +105,7 @@ export function TransportPanel({
       },
       {
         failTitle: `${LEG_LABEL[record.leg]} wasn't updated`,
+        report: "toast",
         success: () => ({ title: `${LEG_LABEL[record.leg]} dispatched`, body: `${rentalRef(rental.id)} · status changed from Planned.` }),
         onDone: () => onChanged?.(),
       },
@@ -274,6 +270,7 @@ export function TransportPanel({
           setTarget(cancel.id);
           void action.run(() => apiClient.updateTransport(organizationId, rental.id, cancel.leg, { status: TransportStatus.cancelled }), {
             failTitle: "The trip wasn't cancelled",
+            report: "toast",
             success: () => ({ title: `${LEG_LABEL[cancel.leg]} cancelled`, body: `${rentalRef(rental.id)} · the trip is kept as Cancelled.` }),
             onDone: () => {
               setCancel(null);
@@ -288,31 +285,25 @@ export function TransportPanel({
 
 type TripValues = Record<"pickupLocation" | "destination" | "plannedDate" | "transportDetails" | "charges" | "notes", string>;
 
-/** A recorded value can be corrected but not cleared (the API has no remove). */
+/** Emptying a recorded value sends null, which removes it; on a new trip an empty value is just left out. */
 function tripSchema(record: TransportRecord | null) {
-  const kept = (was: string | null | undefined) => (now: string) => !(record && was && !now.trim());
+  const empty = record ? null : undefined;
   return z
     .object({
-      pickupLocation: z
-        .string()
-        .refine(kept(record?.pickupLocation), "A recorded pickup can be corrected but not removed.")
-        .refine((v) => v.length <= 300, "Up to 300 characters."),
-      destination: z
-        .string()
-        .refine(kept(record?.destination), "A recorded destination can be corrected but not removed.")
-        .refine((v) => v.length <= 300, "Up to 300 characters."),
-      plannedDate: z.string().refine(kept(record?.plannedDate), "A planned date can be changed but not removed."),
+      pickupLocation: z.string().max(300, "Up to 300 characters."),
+      destination: z.string().max(300, "Up to 300 characters."),
+      plannedDate: z.string(),
       transportDetails: z.string().max(1000, "Up to 1,000 characters."),
       charges: z.string().refine((v) => v.trim() === "" || Number(v) >= 0, "Enter 0 or more, or leave it empty."),
       notes: z.string().max(2000, "Notes are up to 2,000 characters."),
     })
     .transform((v) => ({
-      pickupLocation: v.pickupLocation.trim() || undefined,
-      destination: v.destination.trim() || undefined,
-      plannedDate: v.plannedDate || undefined,
-      transportDetails: v.transportDetails.trim() || undefined,
-      charges: v.charges.trim() === "" ? undefined : Number(v.charges),
-      notes: v.notes.trim() || undefined,
+      pickupLocation: v.pickupLocation.trim() || empty,
+      destination: v.destination.trim() || empty,
+      plannedDate: v.plannedDate || empty,
+      transportDetails: v.transportDetails.trim() || empty,
+      charges: v.charges.trim() === "" ? empty : Number(v.charges),
+      notes: v.notes.trim() || empty,
     }));
 }
 
@@ -357,7 +348,8 @@ function TransportFormDialog({
 
   const submit = form.submit(async (body) => {
     if (record) await apiClient.updateTransport(organizationId, rental.id, leg, body);
-    else await apiClient.createTransport(organizationId, rental.id, { leg, ...body });
+    // No record yet, so tripSchema produced no nulls.
+    else await apiClient.createTransport(organizationId, rental.id, { leg, ...(body as Omit<Parameters<typeof apiClient.createTransport>[2], "leg">) });
     toast.success({
       title: record ? `${LEG_LABEL[leg]} plan updated` : `${LEG_LABEL[leg]} planned`,
       body: `${rentalRef(rental.id)}${body.plannedDate ? ` · ${formatDate(body.plannedDate)}` : ""}.`,
@@ -366,14 +358,7 @@ function TransportFormDialog({
     onClose();
   });
 
-  // Route and date rules show as you type; the rest wait for blur or submit.
-  const parsed = schema.safeParse(form.values);
-  const eager = (key: "pickupLocation" | "destination" | "plannedDate") =>
-    parsed.success ? undefined : parsed.error.issues.find((issue) => issue.path[0] === key)?.message;
-  const bind = (key: keyof TripValues) => {
-    const field = form.field(key);
-    return { ...field, error: key === "pickupLocation" || key === "destination" || key === "plannedDate" ? (field.error ?? eager(key)) : field.error };
-  };
+  const bind = form.field;
 
   return (
     <Dialog

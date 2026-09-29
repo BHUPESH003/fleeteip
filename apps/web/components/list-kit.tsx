@@ -24,7 +24,7 @@ import {
   type SortDirection,
 } from "@fleetip/ui";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { useUrlSearch, useUrlState } from "../../../lib/url-state";
+import { useUrlSearch, useUrlState } from "../lib/url-state";
 
 export const PAGE_SIZE = 25;
 /** Searches start at two characters (UX pass table rules). */

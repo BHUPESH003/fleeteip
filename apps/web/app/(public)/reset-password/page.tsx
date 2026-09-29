@@ -9,7 +9,6 @@ import { apiClient } from "../../../lib/api-client";
 import { useForm } from "../../../lib/form";
 import { AUTH_LINK, AuthCard, LINK_PRIMARY } from "../AuthShell";
 import { PasswordInput, newPasswordField } from "../fields";
-import { useStatusCopy } from "../../../components/status-copy";
 
 // Mirrors packages/contracts/src/identity (passwordSchema): 10–200, same as signup.
 const schema = z
@@ -25,9 +24,8 @@ const STATUS_COPY = {
 export default function ResetPasswordPage() {
   const token = useSearchParams().get("token") ?? "";
   const [done, setDone] = useState(false);
-  const form = useForm({ schema, initial: { password: "", confirm: "" }, failTitle: "Your password wasn't changed" });
-  const status = useStatusCopy(STATUS_COPY);
-  const problem = status.banner ?? form.banner;
+  const form = useForm({ statusCopy: STATUS_COPY, schema, initial: { password: "", confirm: "" }, failTitle: "Your password wasn't changed" });
+  const problem = form.banner;
 
   const requestNewLink = (
     <Link href="/forgot-password" className={AUTH_LINK}>
@@ -36,11 +34,10 @@ export default function ResetPasswordPage() {
   );
 
   const save = form.submit(async ({ password }) => {
-    await status.guard(() => apiClient.confirmPasswordReset({ token, password }));
+    await apiClient.confirmPasswordReset({ token, password });
     setDone(true);
   });
   const handleSubmit = (event: FormEvent) => {
-    status.clear();
     void save(event);
   };
 

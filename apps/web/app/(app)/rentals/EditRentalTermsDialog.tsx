@@ -50,52 +50,49 @@ function initial(rental: Rental): Record<Key, string> {
 
 type Values = Record<Key, string>;
 
-/** Only what changed: a blank value is never sent (the API has no "remove"). */
+/** Only what changed. Emptying a recorded term sends null, which removes it. */
 function changesFrom(values: Values, original: Values): UpdateRentalTermsRequest {
-  const changes: UpdateRentalTermsRequest = {};
+  const changes: Record<string, unknown> = {};
   for (const key of TEXT_KEYS) {
     const v = values[key].trim();
-    if (v && v !== original[key]) changes[key] = v;
+    if (v !== original[key]) changes[key] = v || null;
   }
   for (const key of NUMBER_KEYS) {
     const v = values[key].trim();
-    if (v && Number(v) !== Number(original[key] || NaN)) changes[key] = Number(v);
+    if (v ? Number(v) !== Number(original[key] || NaN) : Boolean(original[key])) changes[key] = v ? Number(v) : null;
   }
   if (values.rateUnit !== original.rateUnit) changes.rateUnit = values.rateUnit as RateUnit;
-  if (values.operatorScope && values.operatorScope !== original.operatorScope) changes.operatorScope = values.operatorScope as OperatorScope;
-  return changes;
+  if (values.operatorScope !== original.operatorScope) changes.operatorScope = (values.operatorScope as OperatorScope) || null;
+  return changes as UpdateRentalTermsRequest;
 }
 
-/** A recorded term can be corrected but not cleared. */
+/** Optional terms can be emptied to remove them; the rate is required. */
 function editTermsSchema(rental: Rental) {
   const original = initial(rental);
-  const kept = (key: Key) => (v: string) => Boolean(v.trim()) || !original[key];
-  const removed = (key: Key) => `The ${LABEL[key]} can be corrected but not removed.`;
-  const number = (key: NumberKey, check: (n: number) => boolean, message: string) =>
-    z
-      .string()
-      .refine(kept(key), removed(key))
-      .refine((v) => !v.trim() || check(Number(v.trim())), message);
-  const textRule = (key: TextKey) => z.string().refine(kept(key), removed(key));
-  const text = Object.fromEntries(TEXT_KEYS.map((key) => [key, textRule(key)])) as Record<TextKey, ReturnType<typeof textRule>>;
+  const number = (check: (n: number) => boolean, message: string) =>
+    z.string().refine((v) => !v.trim() || check(Number(v.trim())), message);
+  const text = Object.fromEntries(TEXT_KEYS.map((key) => [key, z.string()])) as Record<TextKey, z.ZodString>;
   return z
     .object({
       ...text,
-      rate: number("rate", (n) => n > 0, "Enter a rate above ₹0."),
-      mobilizationCharge: number("mobilizationCharge", (n) => n >= 0, "Enter 0 or more."),
-      demobilizationCharge: number("demobilizationCharge", (n) => n >= 0, "Enter 0 or more."),
-      overtimeRate: number("overtimeRate", (n) => n >= 0, "Enter 0 or more."),
-      noticePeriodDays: number("noticePeriodDays", (n) => Number.isInteger(n) && n >= 0, "Enter whole days, e.g. 15."),
+      rate: z
+        .string()
+        .refine((v) => Boolean(v.trim()), "Enter the rate. A rental always has one.")
+        .refine((v) => !v.trim() || Number(v.trim()) > 0, "Enter a rate above ₹0."),
+      mobilizationCharge: number((n) => n >= 0, "Enter 0 or more."),
+      demobilizationCharge: number((n) => n >= 0, "Enter 0 or more."),
+      overtimeRate: number((n) => n >= 0, "Enter 0 or more."),
+      noticePeriodDays: number((n) => Number.isInteger(n) && n >= 0, "Enter whole days, e.g. 15."),
       rateUnit: z.string(),
-      operatorScope: z.string().refine((v) => Boolean(v) || !original.operatorScope, "The operator term can be changed but not removed."),
+      operatorScope: z.string(),
     })
     .transform((values) => changesFrom(values, original));
 }
 
 /**
  * Terms are editable only while the rental is Confirmed (the API enforces
- * it too). Dates, machine and customer can't change on any rental yet
- * (backend ticket j).
+ * it too). Dates change through "Change dates" (the Renter approves);
+ * machine and customer can't change.
  */
 export function EditRentalTermsDialog({
   open,
@@ -126,11 +123,11 @@ export function EditRentalTermsDialog({
     if (!Object.keys(changes).length) return;
     const updated = (await apiClient.updateRentalTerms(organizationId, rental.id, changes)) as Rental;
     onUpdated(updated);
+    const removed = Object.entries(changes).filter(([, v]) => v === null).map(([k]) => LABEL[k as Key]);
+    const changed = Object.entries(changes).filter(([, v]) => v !== null).map(([k]) => LABEL[k as Key]);
     toast.success({
       title: `Terms updated on ${rentalRef(rental.id)}`,
-      body: `Changed: ${Object.keys(changes)
-        .map((k) => LABEL[k as Key])
-        .join(", ")}.`,
+      body: [changed.length ? `Changed: ${changed.join(", ")}.` : "", removed.length ? `Removed: ${removed.join(", ")}.` : ""].filter(Boolean).join(" "),
     });
     onClose();
   });
@@ -162,7 +159,8 @@ export function EditRentalTermsDialog({
         </FormBanner>
       )}
       <Alert tone="neutral" icon="lock">
-        Dates ({formatDateRange(rental.startDate, rental.endDate)}), machine and customer can&apos;t be changed on a rental yet.
+        Dates ({formatDateRange(rental.startDate, rental.endDate)}) change through &ldquo;Change dates&rdquo; in the rental&apos;s More menu.
+        Machine and customer can&apos;t be changed. Empty an optional term to remove it.
       </Alert>
       <FormSection title="Rate">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -24,7 +24,6 @@ import {
   Tr,
   UILink,
   cx,
-  useToast,
   type AttentionListItem,
   type KeyFigure,
   type MenuItem,
@@ -34,7 +33,8 @@ import { useRef, useState, type ReactNode } from "react";
 import { apiClient } from "../../../../lib/api-client";
 import { categoryIcon } from "../../../../lib/category-icon";
 import { useConnection } from "../../../../lib/connection";
-import { describeError, OFFLINE_HINT } from "../../../../lib/errors";
+import { OFFLINE_HINT } from "../../../../lib/errors";
+import { useAction } from "../../../../lib/form";
 import { formatDate, formatDateTime, formatMoney, formatRate, formatRateUnit, plural } from "../../../../lib/format";
 import { useListBackHref } from "../../../../lib/list-state";
 import { useSession } from "../../../../lib/session-context";
@@ -63,7 +63,6 @@ export function RenterRequirementView({
   reload: () => Promise<void>;
   onRequirementChanged: (requirement: Requirement) => void;
 }) {
-  const toast = useToast();
   const router = useRouter();
   const { online } = useConnection();
   const { hasPermission } = useSession();
@@ -78,6 +77,7 @@ export function RenterRequirementView({
   // "Requested" at once, before the reload brings quotationRequestedAt back.
   const [requestedFrom, setRequestedFrom] = useState<Set<string>>(new Set());
   const [requesting, setRequesting] = useState<string | null>(null);
+  const askAction = useAction();
   const responsesRef = useRef<HTMLDivElement>(null);
   const quotationsRef = useRef<HTMLDivElement>(null);
 
@@ -114,24 +114,24 @@ export function RenterRequirementView({
   const runningAuction = (auctions ?? []).find((a) => isRunning(a.auction.status)) ?? null;
   const needsSelection = (auctions ?? []).filter((a) => a.summary?.needsAttention);
 
-  async function requestQuotation(response: QuotationResponse) {
+  function requestQuotation(response: QuotationResponse) {
     const name = companyName(response.rentalCompanyOrganizationId);
+    // One action for the table: rows run one at a time; `requesting` says which row is busy.
     setRequesting(response.rentalCompanyOrganizationId);
-    // Kept by hand: a row action whose failure is a toast (there is no banner on a table row), and
-    // `requesting` tracks which row is busy. useAction only reports failures as a banner.
-    try {
-      await apiClient.requestQuotation(organizationId, requirement.id, response.rentalCompanyOrganizationId);
-      setRequestedFrom((previous) => new Set(previous).add(response.rentalCompanyOrganizationId));
-      toast.success({
-        title: `Quotation requested from ${name}`,
-        body: `They've been notified to send a formal quotation for ${ref}. It will appear under Quotations received.`,
-      });
-      void reload();
-    } catch (err) {
-      toast.error({ title: `Couldn't ask ${name} for a quotation`, body: describeError(err).body });
-    } finally {
-      setRequesting(null);
-    }
+    void askAction
+      .run(() => apiClient.requestQuotation(organizationId, requirement.id, response.rentalCompanyOrganizationId), {
+        failTitle: `Couldn't ask ${name} for a quotation`,
+        report: "toast",
+        success: () => ({
+          title: `Quotation requested from ${name}`,
+          body: `They've been notified to send a formal quotation for ${ref}. It will appear under Quotations received.`,
+        }),
+        onDone: () => {
+          setRequestedFrom((previous) => new Set(previous).add(response.rentalCompanyOrganizationId));
+          void reload();
+        },
+      })
+      .finally(() => setRequesting(null));
   }
 
   function scrollTo(target: { current: HTMLDivElement | null }) {
@@ -319,7 +319,7 @@ export function RenterRequirementView({
       <Button
         size="sm"
         variant="secondary"
-        onClick={() => void requestQuotation(response)}
+        onClick={() => requestQuotation(response)}
         busy={requesting === response.rentalCompanyOrganizationId}
         busyLabel="Requesting…"
         disabled={offline || (requesting !== null && requesting !== response.rentalCompanyOrganizationId)}

@@ -83,17 +83,11 @@ export function IsItFree({
     setBusy(true);
     setResult(null);
     try {
-      let apiAvailable: boolean | null = null;
-      if (data.machine.status !== MachineStatus.retired) {
-        const res = (await apiClient.checkRentalAvailability(
-          organizationId,
-          data.machine.id,
-          checkFrom,
-          checkTo || undefined,
-        )) as { available: boolean };
-        apiAvailable = res.available;
-      }
-      setResult(freeCheckResult(data, checkFrom, checkTo || null, apiAvailable));
+      const availability =
+        data.machine.status === MachineStatus.retired
+          ? null
+          : ((await apiClient.checkRentalAvailability(organizationId, data.machine.id, checkFrom, checkTo || undefined)) ?? null);
+      setResult(freeCheckResult(data, checkFrom, checkTo || null, availability));
     } catch (err) {
       setFailure(describeError(err, "The check didn't run").body);
     } finally {

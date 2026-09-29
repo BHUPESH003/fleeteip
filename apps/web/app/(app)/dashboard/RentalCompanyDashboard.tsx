@@ -1,7 +1,7 @@
 "use client";
 
 import type { AuctionSummary } from "@fleetip/contracts/auction";
-import { InvoiceStatus, type Invoice } from "@fleetip/contracts/billing";
+import { InvoiceStatus, type InvoiceListItem } from "@fleetip/contracts/billing";
 import type { Product } from "@fleetip/contracts/catalogue";
 import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Notification } from "@fleetip/contracts/notification";
@@ -26,7 +26,7 @@ import {
   count,
   dataOf,
   isUnpaid,
-  loadInvoiceViews,
+  toInvoiceViews,
   notificationsToActivity,
   overdueBy,
   relativeDay,
@@ -67,7 +67,7 @@ async function loadRentalCompanyDashboard(organizationId: string, access: Access
       settle(access.machines, () => apiClient.listMachines(organizationId), [] as Machine[]),
       settle(access.rentals, () => apiClient.listRentals(organizationId), [] as Rental[]),
       settle(access.quotations, () => apiClient.listQuotations(organizationId), [] as CommercialQuotation[]),
-      settle(access.invoices, () => apiClient.listInvoices(organizationId), [] as Invoice[]),
+      settle(access.invoices, () => apiClient.listInvoices(organizationId), [] as InvoiceListItem[]),
       settle(true, () => apiClient.listNotifications(organizationId).then((r) => r?.notifications), [] as Notification[]),
       // Name lookups are enrichment: without them rows fall back to "Renter".
       optional(access.quotations, () => apiClient.listRenterOrganizations(organizationId), [] as Organization[]),
@@ -77,7 +77,7 @@ async function loadRentalCompanyDashboard(organizationId: string, access: Access
     ]);
 
   const invoiceViews: Settled<InvoiceView[]> = invoices.ok
-    ? { ok: true, data: await loadInvoiceViews(organizationId, invoices.data) }
+    ? { ok: true, data: toInvoiceViews(invoices.data) }
     : { ok: false, error: invoices.error };
 
   return {

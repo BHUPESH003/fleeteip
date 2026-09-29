@@ -1,6 +1,6 @@
 "use client";
 
-import { InvoiceStatus, type Invoice, type InvoiceDetail } from "@fleetip/contracts/billing";
+import { InvoiceStatus, type Invoice, type InvoiceDetail, type InvoiceListItem } from "@fleetip/contracts/billing";
 import type { Machine } from "@fleetip/contracts/equipment";
 import { OrganizationTypeCode, type Organization, type PermissionCode } from "@fleetip/contracts/organization";
 import type { Rental } from "@fleetip/contracts/rental";
@@ -17,7 +17,6 @@ import {
   PageHeader,
   Pagination,
   Select,
-  Skeleton,
   Table,
   TableSkeleton,
   Tbody,
@@ -59,14 +58,14 @@ import {
   quoted,
   sortRows,
   useListView,
-} from "../maintenance/list-kit";
+} from "../../../components/list-kit";
 import { CreateInvoiceDialog } from "./CreateInvoiceDialog";
 import { InvoiceConfirmDialog, type InvoiceConfirm } from "./InvoiceDialogs";
 import { InvoiceDrawer, type InvoiceContext } from "./InvoiceDrawer";
-import { customerOf, daysOverdue, effectiveStatus, isUnpaid, legalNextInvoiceStatuses, runPool } from "./shared";
+import { customerOf, daysOverdue, effectiveStatus, isUnpaid, legalNextInvoiceStatuses } from "./shared";
 
 interface BillingData {
-  invoices: Invoice[];
+  invoices: InvoiceListItem[];
   /** null when the role can't view rentals. */
   rentals: Rental[] | null;
   machineCodes: Map<string, string>;
@@ -81,7 +80,7 @@ async function loadBilling(
   // .respond is) — a role without the rental permission still gets a fully
   // working invoice list.
   const [invoices, rentals, machines, renters] = await Promise.all([
-    apiClient.listInvoices(orgId) as Promise<Invoice[]>,
+    apiClient.listInvoices(orgId) as Promise<InvoiceListItem[]>,
     optional(access.rentals, () => apiClient.listRentals(orgId) as Promise<Rental[]>, null as Rental[] | null),
     optional(access.machines, () => apiClient.listMachines(orgId) as Promise<Machine[]>, [] as Machine[]),
     optional(access.customers, () => apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>, [] as Organization[]),
@@ -95,46 +94,14 @@ async function loadBilling(
 }
 
 /**
- * balanceDue (and the lazy issued → overdue flip) exist only on
- * getInvoiceDetail (plan §1, backend ticket d), so the detail is fetched
- * per issued/overdue invoice, a few at a time, after the list shows.
+ * The list carries each invoice's balance and paid date. Details are kept
+ * only for invoices re-read after a write or opened in the drawer, so a
+ * row can show the newer record until the list reloads.
  */
-function useInvoiceDetails(organizationId: string, invoices: Invoice[] | null) {
+function useInvoiceDetails() {
   const [details, setDetails] = useState<Map<string, InvoiceDetail>>(new Map());
-  const [failed, setFailed] = useState<Set<string>>(new Set());
-  const requested = useRef(new Set<string>());
-  const failedIds = useRef(new Set<string>());
-
-  useEffect(() => {
-    if (!invoices) return;
-    // New unpaid invoices, plus any that failed last time (e.g. while offline —
-    // the list reloads on reconnect).
-    const need = invoices.filter((i) => isUnpaid(i.status) && (!requested.current.has(i.id) || failedIds.current.has(i.id)));
-    if (need.length === 0) return;
-    need.forEach((i) => {
-      requested.current.add(i.id);
-      failedIds.current.delete(i.id);
-    });
-    void runPool(need, 6, async (invoice) => {
-      try {
-        const detail = (await apiClient.getInvoiceDetail(organizationId, invoice.id)) as InvoiceDetail;
-        setDetails((current) => new Map(current).set(invoice.id, detail));
-        setFailed((current) => {
-          if (!current.has(invoice.id)) return current;
-          const next = new Set(current);
-          next.delete(invoice.id);
-          return next;
-        });
-      } catch {
-        failedIds.current.add(invoice.id);
-        setFailed((current) => new Set(current).add(invoice.id));
-      }
-    });
-  }, [invoices, organizationId]);
-
-  /** Forget one invoice's detail so the next list load fetches it again. */
+  /** Forget one invoice's detail so the row falls back to the list. */
   const invalidate = useCallback((id: string) => {
-    requested.current.delete(id);
     setDetails((current) => {
       if (!current.has(id)) return current;
       const next = new Map(current);
@@ -143,11 +110,9 @@ function useInvoiceDetails(organizationId: string, invoices: Invoice[] | null) {
     });
   }, []);
   const put = useCallback((detail: InvoiceDetail) => {
-    requested.current.add(detail.invoice.id);
     setDetails((current) => new Map(current).set(detail.invoice.id, detail));
   }, []);
-
-  return { details, failed, invalidate, put };
+  return { details, invalidate, put };
 }
 
 type StatusFilter = InvoiceStatus;
@@ -208,7 +173,7 @@ function BillingView({
     [organizationId, access.rentals, access.machines, access.customers],
     canView,
   );
-  const { details, failed, invalidate, put } = useInvoiceDetails(organizationId, data?.invoices ?? null);
+  const { details, invalidate, put } = useInvoiceDetails();
   const view = useListView<SortKey>("billing", SORTS, "invoice");
   const { get, set } = view;
 
@@ -266,8 +231,7 @@ function BillingView({
     (invoice: Invoice): number | null => {
       const status = statusOf(invoice);
       if (!isUnpaid(status)) return status === InvoiceStatus.paid || status === InvoiceStatus.cancelled ? 0 : null;
-      const detail = details.get(invoice.id);
-      return detail ? detail.balanceDue : null;
+      return details.get(invoice.id)?.balanceDue ?? (invoice as InvoiceListItem).balanceDue;
     },
     [details, statusOf],
   );
@@ -338,10 +302,8 @@ function BillingView({
 
   // ------------------------------------------------------------ figures
   const unpaid = invoices.filter((i) => isUnpaid(statusOf(i)));
-  const pendingBalances = unpaid.filter((i) => !details.has(i.id) && !failed.has(i.id)).length;
-  const unknownBalances = unpaid.filter((i) => failed.has(i.id)).length;
-  const withBalance = unpaid.map((i) => ({ invoice: i, balance: details.get(i.id)?.balanceDue ?? null }));
-  const known = withBalance.filter((x): x is { invoice: Invoice; balance: number } => x.balance !== null && x.balance > 0);
+  const withBalance = unpaid.map((i) => ({ invoice: i, balance: balanceOf(i) }));
+  const known = withBalance.filter((x): x is { invoice: InvoiceListItem; balance: number } => x.balance !== null && x.balance > 0);
   const outstanding = known.reduce((sum, x) => sum + x.balance, 0);
   const overdue = known.filter((x) => statusOf(x.invoice) === InvoiceStatus.overdue).sort((a, b) => a.invoice.dueDate.localeCompare(b.invoice.dueDate));
   const overdueAmount = overdue.reduce((sum, x) => sum + x.balance, 0);
@@ -349,11 +311,10 @@ function BillingView({
   const weekAhead = addDays(today, 7);
   const dueSoon = known.filter((x) => statusOf(x.invoice) === InvoiceStatus.issued && x.invoice.dueDate <= weekAhead).sort((a, b) => a.invoice.dueDate.localeCompare(b.invoice.dueDate));
   const monthKey = today.slice(0, 7);
-  // An invoice becomes Paid when a payment covers it, and nothing changes it
-  // after that — so its last update is when it was paid.
-  const paidThisMonth = invoices.filter((i) => statusOf(i) === InvoiceStatus.paid && i.updatedAt.slice(0, 7) === monthKey);
-  const balancesNote = pendingBalances ? "Working out balances…" : unknownBalances ? `${plural(unknownBalances, "balance")} couldn't load` : null;
-  const figureValue = (amount: number) => (pendingBalances ? <Skeleton className="h-[19px] w-24" /> : formatMoney(amount));
+  // paidAt is the date of the payment that cleared it (list field).
+  const paidThisMonth = invoices.filter((i) => statusOf(i) === InvoiceStatus.paid && (i.paidAt ?? i.updatedAt).slice(0, 7) === monthKey);
+  const balancesNote: string | null = null;
+  const figureValue = (amount: number) => formatMoney(amount);
 
   const figures: KeyFigure[] = [
     {
@@ -369,7 +330,7 @@ function BillingView({
       context: overdueCount
         ? `${plural(overdueCount, "invoice")} past the due date${overdue[0] ? ` · oldest due ${formatShortDate(overdue[0].invoice.dueDate)}` : ""}`
         : "Nothing is past its due date",
-      tone: overdueAmount > 0 && !pendingBalances ? "danger" : "default",
+      tone: overdueAmount > 0 ? "danger" : "default",
     },
     {
       key: "soon",
@@ -593,7 +554,7 @@ function BillingView({
                               <CellStack title={counterpart.name} sub={counterpart.note} />
                             ) : (
                               <span className="text-xs italic text-disabled-text">
-                                {data.rentals ? "Not recorded" : "Needs the Rentals permission"}
+                                {data.rentals ? "Not specified" : "Needs the Rentals permission"}
                               </span>
                             )}
                           </Td>
@@ -613,20 +574,10 @@ function BillingView({
                           </Td>
                           <Td align="right" className="font-mono text-xs font-semibold">
                             {isUnpaid(status) ? (
-                              detail ? (
-                                detail.balanceDue > 0 ? (
-                                  <span className={isOverdue ? "text-destructive" : undefined}>{formatMoney(detail.balanceDue)}</span>
-                                ) : (
-                                  <span className="text-disabled-text">—</span>
-                                )
-                              ) : failed.has(invoice.id) ? (
-                                <span className="font-normal text-meta-light" title="The balance comes from the invoice detail, which didn't load">
-                                  Open invoice
-                                </span>
+                              (balanceOf(invoice) ?? 0) > 0 ? (
+                                <span className={isOverdue ? "text-destructive" : undefined}>{formatMoney(balanceOf(invoice) ?? 0)}</span>
                               ) : (
-                                <span className="inline-flex justify-end">
-                                  <Skeleton className="h-3 w-16" />
-                                </span>
+                                <span className="text-disabled-text">—</span>
                               )
                             ) : (
                               <span className="text-disabled-text" title={status === InvoiceStatus.draft ? "Not issued yet" : undefined}>

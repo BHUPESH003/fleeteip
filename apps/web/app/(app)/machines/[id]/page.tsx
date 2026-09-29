@@ -303,13 +303,11 @@ function MachineDetailView({
       separatorBefore: true,
       hint: offline
         ? OFFLINE_HINT
-        : !access.rentals
-          ? "Your role can't view rentals, so FleetIP can't confirm nothing is booked on this machine."
-          : blocker
-            ? `Not possible while ${rentalRef(blocker.id)} is ${blocker.status === RentalStatus.off_rent ? "off rent and returning" : blocker.status === RentalStatus.active ? "Active" : "Confirmed"}.`
-            : "Stops new quotations and rentals. History is kept. This is final.",
+        : blocker
+          ? `Not possible while ${rentalRef(blocker.id)} is ${blocker.status === RentalStatus.off_rent ? "off rent and returning" : blocker.status === RentalStatus.active ? "Active" : "Confirmed"}.`
+          : "Stops new quotations and rentals. History is kept. This is final.",
       onSelect: () => setDialog("retire"),
-      disabled: offline || Boolean(blocker) || !access.rentals,
+      disabled: offline || Boolean(blocker),
     });
   }
 

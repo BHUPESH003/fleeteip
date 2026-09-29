@@ -44,14 +44,3 @@ export function customerOf(rental: Rental | undefined, names: Map<string, string
   return null;
 }
 
-/** Runs `worker` over `items`, at most `size` at a time (invoice details are one call each — ticket d). */
-export async function runPool<T>(items: T[], size: number, worker: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const lanes = Array.from({ length: Math.min(size, items.length) }, async () => {
-    while (next < items.length) {
-      const item = items[next++];
-      if (item !== undefined) await worker(item);
-    }
-  });
-  await Promise.all(lanes);
-}

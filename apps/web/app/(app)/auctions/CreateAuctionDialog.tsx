@@ -6,7 +6,7 @@ import { Button, Dialog, FormBanner, Input, RadioGroup, SearchSelect, useToast }
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { z } from "zod";
-import { ApiError, apiClient } from "../../../lib/api-client";
+import { apiClient } from "../../../lib/api-client";
 import { OFFLINE_HINT } from "../../../lib/errors";
 import { formatDateTime, formatMoney } from "../../../lib/format";
 import { useForm } from "../../../lib/form";
@@ -87,18 +87,6 @@ const createAuctionSchema = z
     },
   }));
 
-/**
- * The API's 409 here ("requirement is not open") carries no `field` yet, so
- * `conflicts` can't place it. Tag it as a requirementId conflict; drop this
- * once auction-service passes the field to ConflictError.
- */
-function conflictOnRequirement(error: unknown): never {
-  if (error instanceof ApiError && error.status === 409 && !error.field) {
-    throw new ApiError(error.message, 409, error.code, [], "requirementId");
-  }
-  throw error;
-}
-
 export function CreateAuctionDialog({ open, onClose, organizationId, requirementId, requirements, requirementLabel, onCreated }: CreateAuctionDialogProps) {
   const toast = useToast();
   const router = useRouter();
@@ -123,7 +111,7 @@ export function CreateAuctionDialog({ open, onClose, organizationId, requirement
   const bind = form.field;
 
   const handleSubmit = form.submit(async ({ requirementId: id, body }) => {
-    const auction = (await apiClient.createAuction(organizationId, id, body).catch(conflictOnRequirement)) as Auction;
+    const auction = (await apiClient.createAuction(organizationId, id, body)) as Auction;
     toast.success({
       title: `Auction ${auctionRef(auction.id)} created`,
       body: `${DIRECTION[auction.biddingDirection].rule}, base ${formatMoney(auction.basePrice)}. ${
@@ -178,6 +166,7 @@ export function CreateAuctionDialog({ open, onClose, organizationId, requirement
         ) : (
           <SearchSelect
             label="Requirement"
+            name="requirementId"
             required
             options={options}
             loading={requirements === undefined}

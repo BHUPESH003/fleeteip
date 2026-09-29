@@ -1,6 +1,6 @@
 "use client";
 
-import { InvoiceStatus, type Invoice, type InvoiceDetail } from "@fleetip/contracts/billing";
+import { InvoiceStatus, type Invoice, type InvoiceListItem } from "@fleetip/contracts/billing";
 import type { Notification } from "@fleetip/contracts/notification";
 import {
   Button,
@@ -16,11 +16,9 @@ import {
 } from "@fleetip/ui";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { apiClient } from "../../../lib/api-client";
-import { formatDateTime, formatNumber, formatRelativeTime, plural, todayIsoDate } from "../../../lib/format";
+import { formatDateTime, formatNumber, formatRelativeTime, plural } from "../../../lib/format";
 import { ROUTE_BY_RESOURCE_TYPE } from "../../../lib/navigation";
 import { Status } from "../../../lib/status";
-import { optional } from "../../../lib/use-load";
 import { isFailedTile, type ActivityItem, type AttentionItem, type ContextTone, type KpiTile, type Severity } from "./types";
 
 // ------------------------------------------------------------------ loading
@@ -49,34 +47,19 @@ export function dataOf<T>(settled: Settled<T>, fallback: T): T {
 
 export interface InvoiceView {
   invoice: Invoice;
-  /** Status after the detail call (which is what flips a past-due invoice to overdue). */
+  /** Stored status, with an unpaid past-due invoice read as overdue. */
   status: InvoiceStatus;
   /** Balance still owed; 0 for anything not issued/overdue. */
   balance: number;
 }
 
-/**
- * balanceDue and the overdue flip both come only from getInvoiceDetail
- * (plan §1), so it's fetched per issued/overdue invoice. If one detail call
- * fails, that invoice falls back to its total and an issued invoice past
- * its due date is treated as overdue.
- */
-export async function loadInvoiceViews(organizationId: string, invoices: Invoice[]): Promise<InvoiceView[]> {
-  const today = todayIsoDate();
-  return Promise.all(
-    invoices.map(async (invoice): Promise<InvoiceView> => {
-      if (invoice.status !== InvoiceStatus.issued && invoice.status !== InvoiceStatus.overdue) return { invoice, status: invoice.status, balance: 0 };
-      const detail = await optional(
-        true,
-        () => apiClient.getInvoiceDetail(organizationId, invoice.id),
-        null as InvoiceDetail | null,
-      );
-      const status: InvoiceStatus =
-        detail?.invoice.status ?? (invoice.status === InvoiceStatus.issued && invoice.dueDate < today ? InvoiceStatus.overdue : invoice.status);
-      const unpaid = status === InvoiceStatus.issued || status === InvoiceStatus.overdue;
-      return { invoice, status, balance: unpaid ? (detail?.balanceDue ?? invoice.totalAmount) : 0 };
-    }),
-  );
+/** Status and balance straight from the invoice list (it carries balanceDue and overdue). */
+export function toInvoiceViews(invoices: InvoiceListItem[]): InvoiceView[] {
+  return invoices.map((invoice) => {
+    const status: InvoiceStatus = invoice.overdue ? InvoiceStatus.overdue : invoice.status;
+    const unpaid = status === InvoiceStatus.issued || status === InvoiceStatus.overdue;
+    return { invoice, status, balance: unpaid ? invoice.balanceDue : 0 };
+  });
 }
 
 export function isUnpaid(view: InvoiceView): boolean {

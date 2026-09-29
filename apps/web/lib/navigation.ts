@@ -121,6 +121,8 @@ export const ROUTE_BY_RESOURCE_TYPE: Record<string, (id: string) => string> = {
   quotation: (id) => `/quotations/${id}`,
   auction: (id) => `/auctions?auctionId=${id}`,
   rental: (id) => `/rentals/${id}`,
+  // reminder.logsheet_missing — straight to the rental's Logsheets tab.
+  rental_logsheets: (id) => `/rentals/${id}?tab=logsheets`,
   machine: (id) => `/machines/${id}`,
   transport: (id) => `/transport/${id}`,
   work_order: (id) => `/work-orders/${id}`,

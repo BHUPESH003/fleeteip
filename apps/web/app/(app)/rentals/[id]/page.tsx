@@ -1,12 +1,12 @@
 "use client";
 
-import { InvoiceStatus, type Invoice, type InvoiceDetail } from "@fleetip/contracts/billing";
+import type { InvoiceListItem } from "@fleetip/contracts/billing";
 import type { Product } from "@fleetip/contracts/catalogue";
 import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Logsheet } from "@fleetip/contracts/logsheet";
 import type { MaintenanceRecord } from "@fleetip/contracts/maintenance";
 import { OrganizationTypeCode, type Organization } from "@fleetip/contracts/organization";
-import { RentalStatus, type Rental } from "@fleetip/contracts/rental";
+import { RentalStatus, type Rental, type RentalEvent } from "@fleetip/contracts/rental";
 import type { TransportRecord } from "@fleetip/contracts/transport";
 import type { WorkOrder } from "@fleetip/contracts/work-order";
 import {
@@ -37,10 +37,12 @@ import { optional, useLoad } from "../../../../lib/use-load";
 import { productName } from "../../machines/shared";
 import { EditRentalTermsDialog } from "../EditRentalTermsDialog";
 import { LogsheetDrawer } from "../LogsheetDrawer";
-import { ActualDatesCard, ChainCard, CounterpartyCard, MachineCard, RecordInfo, RenterDatesCallout, TermsCard } from "./cards";
+import { ActivityCard, ActualDatesCard, ChainCard, CounterpartyCard, DateChangeCallout, MachineCard, RenterDatesCallout, TermsCard } from "./cards";
 import {
   CancelRentalDialog,
+  ChangeDatesDialog,
   CompleteRentalDialog,
+  CorrectDatesDialog,
   DisputeDatesDialog,
   OffRentDialog,
   StartRentalDialog,
@@ -75,17 +77,19 @@ import { RentalRecordTabs } from "./RentalRecordTabs";
  * missing permission empties a section instead of failing the page.
  */
 async function loadRental(orgId: string, id: string, access: RentalAccess): Promise<RentalData> {
-  const [rental, machines, products, allRentals, transport, allInvoices, logsheets, workOrders, renters] = await Promise.all([
+  const [rental, machines, products, allRentals, transport, allInvoices, logsheets, workOrders, renters, events] = await Promise.all([
     apiClient.getRental(orgId, id),
     optional(access.machines, () => apiClient.listMachines(orgId) as Promise<Machine[]>, [] as Machine[]),
     // Products are only fetched to name the machine's product, so they share its guard.
     optional(access.machines, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
     optional(access.manage, () => apiClient.listRentals(orgId) as Promise<Rental[]>, [] as Rental[]),
     optional(access.transport, () => apiClient.listTransportForRental(orgId, id) as Promise<TransportRecord[]>, [] as TransportRecord[]),
-    optional(access.billing, () => apiClient.listInvoices(orgId) as Promise<Invoice[]>, [] as Invoice[]),
+    optional(access.billing, () => apiClient.listInvoices(orgId) as Promise<InvoiceListItem[]>, [] as InvoiceListItem[]),
     optional(access.logsheets, () => apiClient.listLogsheetsForRental(orgId, id) as Promise<Logsheet[]>, [] as Logsheet[]),
     optional(access.workOrders, () => apiClient.listWorkOrders(orgId) as Promise<WorkOrder[]>, [] as WorkOrder[]),
     optional(access.customers, () => apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>, [] as Organization[]),
+    // Same permission as the page itself; a failed read just empties the Activity card.
+    optional(true, () => apiClient.listRentalEvents(orgId, id) as Promise<RentalEvent[]>, [] as RentalEvent[]),
   ]);
   if (!rental) throw new ApiError("Rental not found", 404, "not_found");
 
@@ -95,21 +99,12 @@ async function loadRental(orgId: string, id: string, access: RentalAccess): Prom
     .filter((i) => i.rentalId === rental.id)
     .sort((a, b) => b.billingPeriodStart.localeCompare(a.billingPeriodStart));
 
-  // Wave 2: the machine's workshop jobs and the balance on unpaid invoices
-  // (balanceDue and the overdue flip only exist on invoice detail — plan §1).
-  const unpaid = invoices.filter((i) => i.status === InvoiceStatus.issued || i.status === InvoiceStatus.overdue);
-  const [maintenance, details] = await Promise.all([
-    optional(
-      access.maintenance,
-      () => apiClient.listMaintenanceForMachine(orgId, rental.machineId) as Promise<MaintenanceRecord[]>,
-      [] as MaintenanceRecord[],
-    ),
-    Promise.all(
-      unpaid.map((i) =>
-        optional(access.billing, () => apiClient.getInvoiceDetail(orgId, i.id) as Promise<InvoiceDetail>, null as InvoiceDetail | null),
-      ),
-    ),
-  ]);
+  // Wave 2: the machine's workshop jobs (needs the rental's machineId).
+  const maintenance = await optional(
+    access.maintenance,
+    () => apiClient.listMaintenanceForMachine(orgId, rental.machineId) as Promise<MaintenanceRecord[]>,
+    [] as MaintenanceRecord[],
+  );
 
   return {
     rental,
@@ -118,7 +113,7 @@ async function loadRental(orgId: string, id: string, access: RentalAccess): Prom
     machineRentals: allRentals.filter((r) => r.machineId === rental.machineId),
     transport,
     invoices,
-    invoiceDetails: new Map(details.filter((d): d is InvoiceDetail => d !== null).map((d) => [d.invoice.id, d])),
+    events,
     logsheets: logsheets.filter((l) => l.rentalId === rental.id),
     workOrder: workOrders.find((w) => w.rentalId === rental.id) ?? null,
     maintenance: maintenance
@@ -197,7 +192,7 @@ export default function RentalDetailPage() {
   return <RentalDetailView key={id} data={data} organizationId={organizationId} reload={reload} />;
 }
 
-type DialogKey = "start" | "offrent" | "complete" | "cancel" | "terms" | "verify" | "dispute";
+type DialogKey = "start" | "offrent" | "complete" | "cancel" | "terms" | "dates" | "correct" | "verify" | "dispute";
 
 const PRIMARY: Record<ForwardTransition, { label: string; icon: IconName; dialog: DialogKey }> = {
   active: { label: "Start rental", icon: "calendar_check", dialog: "start" },
@@ -268,9 +263,26 @@ function RentalDetailView({
       key: "terms",
       label: "Edit terms",
       icon: editable ? "edit" : "lock",
-      hint: offline ? OFFLINE_HINT : editable ? "Rate, charges and operating terms. Dates, machine and customer can't change." : TERMS_LOCKED,
+      hint: offline ? OFFLINE_HINT : editable ? "Rate, charges and operating terms. Machine and customer can't change." : TERMS_LOCKED,
       disabled: offline || !editable,
       onSelect: () => setDialog("terms"),
+    });
+    const datesOpen = rental.status === RentalStatus.confirmed || rental.status === RentalStatus.active;
+    menuItems.push({
+      key: "dates",
+      label: "Change dates",
+      icon: datesOpen && !rental.pendingDateChange ? "calendar_check" : "lock",
+      hint: offline
+        ? OFFLINE_HINT
+        : !datesOpen
+          ? `A ${statusLabel("rental", rental.status).toLowerCase()} rental's dates can't change.`
+          : rental.pendingDateChange
+            ? "A date change is already waiting for the customer. Withdraw it to propose another."
+            : rental.renterOrganizationId
+              ? `${rental.status === RentalStatus.active ? "Extend or end early. " : ""}The customer accepts or rejects the new dates.`
+              : `${rental.status === RentalStatus.active ? "Extend or end early. " : ""}The customer isn't on FleetIP, so it applies straight away.`,
+      disabled: offline || !datesOpen || Boolean(rental.pendingDateChange),
+      onSelect: () => setDialog("dates"),
     });
   }
   if (access.billingWrite && rental.status !== RentalStatus.cancelled) {
@@ -410,6 +422,7 @@ function RentalDetailView({
       />
 
       <PageBody>
+        <DateChangeCallout data={data} organizationId={organizationId} onChanged={changed} disabledReason={offline ? OFFLINE_HINT : null} />
         {access.isRenter && (
           <RenterDatesCallout
             data={data}
@@ -445,8 +458,12 @@ function RentalDetailView({
           >
             <CounterpartyCard data={data} />
             <MachineCard data={data} />
-            <ActualDatesCard data={data} />
-            <RecordInfo data={data} />
+            <ActualDatesCard
+              data={data}
+              onCorrect={access.manage ? () => setDialog("correct") : undefined}
+              disabledReason={offline ? OFFLINE_HINT : null}
+            />
+            <ActivityCard data={data} organizationId={organizationId} />
           </aside>
         </div>
       </PageBody>
@@ -457,6 +474,8 @@ function RentalDetailView({
           <OffRentDialog open={dialog === "offrent"} onClose={close} organizationId={organizationId} data={data} onChanged={changed} />
           <CompleteRentalDialog open={dialog === "complete"} onClose={close} organizationId={organizationId} data={data} onChanged={changed} />
           <CancelRentalDialog open={dialog === "cancel"} onClose={close} organizationId={organizationId} data={data} onChanged={changed} />
+          <ChangeDatesDialog open={dialog === "dates"} onClose={close} organizationId={organizationId} data={data} onChanged={changed} />
+          <CorrectDatesDialog open={dialog === "correct"} onClose={close} organizationId={organizationId} data={data} onChanged={changed} />
           {rental.status === RentalStatus.confirmed && (
             <EditRentalTermsDialog open={dialog === "terms"} onClose={close} organizationId={organizationId} rental={rental} onUpdated={changed} />
           )}

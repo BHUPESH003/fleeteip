@@ -56,7 +56,7 @@ import {
   quoted,
   sortRows,
   useListView,
-} from "./list-kit";
+} from "../../../components/list-kit";
 import {
   MaintenanceTransitionDialog,
   canCancelMaintenance,

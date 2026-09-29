@@ -1,6 +1,6 @@
 "use client";
 
-import type { PlatformOrganization, PlatformUser } from "@fleetip/contracts/platform-admin";
+import { AccountStatus, type PlatformOrganization, type PlatformUser } from "@fleetip/contracts/platform-admin";
 import {
   Button,
   CellStack,
@@ -35,7 +35,6 @@ const PAGE_SIZE = 25;
 
 const TYPE_LABEL: Record<string, string> = { rental_company: "Rental company", renter: "Renter" };
 
-type AccountStatus = "active" | "suspended";
 
 function useListParams() {
   const { get, set } = useUrlState();
@@ -91,14 +90,14 @@ function StatusAction({
 }) {
   return (
     <Button
-      variant={status === "active" ? "danger" : "secondary"}
+      variant={status === AccountStatus.active ? "danger" : "secondary"}
       size="sm"
       onClick={onClick}
       disabled={!online}
       title={!online ? OFFLINE_HINT : undefined}
-      aria-label={`${status === "active" ? "Suspend" : "Reactivate"} ${label}`}
+      aria-label={`${status === AccountStatus.active ? "Suspend" : "Reactivate"} ${label}`}
     >
-      {status === "active" ? "Suspend" : "Reactivate"}
+      {status === AccountStatus.active ? "Suspend" : "Reactivate"}
     </Button>
   );
 }
@@ -126,15 +125,15 @@ export function OrganizationsSection() {
     });
   const { pageCount, current, shown } = paginate(rows, list.page);
   const filtersActive = Boolean(list.query || typeFilter || statusFilter);
-  const suspendedCount = (load.data ?? []).filter((org) => org.status === "suspended").length;
+  const suspendedCount = (load.data ?? []).filter((org) => org.status === AccountStatus.suspended).length;
 
   const changeStatus = async () => {
     if (!target) return;
-    const next: AccountStatus = target.status === "active" ? "suspended" : "active";
+    const next: AccountStatus = target.status === AccountStatus.active ? AccountStatus.suspended : AccountStatus.active;
     await action.run(() => adminApiClient.setOrganizationStatus(target.id, next), {
-      failTitle: next === "suspended" ? `${target.name} wasn't suspended` : `${target.name} wasn't reactivated`,
+      failTitle: next === AccountStatus.suspended ? `${target.name} wasn't suspended` : `${target.name} wasn't reactivated`,
       success: () =>
-        next === "suspended"
+        next === AccountStatus.suspended
           ? { title: `${target.name} suspended`, body: "Its members can't use it until you reactivate it." }
           : { title: `${target.name} reactivated`, body: "Its members can use it again, with the roles they had." },
       onDone: (updated) => {
@@ -190,8 +189,8 @@ export function OrganizationsSection() {
             onChange={(event) => list.set({ status: event.target.value || null })}
             options={[
               { value: "", label: "Any status" },
-              { value: "active", label: "Active" },
-              { value: "suspended", label: "Suspended" },
+              { value: AccountStatus.active, label: "Active" },
+              { value: AccountStatus.suspended, label: "Suspended" },
             ]}
             hideOptional
           />
@@ -285,12 +284,12 @@ export function OrganizationsSection() {
           open
           onClose={() => setTarget(null)}
           onConfirm={changeStatus}
-          title={target.status === "active" ? `Suspend ${target.name}?` : `Reactivate ${target.name}?`}
+          title={target.status === AccountStatus.active ? `Suspend ${target.name}?` : `Reactivate ${target.name}?`}
           description={`${TYPE_LABEL[target.organizationTypeCode] ?? "Organization"} · ${target.code}`}
-          icon={target.status === "active" ? "lock" : "success"}
-          tone={target.status === "active" ? "danger" : "success"}
+          icon={target.status === AccountStatus.active ? "lock" : "success"}
+          tone={target.status === AccountStatus.active ? "danger" : "success"}
           consequences={
-            target.status === "active"
+            target.status === AccountStatus.active
               ? [
                   "Every member loses access to it straight away: FleetIP refuses their requests for this organization until it's reactivated.",
                   "Members keep their FleetIP logins and any other organizations they belong to.",
@@ -298,11 +297,11 @@ export function OrganizationsSection() {
                 ]
               : ["Its members can use it again straight away, with the roles they had before."]
           }
-          confirmLabel={target.status === "active" ? "Suspend organization" : "Reactivate organization"}
-          confirmVariant={target.status === "active" ? "danger" : "primary"}
-          cancelLabel={target.status === "active" ? "Keep active" : "Keep suspended"}
+          confirmLabel={target.status === AccountStatus.active ? "Suspend organization" : "Reactivate organization"}
+          confirmVariant={target.status === AccountStatus.active ? "danger" : "primary"}
+          cancelLabel={target.status === AccountStatus.active ? "Keep active" : "Keep suspended"}
           busy={action.busy}
-          busyLabel={target.status === "active" ? "Suspending…" : "Reactivating…"}
+          busyLabel={target.status === AccountStatus.active ? "Suspending…" : "Reactivating…"}
           confirmDisabled={!online}
         />
       )}
@@ -331,15 +330,15 @@ export function UsersSection() {
     });
   const { pageCount, current, shown } = paginate(rows, list.page);
   const filtersActive = Boolean(list.query || statusFilter);
-  const suspendedCount = (load.data ?? []).filter((user) => user.status === "suspended").length;
+  const suspendedCount = (load.data ?? []).filter((user) => user.status === AccountStatus.suspended).length;
 
   const changeStatus = async () => {
     if (!target) return;
-    const next: AccountStatus = target.status === "active" ? "suspended" : "active";
+    const next: AccountStatus = target.status === AccountStatus.active ? AccountStatus.suspended : AccountStatus.active;
     await action.run(() => adminApiClient.setUserStatus(target.id, next), {
-      failTitle: next === "suspended" ? `${target.displayName} wasn't suspended` : `${target.displayName} wasn't reactivated`,
+      failTitle: next === AccountStatus.suspended ? `${target.displayName} wasn't suspended` : `${target.displayName} wasn't reactivated`,
       success: () =>
-        next === "suspended"
+        next === AccountStatus.suspended
           ? { title: `${target.displayName} suspended`, body: "They can't sign in until you reactivate them." }
           : { title: `${target.displayName} reactivated`, body: "They can sign in again." },
       onDone: (updated) => {
@@ -382,8 +381,8 @@ export function UsersSection() {
             onChange={(event) => list.set({ status: event.target.value || null })}
             options={[
               { value: "", label: "Any status" },
-              { value: "active", label: "Active" },
-              { value: "suspended", label: "Suspended" },
+              { value: AccountStatus.active, label: "Active" },
+              { value: AccountStatus.suspended, label: "Suspended" },
             ]}
             hideOptional
           />
@@ -471,12 +470,12 @@ export function UsersSection() {
           open
           onClose={() => setTarget(null)}
           onConfirm={changeStatus}
-          title={target.status === "active" ? `Suspend ${target.displayName}?` : `Reactivate ${target.displayName}?`}
+          title={target.status === AccountStatus.active ? `Suspend ${target.displayName}?` : `Reactivate ${target.displayName}?`}
           description={target.email}
-          icon={target.status === "active" ? "lock" : "success"}
-          tone={target.status === "active" ? "danger" : "success"}
+          icon={target.status === AccountStatus.active ? "lock" : "success"}
+          tone={target.status === AccountStatus.active ? "danger" : "success"}
           consequences={
-            target.status === "active"
+            target.status === AccountStatus.active
               ? [
                   "They can't sign in to FleetIP until you reactivate them.",
                   "If they're signed in right now, that session keeps working until it expires — FleetIP doesn't end open sessions yet.",
@@ -484,11 +483,11 @@ export function UsersSection() {
                 ]
               : ["They can sign in again straight away, into the organizations they belong to."]
           }
-          confirmLabel={target.status === "active" ? "Suspend user" : "Reactivate user"}
-          confirmVariant={target.status === "active" ? "danger" : "primary"}
-          cancelLabel={target.status === "active" ? "Keep active" : "Keep suspended"}
+          confirmLabel={target.status === AccountStatus.active ? "Suspend user" : "Reactivate user"}
+          confirmVariant={target.status === AccountStatus.active ? "danger" : "primary"}
+          cancelLabel={target.status === AccountStatus.active ? "Keep active" : "Keep suspended"}
           busy={action.busy}
-          busyLabel={target.status === "active" ? "Suspending…" : "Reactivating…"}
+          busyLabel={target.status === AccountStatus.active ? "Suspending…" : "Reactivating…"}
           confirmDisabled={!online}
         />
       )}

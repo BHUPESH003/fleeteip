@@ -5,7 +5,7 @@ import type { Rental } from "@fleetip/contracts/rental";
 import { Button, Checkbox, Drawer, FormBanner, Input, Textarea, useToast } from "@fleetip/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
-import { ApiError, apiClient } from "../../../lib/api-client";
+import { apiClient } from "../../../lib/api-client";
 import { parseValidationIssues } from "../../../lib/errors";
 import { useForm } from "../../../lib/form";
 import { formatDate, formatMoney, formatNumber, rentalRef, todayIsoDate } from "../../../lib/format";
@@ -110,19 +110,26 @@ export function LogsheetDrawer({
   const lastUnit = [...logsheets].sort((a, b) => b.logDate.localeCompare(a.logDate)).find((l) => l.fuelUnit)?.fuelUnit ?? "L";
   const byDate = new Map(logsheets.map((l) => [l.logDate, l]));
   const schema = useMemo(() => logsheetSchema(rental, today), [rental, today]);
-  const form = useForm({ schema, initial: valuesFrom(byDate.get(initialDate), initialDate, lastUnit), failTitle: "The logsheet wasn't saved" });
+  const form = useForm({
+    schema,
+    initial: valuesFrom(byDate.get(initialDate), initialDate, lastUnit),
+    failTitle: "The logsheet wasn't saved",
+    statusCopy: {
+      409: {
+        title: "This rental can't take logsheets now",
+        body: `${rentalRef(rental.id)} isn't Active any more. Reload the page to see its current status.`,
+      },
+    },
+  });
   const { values, set, reset } = form;
-  // Special cases the hook can't express: the 409 (rental no longer Active) has
-  // its own banner, and a date-range 400 comes back without a path, so it's
-  // recognised by its text ("Log date cannot be…") and shown on the date.
-  const [notActive, setNotActive] = useState(false);
+  // The one case the hook can't express: a date-range 400 comes back without
+  // a path, so it's recognised by its text ("Log date cannot be…") and shown on the date.
   const [dateIssue, setDateIssue] = useState<string | null>(null);
   const edited = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     reset(valuesFrom(byDate.get(initialDate), initialDate, lastUnit));
-    setNotActive(false);
     setDateIssue(null);
     edited.current = false;
     // byDate/lastUnit derive from logsheets, which the caller refreshes after saving
@@ -167,13 +174,11 @@ export function LogsheetDrawer({
   };
 
   const submit = form.submit(async (input) => {
-    setNotActive(false);
     setDateIssue(null);
     let saved: Logsheet;
     try {
       saved = (await apiClient.submitLogsheet(organizationId, rental.id, input)) as Logsheet;
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) return setNotActive(true);
       const unpathed = parseValidationIssues(err).formError;
       if (unpathed && /log date/i.test(unpathed)) return setDateIssue(unpathed);
       throw err;
@@ -210,11 +215,6 @@ export function LogsheetDrawer({
           For rental <span className="font-mono text-ink-strong">{ref}</span>. One logsheet per date — submitting a date that
           already has one corrects it.
         </p>
-        {notActive && (
-          <FormBanner tone="error" title="This rental can't take logsheets now">
-            {ref} isn&apos;t Active any more. Reload the page to see its current status.
-          </FormBanner>
-        )}
         {form.banner && (
           <FormBanner tone="error" title={form.banner.title}>
             {form.banner.body}

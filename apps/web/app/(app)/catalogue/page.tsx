@@ -41,7 +41,15 @@ import { useUrlSearch, useUrlState } from "../../../lib/url-state";
 import { optional, useLoad } from "../../../lib/use-load";
 import { RegisterMachineDialog } from "../machines/RegisterMachineDialog";
 import { CategoryFormDialog, ProductFormDialog, SubcategoryFormDialog } from "./AdminDialogs";
-import { DisabledBadge, ProductToggleDialog, RowActions, disabledRemoveItem, productToggleItem } from "./parts";
+import {
+  DisabledBadge,
+  ProductToggleDialog,
+  RowActions,
+  TaxonomyToggleDialog,
+  productToggleItem,
+  taxonomyToggleItem,
+  type TaxonomyTarget,
+} from "./parts";
 import { formatCapacity, loadCatalogue, machineCountsByProduct, tenantCatalogueWriter, type CatalogueIndex } from "./shared";
 
 type TabKey = "categories" | "subcategories" | "products";
@@ -58,7 +66,8 @@ type DialogState =
   | { kind: "subcategory"; subcategory?: ProductSubcategory; fixedCategoryId?: string }
   | { kind: "product"; product?: Product; fixedSubcategoryId?: string }
   | { kind: "register"; product: Product; subcategory: ProductSubcategory | undefined }
-  | { kind: "toggle"; product: Product };
+  | { kind: "toggle"; product: Product }
+  | { kind: "taxonomy"; target: TaxonomyTarget };
 
 export default function CataloguePage() {
   const { currentMembership, hasPermission } = useSession();
@@ -262,7 +271,7 @@ export default function CataloguePage() {
     return [
       { key: "rename", label: "Rename category", icon: "edit", hint: offline ? OFFLINE_HINT : "The code stays the same.", disabled: offline, onSelect: () => setDialog({ kind: "category", category }) },
       { key: "add-sub", label: "Add subcategory", icon: "plus", hint: offline ? OFFLINE_HINT : `Inside ${category.name}.`, disabled: offline, onSelect: () => setDialog({ kind: "subcategory", fixedCategoryId: category.id }) },
-      disabledRemoveItem("Disable category"),
+      taxonomyToggleItem({ kind: "category", item: category }, offline, () => setDialog({ kind: "taxonomy", target: { kind: "category", item: category } })),
     ];
   }
 
@@ -271,7 +280,9 @@ export default function CataloguePage() {
     return [
       { key: "rename", label: "Rename subcategory", icon: "edit", hint: offline ? OFFLINE_HINT : "The code stays the same.", disabled: offline, onSelect: () => setDialog({ kind: "subcategory", subcategory }) },
       { key: "add-product", label: "Add product", icon: "plus", hint: offline ? OFFLINE_HINT : `Inside ${subcategory.name}.`, disabled: offline, onSelect: () => setDialog({ kind: "product", fixedSubcategoryId: subcategory.id }) },
-      disabledRemoveItem("Disable subcategory"),
+      taxonomyToggleItem({ kind: "subcategory", item: subcategory }, offline, () =>
+        setDialog({ kind: "taxonomy", target: { kind: "subcategory", item: subcategory } }),
+      ),
     ];
   }
 
@@ -283,8 +294,8 @@ export default function CataloguePage() {
         key: "register",
         label: "Register as machine",
         icon: "machine",
-        hint: offline ? OFFLINE_HINT : "Adds a machine of this product to your fleet.",
-        disabled: offline,
+        hint: offline ? OFFLINE_HINT : product.disabledBy ? "Disabled products can't be registered." : "Adds a machine of this product to your fleet.",
+        disabled: offline || Boolean(product.disabledBy),
         onSelect: () => setDialog({ kind: "register", product, subcategory: subcategory ?? undefined }),
       });
     }
@@ -377,6 +388,7 @@ export default function CataloguePage() {
                         </UILink>
                       }
                     />
+                    <DisabledBadge item={category} catalogue={data} />
                   </span>
                 </Td>
                 <Td className="font-mono text-xs font-medium">{category.code}</Td>
@@ -417,13 +429,16 @@ export default function CataloguePage() {
             {pageSlice(filteredSubcategories).map(({ subcategory, category, productCount, fleet }) => (
               <Tr key={subcategory.id} interactive>
                 <Td>
-                  <CellStack
-                    title={
-                      <UILink href={`/catalogue/subcategories/${subcategory.id}`} title={subcategory.name} className="text-ink-strong no-underline hover:underline">
-                        {subcategory.name}
-                      </UILink>
-                    }
-                  />
+                  <span className="flex items-center gap-2">
+                    <CellStack
+                      title={
+                        <UILink href={`/catalogue/subcategories/${subcategory.id}`} title={subcategory.name} className="text-ink-strong no-underline hover:underline">
+                          {subcategory.name}
+                        </UILink>
+                      }
+                    />
+                    <DisabledBadge item={subcategory} catalogue={data} />
+                  </span>
                 </Td>
                 <Td className="font-mono text-xs font-medium">{subcategory.code}</Td>
                 <Td>
@@ -482,7 +497,7 @@ export default function CataloguePage() {
                         </UILink>
                       }
                     />
-                    <DisabledBadge disabledAt={product.disabledAt} />
+                    <DisabledBadge item={product} catalogue={data} />
                   </span>
                 </Td>
                 <Td>
@@ -685,6 +700,19 @@ export default function CataloguePage() {
       )}
       {organizationId && dialog?.kind === "toggle" && (
         <ProductToggleDialog organizationId={organizationId} product={dialog.product} onClose={() => setDialog(null)} onChanged={() => void reload()} />
+      )}
+      {organizationId && data && dialog?.kind === "taxonomy" && (
+        <TaxonomyToggleDialog
+          target={dialog.target}
+          catalogue={data}
+          setDisabled={(disabled) =>
+            dialog.target.kind === "category"
+              ? apiClient.setProductCategoryDisabled(organizationId, dialog.target.item.id, disabled)
+              : apiClient.setProductSubcategoryDisabled(organizationId, dialog.target.item.id, disabled)
+          }
+          onClose={() => setDialog(null)}
+          onChanged={() => void reload()}
+        />
       )}
       {organizationId && dialog?.kind === "register" && (
         <RegisterMachineDialog

@@ -1,3 +1,4 @@
+import type { ChangePasswordRequest, SessionListResponse } from "@fleetip/contracts/identity";
 import type {
   Auction,
   AuctionDetail,
@@ -10,8 +11,7 @@ import type {
   CreateInvoiceRequest,
   Invoice,
   InvoiceDetail,
-  RecordPaymentRequest,
-} from "@fleetip/contracts/billing";
+  RecordPaymentRequest, InvoiceListItem } from "@fleetip/contracts/billing";
 import type {
   CreateProductCategoryRequest,
   CreateProductRequest,
@@ -62,9 +62,16 @@ import type {
   UpdateCommercialQuotationTermsRequest,
 } from "@fleetip/contracts/quotation";
 import type {
+  AvailabilityConflict,
+  CheckMachinesAvailabilityRequest,
+  MachineAvailability,
+  MachinesAvailabilityResponse,
   CreateRentalRequest,
+  CorrectActualDatesRequest,
   DisputeActualDatesRequest,
+  ProposeRentalDateChangeRequest,
   Rental,
+  RentalEvent,
   RentalStatus,
   UpdateRentalTermsRequest,
 } from "@fleetip/contracts/rental";
@@ -79,6 +86,17 @@ import type {
   UpdateProjectRequest,
 } from "@fleetip/contracts/project";
 import type { WorkOrder, WorkOrderScopeItem, WorkOrderStatus } from "@fleetip/contracts/work-order";
+import type {
+  InvoiceListQuery,
+  LogsheetListQuery,
+  MachineListQuery,
+  MaintenanceListQuery,
+  Page,
+  QuotationListQuery,
+  RentalListQuery,
+  RequirementDiscoveryQuery,
+  TransportListQuery,
+} from "@fleetip/contracts/list";
 import type { SearchResult } from "@fleetip/contracts/search";
 import type {
   CreateTransportRequest,
@@ -110,6 +128,8 @@ export class ApiError extends Error {
     public readonly issues: ApiIssue[] = [],
     /** 409 only, when the conflict is about one field (e.g. "assetCode"). */
     public readonly field?: string,
+    /** 409 only: the rental or workshop job that blocked the write. */
+    public readonly conflict?: AvailabilityConflict,
   ) {
     super(message);
     this.name = "ApiError";
@@ -127,7 +147,7 @@ function errorFromBody(body: unknown, status: number): ApiError {
 
     const nested = (body as { error?: unknown }).error;
     if (typeof nested === "object" && nested !== null) {
-      const { message, code, issues, field } = nested as { message?: unknown; code?: unknown; issues?: unknown; field?: unknown };
+      const { message, code, issues, field, conflict } = nested as { message?: unknown; code?: unknown; issues?: unknown; field?: unknown; conflict?: unknown };
       if (typeof message === "string") {
         return new ApiError(
           message,
@@ -135,6 +155,7 @@ function errorFromBody(body: unknown, status: number): ApiError {
           typeof code === "string" ? code : "unknown",
           Array.isArray(issues) ? issues.filter(isIssue) : [],
           typeof field === "string" ? field : undefined,
+          typeof conflict === "object" && conflict !== null ? (conflict as AvailabilityConflict) : undefined,
         );
       }
     }
@@ -178,6 +199,16 @@ export async function pingApi(): Promise<boolean> {
     setReachable(false);
     return false;
   }
+}
+
+// Server-side paging (ticket l, docs/frontend-backend-gap-report.md). Always
+// sends `limit`, so the endpoint answers with a Page, never the full array.
+function pageQuery(query: Record<string, string | number | undefined>): string {
+  const params = new URLSearchParams({ limit: "50" });
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  return params.toString();
 }
 
 async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T | undefined> {
@@ -241,6 +272,12 @@ export const apiClient = {
     apiRequest("/auth/password-reset/request", { method: "POST", body: JSON.stringify(input) }),
   confirmPasswordReset: (input: { token: string; password: string }) =>
     apiRequest("/auth/password-reset/confirm", { method: "POST", body: JSON.stringify(input) }),
+  // Signed-in account security (Settings > Security).
+  changePassword: (input: ChangePasswordRequest) =>
+    apiRequest("/auth/password", { method: "POST", body: JSON.stringify(input) }),
+  listSessions: () => apiRequest<SessionListResponse>("/auth/sessions", { method: "GET" }),
+  revokeSession: (sessionId: string) => apiRequest(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
+  revokeOtherSessions: () => apiRequest("/auth/sessions/revoke-others", { method: "POST" }),
 
   // --- Organization administration (tenant) ---
   getOrganizationProfile: (organizationId: string) =>
@@ -296,14 +333,20 @@ export const apiClient = {
       ...(newAccount ? { body: JSON.stringify(newAccount) } : {}),
     }),
 
-  listProductCategories: () =>
-    apiRequest<ProductCategory[]>("/product-categories", { method: "GET" }),
-  listProductSubcategories: (categoryId: string) =>
-    apiRequest<ProductSubcategory[]>(`/product-categories/${categoryId}/subcategories`, {
-      method: "GET",
-    }),
-  // Includes disabled products by default: most callers resolve names for
-  // existing machines. Pickers (register machine) pass includeDisabled=false.
+  // Catalogue lists include disabled items by default: most callers resolve
+  // names for existing records. Pickers (register machine, post
+  // requirement) pass includeDisabled=false; the API then also drops items
+  // under a disabled category/subcategory (soft cascade, 0037).
+  listProductCategories: (includeDisabled = true) =>
+    apiRequest<ProductCategory[]>(
+      `/product-categories${includeDisabled ? "?includeDisabled=true" : ""}`,
+      { method: "GET" },
+    ),
+  listProductSubcategories: (categoryId: string, includeDisabled = true) =>
+    apiRequest<ProductSubcategory[]>(
+      `/product-categories/${categoryId}/subcategories${includeDisabled ? "?includeDisabled=true" : ""}`,
+      { method: "GET" },
+    ),
   listProducts: (subcategoryId?: string, includeDisabled = true) => {
     const query = new URLSearchParams(subcategoryId ? { subcategoryId } : {});
     if (includeDisabled) query.set("includeDisabled", "true");
@@ -318,6 +361,16 @@ export const apiClient = {
   setProductDisabled: (organizationId: string, productId: string, disabled: boolean) =>
     apiRequest<Product>(
       `/organizations/${organizationId}/products/${productId}/${disabled ? "disable" : "enable"}`,
+      { method: "POST" },
+    ),
+  setProductCategoryDisabled: (organizationId: string, categoryId: string, disabled: boolean) =>
+    apiRequest<ProductCategory>(
+      `/organizations/${organizationId}/product-categories/${categoryId}/${disabled ? "disable" : "enable"}`,
+      { method: "POST" },
+    ),
+  setProductSubcategoryDisabled: (organizationId: string, subcategoryId: string, disabled: boolean) =>
+    apiRequest<ProductSubcategory>(
+      `/organizations/${organizationId}/product-subcategories/${subcategoryId}/${disabled ? "disable" : "enable"}`,
       { method: "POST" },
     ),
   createProductCategory: (organizationId: string, input: CreateProductCategoryRequest) =>
@@ -362,6 +415,12 @@ export const apiClient = {
     apiRequest<Machine[]>(`/organizations/${organizationId}/machines`, { method: "GET" }),
   createMachine: (organizationId: string, input: CreateMachineInput) =>
     apiRequest<Machine>(`/organizations/${organizationId}/machines`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  /** "Free between" for many machines at once: rentals and open workshop jobs both count. */
+  checkMachinesAvailability: (organizationId: string, input: CheckMachinesAvailabilityRequest) =>
+    apiRequest<MachinesAvailabilityResponse>(`/organizations/${organizationId}/machines/availability`, {
       method: "POST",
       body: JSON.stringify(input),
     }),
@@ -413,13 +472,34 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  correctActualDates: (organizationId: string, rentalId: string, input: CorrectActualDatesRequest) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/actual-dates/correct`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  proposeRentalDateChange: (organizationId: string, rentalId: string, input: ProposeRentalDateChangeRequest) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/date-change`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  respondToRentalDateChange: (organizationId: string, rentalId: string, decision: "accepted" | "rejected") =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/date-change/respond`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
+  withdrawRentalDateChange: (organizationId: string, rentalId: string) =>
+    apiRequest<Rental>(`/organizations/${organizationId}/rentals/${rentalId}/date-change/withdraw`, {
+      method: "POST",
+    }),
+  listRentalEvents: (organizationId: string, rentalId: string) =>
+    apiRequest<RentalEvent[]>(`/organizations/${organizationId}/rentals/${rentalId}/events`, { method: "GET" }),
   checkRentalAvailability: (
     organizationId: string,
     machineId: string,
     startDate: string,
     endDate?: string,
   ) =>
-    apiRequest<{ available: boolean }>(
+    apiRequest<MachineAvailability>(
       `/organizations/${organizationId}/rentals/availability?${new URLSearchParams({
         machineId,
         startDate,
@@ -749,14 +829,28 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  /** Job In progress + machine Under maintenance, in one transaction. */
+  sendToWorkshop: (organizationId: string, input: CreateMaintenanceRequest) =>
+    apiRequest<MaintenanceRecord>(`/organizations/${organizationId}/maintenance-records/send-to-workshop`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  /** A job that already happened, created Completed (endDate required, not in the future). */
+  logCompletedMaintenance: (organizationId: string, input: CreateMaintenanceRequest) =>
+    apiRequest<MaintenanceRecord>(`/organizations/${organizationId}/maintenance-records/log-completed`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  /** `machineStatus` also moves the machine, in the same transaction as the job. */
   updateMaintenanceStatus: (
     organizationId: string,
     maintenanceId: string,
     status: MaintenanceStatus,
+    machineStatus?: MachineStatus,
   ) =>
     apiRequest<MaintenanceRecord>(
       `/organizations/${organizationId}/maintenance-records/${maintenanceId}/status`,
-      { method: "PATCH", body: JSON.stringify({ status }) },
+      { method: "PATCH", body: JSON.stringify({ status, machineStatus }) },
     ),
 
   // --- Transport ---
@@ -826,7 +920,7 @@ export const apiClient = {
 
   // --- Billing ---
   listInvoices: (organizationId: string) =>
-    apiRequest<Invoice[]>(`/organizations/${organizationId}/invoices`, { method: "GET" }),
+    apiRequest<InvoiceListItem[]>(`/organizations/${organizationId}/invoices`, { method: "GET" }),
   getInvoiceDetail: (organizationId: string, invoiceId: string) =>
     apiRequest<InvoiceDetail>(`/organizations/${organizationId}/invoices/${invoiceId}`, {
       method: "GET",
@@ -854,6 +948,39 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  // --- Paged lists (ticket l). Screens still use the full lists above. ---
+  listMachinesPage: (organizationId: string, query: MachineListQuery = {}) =>
+    apiRequest<Page<Machine>>(`/organizations/${organizationId}/machines?${pageQuery(query)}`, { method: "GET" }),
+  listRentalsPage: (organizationId: string, query: RentalListQuery = {}) =>
+    apiRequest<Page<Rental>>(`/organizations/${organizationId}/rentals?${pageQuery(query)}`, { method: "GET" }),
+  listInvoicesPage: (organizationId: string, query: InvoiceListQuery = {}) =>
+    apiRequest<Page<InvoiceListItem>>(`/organizations/${organizationId}/invoices?${pageQuery(query)}`, {
+      method: "GET",
+    }),
+  listMaintenanceRecordsPage: (organizationId: string, query: MaintenanceListQuery = {}) =>
+    apiRequest<Page<MaintenanceRecord>>(
+      `/organizations/${organizationId}/maintenance-records?${pageQuery(query)}`,
+      { method: "GET" },
+    ),
+  listLogsheetsPage: (organizationId: string, query: LogsheetListQuery = {}) =>
+    apiRequest<Page<Logsheet>>(`/organizations/${organizationId}/logsheets?${pageQuery(query)}`, {
+      method: "GET",
+    }),
+  listTransportRecordsPage: (organizationId: string, query: TransportListQuery = {}) =>
+    apiRequest<Page<TransportRecord>>(
+      `/organizations/${organizationId}/transport-records?${pageQuery(query)}`,
+      { method: "GET" },
+    ),
+  listQuotationsPage: (organizationId: string, query: QuotationListQuery = {}) =>
+    apiRequest<Page<CommercialQuotation>>(`/organizations/${organizationId}/quotations?${pageQuery(query)}`, {
+      method: "GET",
+    }),
+  discoverRequirementsPage: (organizationId: string, query: RequirementDiscoveryQuery = {}) =>
+    apiRequest<Page<Requirement>>(
+      `/organizations/${organizationId}/requirement-discovery?${pageQuery(query)}`,
+      { method: "GET" },
+    ),
 
   // --- Search ---
   search: (organizationId: string, q: string) =>
