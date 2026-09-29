@@ -107,16 +107,67 @@ function fakeOrganizationTypeRepository(
   };
 }
 
-function fakeProductCategoryRepository(): ProductCategoryRepositoryPort {
-  const categories = new Map<string, ProductCategoryRecord>([
-    [
-      CATEGORY_ID,
-      { id: CATEGORY_ID, code: "EXCAVATOR", name: "Excavator", created_at: new Date() },
-    ],
-  ]);
+// Shared tables so the fakes can emulate the repositories' ancestor joins
+// (soft cascade, 0037).
+function fakeTables() {
+  return {
+    categories: new Map<string, ProductCategoryRecord>([
+      [
+        CATEGORY_ID,
+        { id: CATEGORY_ID, code: "EXCAVATOR", name: "Excavator", created_at: new Date() },
+      ],
+    ]),
+    subcategories: new Map<string, ProductSubcategoryRecord>([
+      [
+        SUBCATEGORY_ID,
+        {
+          id: SUBCATEGORY_ID,
+          product_category_id: CATEGORY_ID,
+          code: "TRACKED",
+          name: "Tracked Excavator",
+          created_at: new Date(),
+        },
+      ],
+    ]),
+    products: new Map<string, ProductRecord>([
+      [
+        PRODUCT_ID,
+        {
+          id: PRODUCT_ID,
+          product_subcategory_id: SUBCATEGORY_ID,
+          manufacturer: "Caterpillar",
+          name: "320",
+          capacity: 20,
+          capacity_unit: "Ton",
+          specifications: null,
+          created_at: new Date(),
+        },
+      ],
+    ]),
+  };
+}
+type Tables = ReturnType<typeof fakeTables>;
+
+function withCategory(tables: Tables, s: ProductSubcategoryRecord): ProductSubcategoryRecord {
+  return { ...s, category_disabled_at: tables.categories.get(s.product_category_id)?.disabled_at ?? null };
+}
+
+function withAncestors(tables: Tables, p: ProductRecord): ProductRecord {
+  const sub = tables.subcategories.get(p.product_subcategory_id);
+  const cat = sub && tables.categories.get(sub.product_category_id);
+  return {
+    ...p,
+    subcategory_disabled_at: sub?.disabled_at ?? null,
+    category_disabled_at: cat?.disabled_at ?? null,
+  };
+}
+
+function fakeProductCategoryRepository(tables: Tables): ProductCategoryRepositoryPort {
+  const { categories } = tables;
   let nextId = 2;
   return {
-    listAll: async () => [...categories.values()],
+    listAll: async (includeDisabled) =>
+      [...categories.values()].filter((c) => includeDisabled || !c.disabled_at),
     findById: async (id) => categories.get(id),
     create: async (input) => {
       const record: ProductCategoryRecord = {
@@ -136,27 +187,28 @@ function fakeProductCategoryRepository(): ProductCategoryRepositoryPort {
       return updated;
     },
     codeExists: async (code) => [...categories.values()].some((c) => c.code === code),
+    setDisabledAt: async (id, disabledAt) => {
+      const updated = { ...categories.get(id)!, disabled_at: disabledAt };
+      categories.set(id, updated);
+      return updated;
+    },
   };
 }
 
-function fakeProductSubcategoryRepository(): ProductSubcategoryRepositoryPort {
-  const subcategories = new Map<string, ProductSubcategoryRecord>([
-    [
-      SUBCATEGORY_ID,
-      {
-        id: SUBCATEGORY_ID,
-        product_category_id: CATEGORY_ID,
-        code: "TRACKED",
-        name: "Tracked Excavator",
-        created_at: new Date(),
-      },
-    ],
-  ]);
+function fakeProductSubcategoryRepository(tables: Tables): ProductSubcategoryRepositoryPort {
+  const { subcategories } = tables;
+  const find = (id: string) => {
+    const s = subcategories.get(id);
+    return s && withCategory(tables, s);
+  };
   let nextId = 2;
   return {
-    listByCategory: async (categoryId) =>
-      [...subcategories.values()].filter((s) => s.product_category_id === categoryId),
-    findById: async (id) => subcategories.get(id),
+    listByCategory: async (categoryId, includeDisabled) =>
+      [...subcategories.values()]
+        .filter((s) => s.product_category_id === categoryId)
+        .map((s) => withCategory(tables, s))
+        .filter((s) => includeDisabled || (!s.disabled_at && !s.category_disabled_at)),
+    findById: async (id) => find(id),
     create: async (input) => {
       const record: ProductSubcategoryRecord = {
         id: `subcategory-${nextId++}`,
@@ -179,34 +231,30 @@ function fakeProductSubcategoryRepository(): ProductSubcategoryRepositoryPort {
       [...subcategories.values()].some(
         (s) => s.product_category_id === categoryId && s.code === code,
       ),
+    setDisabledAt: async (id, disabledAt) => {
+      subcategories.set(id, { ...subcategories.get(id)!, disabled_at: disabledAt });
+      return find(id)!;
+    },
   };
 }
 
-function fakeProductRepository(): ProductRepositoryPort {
-  const products = new Map<string, ProductRecord>([
-    [
-      PRODUCT_ID,
-      {
-        id: PRODUCT_ID,
-        product_subcategory_id: SUBCATEGORY_ID,
-        manufacturer: "Caterpillar",
-        name: "320",
-        capacity: 20,
-        capacity_unit: "Ton",
-        specifications: null,
-        created_at: new Date(),
-      },
-    ],
-  ]);
+function fakeProductRepository(tables: Tables): ProductRepositoryPort {
+  const { products } = tables;
   let nextId = 2;
   return {
     listAll: async (subcategoryId, includeDisabled) =>
-      [...products.values()].filter(
-        (p) =>
-          (subcategoryId === undefined || p.product_subcategory_id === subcategoryId) &&
-          (includeDisabled || !p.disabled_at),
-      ),
-    findById: async (id) => products.get(id),
+      [...products.values()]
+        .map((p) => withAncestors(tables, p))
+        .filter(
+          (p) =>
+            (subcategoryId === undefined || p.product_subcategory_id === subcategoryId) &&
+            (includeDisabled ||
+              (!p.disabled_at && !p.subcategory_disabled_at && !p.category_disabled_at)),
+        ),
+    findById: async (id) => {
+      const p = products.get(id);
+      return p && withAncestors(tables, p);
+    },
     create: async (input) => {
       const duplicate = [...products.values()].some(
         (p) => p.manufacturer === input.manufacturer && p.name === input.name,
@@ -244,10 +292,11 @@ function fakeProductRepository(): ProductRepositoryPort {
 }
 
 function buildService(organizationTypeCode: OrganizationTypeCode = "rental_company") {
+  const tables = fakeTables();
   return new CatalogueService(
-    fakeProductCategoryRepository(),
-    fakeProductSubcategoryRepository(),
-    fakeProductRepository(),
+    fakeProductCategoryRepository(tables),
+    fakeProductSubcategoryRepository(tables),
+    fakeProductRepository(tables),
     fakePermissionService(organizationTypeCode),
   );
 }
@@ -410,5 +459,82 @@ describe("CatalogueService", () => {
     await expect(
       service.setProductDisabled("user-1", RC_ORG_ID, PRODUCT_ID, true),
     ).rejects.toThrow(ForbiddenError);
+  });
+
+  it("cascades a category disable to its subcategories and products in picker lists", async () => {
+    const service = buildService();
+    const category = await service.setCategoryDisabledAsPlatformAdmin(CATEGORY_ID, true);
+    expect(category).toMatchObject({ disabledBy: "self" });
+    expect(category.disabledAt).not.toBeNull();
+
+    await expect(service.listCategories()).resolves.toHaveLength(0);
+    await expect(service.listSubcategories(CATEGORY_ID)).resolves.toHaveLength(0);
+    await expect(service.listProducts()).resolves.toHaveLength(0);
+    await expect(service.listProducts(SUBCATEGORY_ID)).resolves.toHaveLength(0);
+
+    await expect(service.listSubcategories(CATEGORY_ID, true)).resolves.toMatchObject([
+      { disabledAt: null, disabledBy: "category" },
+    ]);
+    await expect(service.listProducts(undefined, true)).resolves.toMatchObject([
+      { disabledAt: null, disabledBy: "category" },
+    ]);
+  });
+
+  it("still resolves everything under a disabled branch by id", async () => {
+    const service = buildService();
+    await service.setSubcategoryDisabledAsPlatformAdmin(SUBCATEGORY_ID, true);
+    await expect(service.getCategory(CATEGORY_ID)).resolves.toMatchObject({ disabledBy: null });
+    await expect(service.getSubcategory(SUBCATEGORY_ID)).resolves.toMatchObject({
+      disabledBy: "self",
+    });
+    await expect(service.getProduct(PRODUCT_ID)).resolves.toMatchObject({
+      name: "320",
+      disabledBy: "subcategory",
+    });
+    await expect(service.listCategories()).resolves.toHaveLength(1);
+    await expect(service.listSubcategories(CATEGORY_ID)).resolves.toHaveLength(0);
+  });
+
+  it("re-enabling a parent restores children not disabled by themselves", async () => {
+    const service = buildService();
+    await service.setProductDisabledAsPlatformAdmin(PRODUCT_ID, true);
+    await service.setCategoryDisabled("user-1", RC_ORG_ID, CATEGORY_ID, true);
+    await expect(service.getProduct(PRODUCT_ID)).resolves.toMatchObject({ disabledBy: "category" });
+
+    await service.setCategoryDisabled("user-1", RC_ORG_ID, CATEGORY_ID, false);
+    await expect(service.listSubcategories(CATEGORY_ID)).resolves.toHaveLength(1);
+    // The product was disabled on its own, so it stays hidden.
+    await expect(service.listProducts()).resolves.toHaveLength(0);
+    await expect(service.getProduct(PRODUCT_ID)).resolves.toMatchObject({ disabledBy: "self" });
+
+    await service.setProductDisabledAsPlatformAdmin(PRODUCT_ID, false);
+    await expect(service.listProducts()).resolves.toHaveLength(1);
+  });
+
+  it("keeps the original timestamp when re-disabling", async () => {
+    const service = buildService();
+    const first = await service.setSubcategoryDisabledAsPlatformAdmin(SUBCATEGORY_ID, true);
+    const again = await service.setSubcategoryDisabledAsPlatformAdmin(SUBCATEGORY_ID, true);
+    expect(again.disabledAt).toBe(first.disabledAt);
+  });
+
+  it("rejects tenant category/subcategory disable without catalogue.manage", async () => {
+    const service = buildService("renter");
+    await expect(
+      service.setCategoryDisabled("user-1", RC_ORG_ID, CATEGORY_ID, true),
+    ).rejects.toThrow(ForbiddenError);
+    await expect(
+      service.setSubcategoryDisabled("user-1", RC_ORG_ID, SUBCATEGORY_ID, false),
+    ).rejects.toThrow(ForbiddenError);
+  });
+
+  it("returns 404 when disabling an unknown category or subcategory", async () => {
+    const service = buildService();
+    await expect(service.setCategoryDisabledAsPlatformAdmin("nope", true)).rejects.toThrow(
+      NotFoundError,
+    );
+    await expect(
+      service.setSubcategoryDisabledAsPlatformAdmin("00000000-0000-4000-8000-00000000dead", true),
+    ).rejects.toThrow(NotFoundError);
   });
 });

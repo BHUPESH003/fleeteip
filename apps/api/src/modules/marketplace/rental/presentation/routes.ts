@@ -1,13 +1,18 @@
 import {
   checkMachineAvailabilityQuerySchema,
   createRentalRequestSchema,
+  correctActualDatesRequestSchema,
   disputeActualDatesRequestSchema,
+  proposeRentalDateChangeRequestSchema,
+  respondToRentalDateChangeRequestSchema,
   updateRentalStatusRequestSchema,
   updateRentalTermsRequestSchema,
 } from "@fleetip/contracts/rental";
+import { rentalListQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../../shared/auth.js";
+import { parseListQuery } from "../../../../shared/list-query.js";
 import { parseWithSchema } from "../../../../shared/validate.js";
 
 export async function rentalRoutes(fastify: FastifyInstance): Promise<void> {
@@ -15,6 +20,8 @@ export async function rentalRoutes(fastify: FastifyInstance): Promise<void> {
     "/organizations/:organizationId/rentals",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(rentalListQuerySchema, request.query);
+      if (page) return container.rentalService.listRentalsPage(userId, request.params.organizationId, page);
       return container.rentalService.listRentals(userId, request.params.organizationId);
     },
   );
@@ -41,12 +48,8 @@ export async function rentalRoutes(fastify: FastifyInstance): Promise<void> {
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
       const query = parseWithSchema(checkMachineAvailabilityQuerySchema, request.query);
-      const available = await container.rentalService.checkAvailability(
-        userId,
-        request.params.organizationId,
-        query,
-      );
-      return { available };
+      // { available, conflicts[] } — `available` kept for older callers.
+      return container.rentalService.checkAvailability(userId, request.params.organizationId, query);
     },
   );
 
@@ -113,6 +116,73 @@ export async function rentalRoutes(fastify: FastifyInstance): Promise<void> {
         request.params.organizationId,
         request.params.rentalId,
         body.reason,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/actual-dates/correct",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(correctActualDatesRequestSchema, request.body);
+      return container.rentalService.correctActualDates(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
+        body,
+      );
+    },
+  );
+
+  // Rental Company proposes (or, with no Renter organization, applies).
+  fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/date-change",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(proposeRentalDateChangeRequestSchema, request.body);
+      return container.rentalService.proposeDateChange(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
+        body,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/date-change/respond",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(respondToRentalDateChangeRequestSchema, request.body);
+      return container.rentalService.respondToDateChange(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
+        body.decision,
+      );
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/date-change/withdraw",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.rentalService.withdrawDateChange(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
+      );
+    },
+  );
+
+  fastify.get<{ Params: { organizationId: string; rentalId: string } }>(
+    "/organizations/:organizationId/rentals/:rentalId/events",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.rentalService.listEvents(
+        userId,
+        request.params.organizationId,
+        request.params.rentalId,
       );
     },
   );

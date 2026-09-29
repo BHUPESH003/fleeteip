@@ -1,5 +1,8 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
+import type { LogsheetListParams } from "@fleetip/contracts/list";
+import { executePage } from "../../../infrastructure/database/list-page.js";
+import type { ParsedListQuery } from "../../../shared/list-query.js";
 import type {
   LogsheetRecord,
   LogsheetRepositoryPort,
@@ -115,6 +118,20 @@ export class LogsheetRepository implements LogsheetRepositoryPort {
       .orderBy("logsheets.log_date", "desc")
       .execute();
     return rows as LogsheetRecord[];
+  }
+
+  async listLogsheetsPage(rentalCompanyOrganizationId: string, query: ParsedListQuery<LogsheetListParams>) {
+    let q = this.db
+      .selectFrom("logsheets")
+      .innerJoin("rentals", "rentals.id", "logsheets.rental_id")
+      .where("rentals.rental_company_organization_id", "=", rentalCompanyOrganizationId)
+      .selectAll("logsheets");
+    if (query.rentalId) q = q.where("logsheets.rental_id", "=", query.rentalId);
+    if (query.machineId) q = q.where("logsheets.machine_id", "=", query.machineId);
+    if (query.from) q = q.where("logsheets.log_date", ">=", query.from);
+    if (query.to) q = q.where("logsheets.log_date", "<=", query.to);
+    const sortColumn = { logDate: "logsheets.log_date", createdAt: "logsheets.created_at" }[query.sort];
+    return executePage(q, sortColumn, "logsheets.id", query, (row) => row as LogsheetRecord);
   }
 
   async getRentalTotals(rentalId: string): Promise<UtilizationTotals> {

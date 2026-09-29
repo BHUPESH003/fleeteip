@@ -46,6 +46,8 @@ import { BillingService } from "../modules/billing/application/billing-service.j
 import { InvoiceRepository } from "../modules/billing/infrastructure/invoice-repository.js";
 import { NotificationService } from "../modules/notification/application/notification-service.js";
 import { NotificationRepository } from "../modules/notification/infrastructure/notification-repository.js";
+import { ReminderService } from "../modules/reminders/application/reminder-service.js";
+import { ReminderRepository } from "../modules/reminders/infrastructure/reminder-repository.js";
 import { SearchService } from "../modules/search/application/search-service.js";
 import { StaffAuthService } from "../modules/staff/application/staff-auth-service.js";
 import { StaffUserRepository } from "../modules/staff/infrastructure/staff-user-repository.js";
@@ -105,6 +107,8 @@ const rentalService = new RentalService(
   permissionService,
   maintenanceRepository,
   notificationService,
+  // Same repository, second port: date changes, corrections, activity log.
+  rentalRepository,
 );
 
 const workOrderService = new WorkOrderService(
@@ -176,7 +180,13 @@ export const container = {
 
   catalogueService,
 
-  equipmentService: new EquipmentService(machineRepository, productRepository, permissionService),
+  equipmentService: new EquipmentService(
+    machineRepository,
+    productRepository,
+    permissionService,
+    rentalRepository,
+    maintenanceRepository,
+  ),
 
   rentalService,
 
@@ -264,6 +274,8 @@ export const container = {
   ),
 
   notificationService,
+
+  reminderService: new ReminderService(new ReminderRepository(db), notificationService),
 
   searchService: new SearchService(
     machineRepository,

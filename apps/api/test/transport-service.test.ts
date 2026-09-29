@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { transportListQuerySchema } from "@fleetip/contracts/list";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import type {
   ActiveMembershipRecord,
@@ -156,6 +159,9 @@ function rental(overrides: Partial<RentalRecord> = {}): RentalRecord {
 
 function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -175,7 +181,7 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
     setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
-    isAvailable: async () => {
+    findCommittedOverlapping: async () => {
       throw new Error("not used in this test");
     },
     searchByOrganization: async () => {
@@ -191,6 +197,13 @@ function fakeTransportRepository(rentals: RentalRecord[] = []): TransportReposit
   const records = new Map<string, TransportRecord>();
   let nextId = 1;
   return {
+    listTransportPage: async (organizationId, query) => {
+      const own = new Set(rentals.filter((r) => r.rental_company_organization_id === organizationId).map((r) => r.id));
+      const rows = [...records.values()].filter(
+        (t) => own.has(t.rental_id) && (!query.rentalId || t.rental_id === query.rentalId),
+      );
+      return pageInMemory(rows, (t) => new Date(t.created_at).toISOString(), query);
+    },
     create: async (input: CreateTransportInput) => {
       const record: TransportRecord = {
         id: `transport-${nextId++}`,
@@ -419,5 +432,15 @@ describe("TransportService", () => {
         NotFoundError,
       );
     });
+  });
+
+  it("pages transport through the repository when list params are given", async () => {
+    const service = buildService([rental(), rental({ id: "rental-2" })]);
+    await service.createTransport("user-1", RC_ORG_ID, RENTAL_ID, { leg: "mobilization" });
+    await service.createTransport("user-1", RC_ORG_ID, "rental-2", { leg: "mobilization" });
+    const query = parseListQuery(transportListQuerySchema, { limit: "1" })!;
+    const page = await service.listTransportPage("user-1", RC_ORG_ID, query);
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCursor).toEqual(expect.any(String));
   });
 });

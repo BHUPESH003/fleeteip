@@ -21,6 +21,8 @@ import {
   NotFoundError,
   ValidationError,
 } from "../../../../shared/errors.js";
+import type { Page, QuotationListParams } from "@fleetip/contracts/list";
+import { mapPage, mapPageAsync, type ParsedListQuery } from "../../../../shared/list-query.js";
 import type { ProductRepositoryPort } from "../../../catalogue/domain/ports.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type {
@@ -395,6 +397,25 @@ export class CommercialQuotationService {
       "quotation.respond",
     );
     if (canRespond) return this.listQuotationsForRenter(userId, organizationId);
+    throw new ForbiddenError();
+  }
+
+  // Paged/filtered variant of listQuotations (ticket l); same party rules.
+  async listQuotationsPage(
+    userId: string,
+    organizationId: string,
+    query: ParsedListQuery<QuotationListParams>,
+  ): Promise<Page<CommercialQuotation>> {
+    if (await this.permissionService.hasPermission(userId, organizationId, "quotation.manage")) {
+      const page = await this.quotationRepository.listQuotationsPage("rentalCompany", organizationId, query);
+      return mapPage(page, (record) => toQuotation(record));
+    }
+    if (await this.permissionService.hasPermission(userId, organizationId, "quotation.respond")) {
+      const page = await this.quotationRepository.listQuotationsPage("renter", organizationId, query);
+      return mapPageAsync(page, async (record) =>
+        toQuotation(record, await this.resolveMachineInfoForRenter(record)),
+      );
+    }
     throw new ForbiddenError();
   }
 

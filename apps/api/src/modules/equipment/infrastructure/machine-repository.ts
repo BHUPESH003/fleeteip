@@ -1,6 +1,9 @@
 import { MachineStatus } from "@fleetip/contracts/equipment";
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
+import type { MachineListParams } from "@fleetip/contracts/list";
+import { executePage } from "../../../infrastructure/database/list-page.js";
+import { containsPattern, type ParsedListQuery } from "../../../shared/list-query.js";
 import { ConflictError } from "../../../shared/errors.js";
 import type {
   CreateMachineInput,
@@ -85,6 +88,23 @@ export class MachineRepository implements MachineRepositoryPort {
       .where("organization_id", "=", organizationId)
       .execute();
     return rows.map(toMachineRecord);
+  }
+
+  async listMachinesPage(organizationId: string, query: ParsedListQuery<MachineListParams>) {
+    let q = this.db.selectFrom("machines").selectAll().where("organization_id", "=", organizationId);
+    if (query.status) q = q.where("status", "=", query.status);
+    if (query.q) {
+      const pattern = containsPattern(query.q);
+      q = q.where((eb) =>
+        eb.or([
+          eb("asset_code", "ilike", pattern),
+          eb("registration_number", "ilike", pattern),
+          eb("chassis_number", "ilike", pattern),
+        ]),
+      );
+    }
+    const sortColumn = { createdAt: "machines.created_at", assetCode: "machines.asset_code" }[query.sort];
+    return executePage(q, sortColumn, "machines.id", query, toMachineRecord);
   }
 
   async updateStatus(id: string, status: MachineStatus) {

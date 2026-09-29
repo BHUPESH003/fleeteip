@@ -1,6 +1,8 @@
 import type {
   AuthenticatedSession,
+  ChangePasswordRequest,
   LoginRequest,
+  SessionListResponse,
   SignupRequest,
   User,
 } from "@fleetip/contracts/identity";
@@ -14,6 +16,7 @@ import { MembershipStatus } from "@fleetip/contracts/organization";
 import {
   ConflictError,
   ForbiddenError,
+  NotFoundError,
   UnauthorizedError,
   ValidationError,
 } from "../../../shared/errors.js";
@@ -30,6 +33,20 @@ import type {
   UserRepositoryPort,
 } from "../domain/ports.js";
 import { generateSessionToken, hashSessionToken } from "../domain/session-token.js";
+
+/** How often an in-use session's last_seen_at is written — a list hint, not an audit log. */
+const LAST_SEEN_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_USER_AGENT_LENGTH = 500;
+
+/** Where a session was started from; recorded for the Settings > Security list. */
+export interface SessionMeta {
+  userAgent?: string;
+}
+
+export interface CurrentSession {
+  sessionId: string;
+  userId: string;
+}
 
 export interface AuthResult {
   user: User;
@@ -55,7 +72,7 @@ export class AuthService {
     private readonly roleRepository: RoleRepositoryPort,
   ) {}
 
-  async signup(request: SignupRequest): Promise<AuthResult> {
+  async signup(request: SignupRequest, meta: SessionMeta = {}): Promise<AuthResult> {
     const organizationType = await this.organizationRepository.findTypeByCode(
       request.organizationTypeCode,
     );
@@ -92,7 +109,7 @@ export class AuthService {
       permissionCodes: [],
     });
 
-    return this.issueSession(user);
+    return this.issueSession(user, meta);
   }
 
   // Used by InviteService for a brand-new account redeeming an invite —
@@ -125,7 +142,7 @@ export class AuthService {
     });
   }
 
-  async login(request: LoginRequest): Promise<AuthResult> {
+  async login(request: LoginRequest, meta: SessionMeta = {}): Promise<AuthResult> {
     const user = await this.userRepository.findByEmail(request.email);
     // Always run the same slow KDF, even when the email doesn't exist —
     // otherwise a nonexistent-email login returns near-instantly while a
@@ -144,20 +161,36 @@ export class AuthService {
     if (user.status === "suspended") {
       throw new ForbiddenError("This account has been suspended");
     }
-    return this.issueSession(user);
+    return this.issueSession(user, meta);
   }
 
   async logout(token: string): Promise<void> {
     await this.sessionRepository.deleteByTokenHash(hashSessionToken(token));
   }
 
-  async getAuthenticatedSession(token: string): Promise<AuthenticatedSession | null> {
+  /**
+   * The one place a session token is checked: unexpired, user not
+   * suspended. Also bumps last_seen_at, at most every few minutes, so an
+   * authenticated request isn't a write every time.
+   */
+  async resolveSession(token: string): Promise<(CurrentSession & { user: PublicUserRecord }) | null> {
     const session = await this.sessionRepository.findActiveByTokenHash(hashSessionToken(token));
     if (!session) return null;
 
     const user = await this.userRepository.findById(session.user_id);
     // Suspending deletes the sessions too; this also covers any row created in between.
     if (!user || user.status === "suspended") return null;
+
+    if (Date.now() - new Date(session.last_seen_at).getTime() > LAST_SEEN_WRITE_INTERVAL_MS) {
+      await this.sessionRepository.touch(session.id);
+    }
+    return { sessionId: session.id, userId: user.id, user };
+  }
+
+  async getAuthenticatedSession(token: string): Promise<AuthenticatedSession | null> {
+    const resolved = await this.resolveSession(token);
+    if (!resolved) return null;
+    const { user } = resolved;
 
     const membershipRows = await this.membershipRepository.listWithOrganizationByUserId(user.id);
 
@@ -200,9 +233,49 @@ export class AuthService {
     return { user: toContractUser(user), memberships };
   }
 
-  private async issueSession(user: PublicUserRecord): Promise<AuthResult> {
+  /** Same password rules and hash as signup; every other session is signed out, this one stays. */
+  async changePassword(current: CurrentSession, request: ChangePasswordRequest): Promise<void> {
+    const passwordHash = await this.userRepository.findPasswordHashById(current.userId);
+    if (!passwordHash || !(await verifyPassword(request.currentPassword, passwordHash))) {
+      // 400, not 401 — a 401 would read as "signed out" to the client.
+      throw new ValidationError("Your current password is incorrect", [
+        { path: "currentPassword", message: "That isn't your current password." },
+      ]);
+    }
+    await this.userRepository.updatePasswordHash(current.userId, await hashPassword(request.newPassword));
+    await this.sessionRepository.deleteOthersForUser(current.userId, current.sessionId);
+  }
+
+  async listSessions(current: CurrentSession): Promise<SessionListResponse> {
+    const rows = await this.sessionRepository.listActiveByUserId(current.userId);
+    return {
+      sessions: rows.map((row) => ({
+        id: row.id,
+        createdAt: new Date(row.created_at).toISOString(),
+        lastSeenAt: new Date(row.last_seen_at).toISOString(),
+        userAgent: row.user_agent,
+        current: row.id === current.sessionId,
+      })),
+    };
+  }
+
+  async revokeSession(current: CurrentSession, sessionId: string): Promise<void> {
+    const deleted = await this.sessionRepository.deleteByIdForUser(sessionId, current.userId);
+    if (!deleted) throw new NotFoundError("Session not found");
+  }
+
+  async revokeOtherSessions(current: CurrentSession): Promise<void> {
+    await this.sessionRepository.deleteOthersForUser(current.userId, current.sessionId);
+  }
+
+  private async issueSession(user: PublicUserRecord, meta: SessionMeta = {}): Promise<AuthResult> {
     const { token, tokenHash, expiresAt } = generateSessionToken();
-    await this.sessionRepository.create({ userId: user.id, tokenHash, expiresAt });
+    await this.sessionRepository.create({
+      userId: user.id,
+      tokenHash,
+      expiresAt,
+      userAgent: meta.userAgent?.slice(0, MAX_USER_AGENT_LENGTH) ?? null,
+    });
     return { user: toContractUser(user), token, expiresAt };
   }
 }

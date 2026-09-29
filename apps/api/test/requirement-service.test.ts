@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { requirementDiscoveryQuerySchema } from "@fleetip/contracts/list";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import type { RequirementStatus } from "@fleetip/contracts/rfq";
 import type {
@@ -173,6 +176,9 @@ function fakeProductSubcategoryRepository(
   ],
 ): ProductSubcategoryRepositoryPort {
   return {
+    setDisabledAt: async () => {
+      throw new Error("not used in this test");
+    },
     listByCategory: async () => {
       throw new Error("not used in this test");
     },
@@ -194,6 +200,12 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
   let nextId = 1;
 
   return {
+    listOpenForDiscoveryPage: async (query) => {
+      const rows = [...requirements.values()].filter(
+        (r) => r.status === "open" && (!query.productSubcategoryId || r.product_subcategory_id === query.productSubcategoryId),
+      );
+      return pageInMemory(rows, (r) => r.requested_start_date, query);
+    },
     create: async (input: CreateRequirementInput) => {
       const record: RequirementRecord = {
         id: `requirement-${nextId++}`,
@@ -289,6 +301,25 @@ describe("RequirementService", () => {
         productSubcategoryId: "unknown-subcategory",
       }),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  it("rejects a requirement on a subcategory disabled by itself or via its category", async () => {
+    const base = {
+      id: SUBCATEGORY_ID,
+      product_category_id: "category-1",
+      code: "TRACKED",
+      name: "Tracked Excavator",
+      created_at: new Date(),
+    };
+    for (const disabled of [{ disabled_at: new Date() }, { category_disabled_at: new Date() }]) {
+      const service = buildService([{ ...base, ...disabled }]);
+      await expect(
+        service.createRequirement("user-1", RENTER_ORG_ID, baseInput),
+      ).rejects.toMatchObject({
+        constructor: ValidationError,
+        issues: [{ path: "productSubcategoryId" }],
+      });
+    }
   });
 
   it("creates an open requirement for a real product subcategory", async () => {
@@ -456,6 +487,30 @@ describe("RequirementService", () => {
   it("rejects discovery for a Renter organization (rfq.respond is Rental-Company-only)", async () => {
     const service = buildService();
     await expect(service.discoverRequirements("user-1", RENTER_ORG_ID)).rejects.toThrow(
+      ForbiddenError,
+    );
+  });
+
+  it("pages discovery through the repository when list params are given", async () => {
+    const requirementRepository = fakeRequirementRepository();
+    const renterService = new RequirementService(
+      requirementRepository,
+      fakeProductSubcategoryRepository(),
+      fakePermissionService(),
+      fakeProjectRepository(),
+    );
+    await renterService.createRequirement("user-1", RENTER_ORG_ID, baseInput);
+    const rentalCompanyService = new RequirementService(
+      requirementRepository,
+      fakeProductSubcategoryRepository(),
+      fakePermissionService("rental_company"),
+      fakeProjectRepository(),
+    );
+    const query = parseListQuery(requirementDiscoveryQuerySchema, { sort: "requestedStartDate" })!;
+    const page = await rentalCompanyService.discoverRequirementsPage("user-2", RC_ORG_ID, query);
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCursor).toBeNull();
+    await expect(renterService.discoverRequirementsPage("user-1", RENTER_ORG_ID, query)).rejects.toThrow(
       ForbiddenError,
     );
   });

@@ -214,6 +214,9 @@ function requirement(overrides: Partial<RequirementRecord> = {}): RequirementRec
 
 function fakeRequirementRepository(requirements: RequirementRecord[] = [requirement()]) {
   const port: RequirementRepositoryPort = {
+    listOpenForDiscoveryPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },

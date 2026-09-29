@@ -2,6 +2,7 @@ import {
   createProductCategoryRequestSchema,
   createProductRequestSchema,
   createProductSubcategoryRequestSchema,
+  listCatalogueQuerySchema,
   listProductsQuerySchema,
   updateProductCategoryRequestSchema,
   updateProductRequestSchema,
@@ -13,11 +14,20 @@ import { getAuthenticatedUserId } from "../../../shared/auth.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
 export async function catalogueRoutes(fastify: FastifyInstance): Promise<void> {
-  fastify.get("/product-categories", async () => container.catalogueService.listCategories());
+  fastify.get("/product-categories", async (request) => {
+    const query = parseWithSchema(listCatalogueQuerySchema, request.query);
+    return container.catalogueService.listCategories(query.includeDisabled === "true");
+  });
 
   fastify.get<{ Params: { categoryId: string } }>(
     "/product-categories/:categoryId/subcategories",
-    async (request) => container.catalogueService.listSubcategories(request.params.categoryId),
+    async (request) => {
+      const query = parseWithSchema(listCatalogueQuerySchema, request.query);
+      return container.catalogueService.listSubcategories(
+        request.params.categoryId,
+        query.includeDisabled === "true",
+      );
+    },
   );
 
   fastify.get("/products", async (request) => {
@@ -143,6 +153,34 @@ export async function catalogueRoutes(fastify: FastifyInstance): Promise<void> {
           userId,
           request.params.organizationId,
           request.params.productId,
+          action === "disable",
+        );
+      },
+    );
+  }
+
+  for (const action of ["disable", "enable"] as const) {
+    fastify.post<{ Params: { organizationId: string; categoryId: string } }>(
+      `/organizations/:organizationId/product-categories/:categoryId/${action}`,
+      async (request) => {
+        const userId = await getAuthenticatedUserId(request);
+        return container.catalogueService.setCategoryDisabled(
+          userId,
+          request.params.organizationId,
+          request.params.categoryId,
+          action === "disable",
+        );
+      },
+    );
+
+    fastify.post<{ Params: { organizationId: string; subcategoryId: string } }>(
+      `/organizations/:organizationId/product-subcategories/:subcategoryId/${action}`,
+      async (request) => {
+        const userId = await getAuthenticatedUserId(request);
+        return container.catalogueService.setSubcategoryDisabled(
+          userId,
+          request.params.organizationId,
+          request.params.subcategoryId,
           action === "disable",
         );
       },

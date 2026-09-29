@@ -5,8 +5,10 @@ import type { CreateProductCategoryInput, ProductCategoryRepositoryPort } from "
 export class ProductCategoryRepository implements ProductCategoryRepositoryPort {
   constructor(private readonly db: Kysely<Database>) {}
 
-  listAll() {
-    return this.db.selectFrom("product_categories").selectAll().execute();
+  listAll(includeDisabled = false) {
+    let query = this.db.selectFrom("product_categories").selectAll();
+    if (!includeDisabled) query = query.where("disabled_at", "is", null);
+    return query.execute();
   }
 
   findById(id: string) {
@@ -29,6 +31,15 @@ export class ProductCategoryRepository implements ProductCategoryRepositoryPort 
     return this.db
       .updateTable("product_categories")
       .set({ name })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  setDisabledAt(id: string, disabledAt: Date | null) {
+    return this.db
+      .updateTable("product_categories")
+      .set({ disabled_at: disabledAt })
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirstOrThrow();

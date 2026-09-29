@@ -36,11 +36,21 @@ export class ForbiddenError extends AppError {
   }
 }
 
+/** The existing record a 409 collided with, e.g. { kind: "rental", id, reference: "RN-1A2B3C4D" }. */
+export interface ConflictDetail {
+  kind: string;
+  id: string;
+  reference: string;
+  [extra: string]: unknown;
+}
+
 export class ConflictError extends AppError {
   /** `field` names the request field the conflict is about (e.g. "assetCode"), so a form can show it there. */
   constructor(
     message: string,
     public readonly field?: string,
+    /** Sent as `error.conflict`: the record that blocked the write. */
+    public readonly conflict?: ConflictDetail,
   ) {
     super(message, 409, "conflict");
   }

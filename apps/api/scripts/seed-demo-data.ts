@@ -1,8 +1,16 @@
 /**
  * Seeds a realistic, coherent demo dataset by driving the real application
  * services — never raw SQL — so every row is guaranteed to satisfy the same
- * business rules a real user would hit through the API. Purely additive:
- * safe to run against an existing dev database, never deletes anything.
+ * business rules a real user would hit through the API. Purely additive and
+ * idempotent: every step first looks its record up (account by email,
+ * project by name, machine by asset code, each journey by the rental on its
+ * machine) and skips it if it's already there, so re-running on a seeded
+ * database succeeds and changes nothing. Lookups are read-only queries; all
+ * writes still go through the services.
+ *
+ * ponytail: a journey that crashed halfway is skipped as a whole on re-run
+ * only once its rental exists; before that it is redone from the start (and
+ * may duplicate its requirement). Add a reset script if that ever bites.
  *
  * Demonstrates the full journey from docs/autonomus-building-instructions.md
  * §34: Catalogue -> Fleet -> Requirement -> Supply response -> Quotation ->
@@ -12,6 +20,7 @@
  * Run with: pnpm --filter @fleetip/api run seed:demo
  */
 import { container } from "../src/infrastructure/container.js";
+import { db } from "../src/infrastructure/database/client.js";
 
 function daysFromNow(offset: number): string {
   const date = new Date();
@@ -32,6 +41,15 @@ async function signupAndGetOrganizationId(input: {
   organizationName: string;
   organizationTypeCode: "rental_company" | "renter";
 }): Promise<{ userId: string; organizationId: string }> {
+  // Existing account: its first membership is the organization signup created.
+  const existing = await db
+    .selectFrom("users")
+    .innerJoin("memberships", "memberships.user_id", "users.id")
+    .select(["users.id as userId", "memberships.organization_id as organizationId"])
+    .where("users.email", "=", input.email)
+    .orderBy("memberships.created_at")
+    .executeTakeFirst();
+  if (existing) return existing;
   const { user, token } = await container.authService.signup(input);
   const session = await container.authService.getAuthenticatedSession(token);
   const organizationId = session!.memberships[0]!.organizationId;
@@ -70,32 +88,54 @@ async function main() {
     organizationName: "Desert Highway Constructors",
     organizationTypeCode: "renter",
   });
-  console.log("Created 2 Rental Companies and 2 Renters.");
+  console.log("Ensured 2 Rental Companies and 2 Renters.");
+
+  const findProject = (renterOrganizationId: string, projectName: string) =>
+    db
+      .selectFrom("projects")
+      .select("id")
+      .where("renter_organization_id", "=", renterOrganizationId)
+      .where("project_name", "=", projectName)
+      .executeTakeFirst();
+  const findMachine = (organizationId: string, assetCode: string) =>
+    db
+      .selectFrom("machines")
+      .select("id")
+      .where("organization_id", "=", organizationId)
+      .where("asset_code", "=", assetCode)
+      .executeTakeFirst();
+  const findRentalOn = (machineId: string) =>
+    db
+      .selectFrom("rentals")
+      .select(["id", "status"])
+      .where("machine_id", "=", machineId)
+      .orderBy("created_at")
+      .executeTakeFirst();
 
   // --- Projects (each Renter's own grouping — Requirements now hang off one) ---
-  const metroProject = await container.projectService.createProject(
-    metroInfra.userId,
-    metroInfra.organizationId,
-    {
+  const metroProject =
+    (await findProject(metroInfra.organizationId, "Metro Bridge Foundation")) ??
+    (await container.projectService.createProject(metroInfra.userId, metroInfra.organizationId, {
       projectType: "Bridge and Metro",
       projectName: "Metro Bridge Foundation",
       siteLocation: "Jaipur",
       state: "Rajasthan",
       startDate: daysFromNow(-6),
-    },
-  );
-  const desertProject = await container.projectService.createProject(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    {
-      projectType: "Road",
-      projectName: "Highway Widening Phase 2",
-      siteLocation: "Udaipur",
-      state: "Rajasthan",
-      startDate: daysFromNow(19),
-    },
-  );
-  console.log("Created 1 Project per Renter.");
+    }));
+  const desertProject =
+    (await findProject(desertHighway.organizationId, "Highway Widening Phase 2")) ??
+    (await container.projectService.createProject(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      {
+        projectType: "Road",
+        projectName: "Highway Widening Phase 2",
+        siteLocation: "Udaipur",
+        state: "Rajasthan",
+        startDate: daysFromNow(19),
+      },
+    ));
+  console.log("Ensured 1 Project per Renter.");
 
   // --- Catalogue lookups (seeded by migration 0005) ---
   const categories = await container.catalogueService.listCategories();
@@ -113,295 +153,331 @@ async function main() {
   const craneProduct = craneProducts[0]!;
 
   // --- Fleet ---
-  const apexExcavator = await container.equipmentService.createMachine(
-    apex.userId,
-    apex.organizationId,
-    {
+  const apexExcavator =
+    (await findMachine(apex.organizationId, "APX-EXC-01")) ??
+    (await container.equipmentService.createMachine(apex.userId, apex.organizationId, {
       productId: excavatorProduct.id,
       assetCode: "APX-EXC-01",
       registrationNumber: "RJ14EX0001",
       yearOfManufacture: 2021,
-    },
-  );
-  const apexExcavator2 = await container.equipmentService.createMachine(
-    apex.userId,
-    apex.organizationId,
-    {
+    }));
+  const apexExcavator2 =
+    (await findMachine(apex.organizationId, "APX-EXC-02")) ??
+    (await container.equipmentService.createMachine(apex.userId, apex.organizationId, {
       productId: excavatorProduct.id,
       assetCode: "APX-EXC-02",
       registrationNumber: "RJ14EX0002",
       yearOfManufacture: 2022,
-    },
-  );
-  const rhmCrane = await container.equipmentService.createMachine(
-    rajasthanHeavy.userId,
-    rajasthanHeavy.organizationId,
-    {
-      productId: craneProduct.id,
-      assetCode: "RHM-CRN-01",
-      registrationNumber: "RJ27CR0001",
-      yearOfManufacture: 2020,
-    },
-  );
-  console.log("Registered 3 machines across the two Rental Companies.");
+    }));
+  const rhmCrane =
+    (await findMachine(rajasthanHeavy.organizationId, "RHM-CRN-01")) ??
+    (await container.equipmentService.createMachine(
+      rajasthanHeavy.userId,
+      rajasthanHeavy.organizationId,
+      {
+        productId: craneProduct.id,
+        assetCode: "RHM-CRN-01",
+        registrationNumber: "RJ27CR0001",
+        yearOfManufacture: 2020,
+      },
+    ));
+  console.log("Ensured 3 machines across the two Rental Companies.");
 
-  // --- Journey 1: RFQ -> response -> quotation -> negotiation -> award -> Rental ---
-  const requirement1 = await container.requirementService.createRequirement(
-    metroInfra.userId,
-    metroInfra.organizationId,
-    {
-      projectId: metroProject.id,
-      productSubcategoryId: trackedExcavatorSub.id,
-      quantity: 1,
-      requestedStartDate: daysFromNow(-5),
-      validityDate: daysFromNow(-8),
-      shiftPattern: "double",
-      crewRequirement: "one_crew_set",
-      notes: "20T class tracked excavator needed for bridge foundation excavation.",
-    },
-  );
-  const response1 = await container.quotationResponseService.submitResponse(
-    apex.userId,
-    apex.organizationId,
-    requirement1.id,
-    { status: "interested", indicativeRate: 6500, indicativeRateUnit: "day" },
-  );
-  const quotation1 = await container.commercialQuotationService.createQuotation(
-    apex.userId,
-    apex.organizationId,
-    {
-      renterOrganizationId: metroInfra.organizationId,
-      requirementId: requirement1.id,
-      quotationResponseId: response1.id,
-      machineId: apexExcavator.id,
-      startDate: daysFromNow(-5),
-      rate: 6500,
-      rateUnit: "day",
-      validityDate: daysFromNow(-6),
-      fuelScope: "company",
-      operatorScope: "with_operator",
-      workingHours: 8,
-      workingDaysPerWeek: 6,
-      gstTerms: "GST extra @ 18%",
-      commercialNotes: "Includes operator and standard mobilization within Jaipur city limits.",
-    },
-  );
-  await container.commercialQuotationService.addScopeItem(
-    apex.userId,
-    apex.organizationId,
-    quotation1.id,
-    { item: "Ground preparation", responsibleParty: "client", notes: "Site must be leveled before mobilization" },
-  );
-  await container.commercialQuotationService.sendQuotation(
-    apex.userId,
-    apex.organizationId,
-    quotation1.id,
-  );
-  const offer1 = await container.commercialQuotationService.makeOffer(
-    metroInfra.userId,
-    metroInfra.organizationId,
-    quotation1.id,
-    { rate: 6000, rateUnit: "day", startDate: daysFromNow(-5), notes: "Can we agree on 6000/day?" },
-  );
-  await container.commercialQuotationService.acceptOffer(
-    apex.userId,
-    apex.organizationId,
-    quotation1.id,
-    offer1.id,
-  );
-  // Accepting the Renter's own offer doesn't imply the Renter's final
-  // acceptance of the quotation — that's still a distinct, explicit step
-  // (see awardQuotation's renterAcceptedAt guard). Pre-existing seed-script
-  // gap: this call was missing, so awardQuotation below used to fail with
-  // "The Renter has not accepted this quotation yet" — found while
-  // verifying this phase's changes end to end.
-  await container.commercialQuotationService.acceptQuotation(
-    metroInfra.userId,
-    metroInfra.organizationId,
-    quotation1.id,
-  );
-  await container.commercialQuotationService.awardQuotation(
-    apex.userId,
-    apex.organizationId,
-    quotation1.id,
-  );
-  const rentals1 = await container.rentalService.listRentals(apex.userId, apex.organizationId);
-  const rental1 = rentals1[0]!;
-  console.log("Journey 1 complete: RFQ -> negotiated quotation -> awarded Rental.");
+  let rental1 = await findRentalOn(apexExcavator.id);
+  if (rental1) {
+    console.log("Journey 1 already seeded, skipped.");
+  } else {
+    // --- Journey 1: RFQ -> response -> quotation -> negotiation -> award -> Rental ---
+    const requirement1 = await container.requirementService.createRequirement(
+      metroInfra.userId,
+      metroInfra.organizationId,
+      {
+        projectId: metroProject.id,
+        productSubcategoryId: trackedExcavatorSub.id,
+        quantity: 1,
+        requestedStartDate: daysFromNow(-5),
+        validityDate: daysFromNow(-8),
+        shiftPattern: "double",
+        crewRequirement: "one_crew_set",
+        notes: "20T class tracked excavator needed for bridge foundation excavation.",
+      },
+    );
+    const response1 = await container.quotationResponseService.submitResponse(
+      apex.userId,
+      apex.organizationId,
+      requirement1.id,
+      { status: "interested", indicativeRate: 6500, indicativeRateUnit: "day" },
+    );
+    const quotation1 = await container.commercialQuotationService.createQuotation(
+      apex.userId,
+      apex.organizationId,
+      {
+        renterOrganizationId: metroInfra.organizationId,
+        requirementId: requirement1.id,
+        quotationResponseId: response1.id,
+        machineId: apexExcavator.id,
+        startDate: daysFromNow(-5),
+        rate: 6500,
+        rateUnit: "day",
+        // Still valid today: a past validity date makes the quotation lazily expire before the offer below.
+        validityDate: daysFromNow(7),
+        fuelScope: "company",
+        operatorScope: "with_operator",
+        workingHours: 8,
+        workingDaysPerWeek: 6,
+        gstTerms: "GST extra @ 18%",
+        commercialNotes: "Includes operator and standard mobilization within Jaipur city limits.",
+      },
+    );
+    await container.commercialQuotationService.addScopeItem(
+      apex.userId,
+      apex.organizationId,
+      quotation1.id,
+      {
+        item: "Ground preparation",
+        responsibleParty: "client",
+        notes: "Site must be leveled before mobilization",
+      },
+    );
+    await container.commercialQuotationService.sendQuotation(
+      apex.userId,
+      apex.organizationId,
+      quotation1.id,
+    );
+    const offer1 = await container.commercialQuotationService.makeOffer(
+      metroInfra.userId,
+      metroInfra.organizationId,
+      quotation1.id,
+      {
+        rate: 6000,
+        rateUnit: "day",
+        startDate: daysFromNow(-5),
+        notes: "Can we agree on 6000/day?",
+      },
+    );
+    await container.commercialQuotationService.acceptOffer(
+      apex.userId,
+      apex.organizationId,
+      quotation1.id,
+      offer1.id,
+    );
+    // Accepting the Renter's own offer doesn't imply the Renter's final
+    // acceptance of the quotation — that's still a distinct, explicit step
+    // (see awardQuotation's renterAcceptedAt guard). Pre-existing seed-script
+    // gap: this call was missing, so awardQuotation below used to fail with
+    // "The Renter has not accepted this quotation yet" — found while
+    // verifying this phase's changes end to end.
+    await container.commercialQuotationService.acceptQuotation(
+      metroInfra.userId,
+      metroInfra.organizationId,
+      quotation1.id,
+    );
+    await container.commercialQuotationService.awardQuotation(
+      apex.userId,
+      apex.organizationId,
+      quotation1.id,
+    );
+    rental1 = await findRentalOn(apexExcavator.id);
+    console.log("Journey 1 complete: RFQ -> negotiated quotation -> awarded Rental.");
+  }
+  if (!rental1) throw new Error("Journey 1 did not produce a rental");
 
-  // --- Journey 2: RFQ -> Auction -> formalized quotation -> award -> Rental ---
-  const requirement2 = await container.requirementService.createRequirement(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    {
-      projectId: desertProject.id,
-      productSubcategoryId: mobileCraneSub.id,
-      quantity: 1,
-      requestedStartDate: daysFromNow(20),
-      validityDate: daysFromNow(18),
-      boomLength: 32,
-      shiftPattern: "single",
-      crewRequirement: "one_crew_set",
-    },
-  );
-  const auction = await container.auctionService.createAuction(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    {
-      requirementId: requirement2.id,
-      biddingDirection: "descending",
-      basePrice: 9000,
-      startsAt: minutesFromNow(-2),
-      endsAt: minutesFromNow(60),
-    },
-  );
-  const rhmParticipant = await container.auctionService.requestToJoin(
-    rajasthanHeavy.userId,
-    rajasthanHeavy.organizationId,
-    auction.id,
-  );
-  await container.auctionService.reviewParticipant(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    auction.id,
-    rhmParticipant.id,
-    "approved",
-  );
-  await container.auctionService.placeBid(
-    rajasthanHeavy.userId,
-    rajasthanHeavy.organizationId,
-    auction.id,
-    8500,
-  );
-  await container.auctionService.closeAuctionEarly(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    auction.id,
-  );
-  // The leading bid is not automatically the winner — the Requirement owner
-  // (auction.manage, the Renter) must explicitly select a participant before
-  // that participant may formalize a CommercialQuotation. Pre-existing
-  // seed-script gap: this call was missing, so createQuotation below used to
-  // fail with "Only the participant selected by the auction owner may
-  // formalize this quotation" — found while verifying this phase's changes
-  // end to end.
-  await container.auctionService.selectParticipant(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    auction.id,
-    rhmParticipant.id,
-  );
-  const quotation2 = await container.commercialQuotationService.createQuotation(
-    rajasthanHeavy.userId,
-    rajasthanHeavy.organizationId,
-    {
-      renterOrganizationId: desertHighway.organizationId,
-      requirementId: requirement2.id,
-      sourceAuctionId: auction.id,
-      machineId: rhmCrane.id,
-      startDate: daysFromNow(20),
-      rate: 8500,
-      rateUnit: "day",
-      validityDate: daysFromNow(19),
-    },
-  );
-  await container.commercialQuotationService.sendQuotation(
-    rajasthanHeavy.userId,
-    rajasthanHeavy.organizationId,
-    quotation2.id,
-  );
-  // Auction participant selection is not commercial acceptance — the Renter
-  // must still explicitly accept these final terms (see awardQuotation's
-  // renterAcceptedAt guard, held identically for Path C). Pre-existing
-  // seed-script gap, same class as Journey 1's missing acceptQuotation call.
-  await container.commercialQuotationService.acceptQuotation(
-    desertHighway.userId,
-    desertHighway.organizationId,
-    quotation2.id,
-  );
-  await container.commercialQuotationService.awardQuotation(
-    rajasthanHeavy.userId,
-    rajasthanHeavy.organizationId,
-    quotation2.id,
-  );
-  console.log("Journey 2 complete: RFQ -> Auction -> formalized quotation -> awarded Rental.");
+  if (await findRentalOn(rhmCrane.id)) {
+    console.log("Journey 2 already seeded, skipped.");
+  } else {
+    // --- Journey 2: RFQ -> Auction -> formalized quotation -> award -> Rental ---
+    const requirement2 = await container.requirementService.createRequirement(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      {
+        projectId: desertProject.id,
+        productSubcategoryId: mobileCraneSub.id,
+        quantity: 1,
+        requestedStartDate: daysFromNow(20),
+        validityDate: daysFromNow(18),
+        boomLength: 32,
+        shiftPattern: "single",
+        crewRequirement: "one_crew_set",
+      },
+    );
+    const auction = await container.auctionService.createAuction(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      {
+        requirementId: requirement2.id,
+        biddingDirection: "descending",
+        basePrice: 9000,
+        startsAt: minutesFromNow(-2),
+        endsAt: minutesFromNow(60),
+      },
+    );
+    const rhmParticipant = await container.auctionService.requestToJoin(
+      rajasthanHeavy.userId,
+      rajasthanHeavy.organizationId,
+      auction.id,
+    );
+    await container.auctionService.reviewParticipant(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      auction.id,
+      rhmParticipant.id,
+      "approved",
+    );
+    await container.auctionService.placeBid(
+      rajasthanHeavy.userId,
+      rajasthanHeavy.organizationId,
+      auction.id,
+      8500,
+    );
+    await container.auctionService.closeAuctionEarly(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      auction.id,
+    );
+    // The leading bid is not automatically the winner — the Requirement owner
+    // (auction.manage, the Renter) must explicitly select a participant before
+    // that participant may formalize a CommercialQuotation. Pre-existing
+    // seed-script gap: this call was missing, so createQuotation below used to
+    // fail with "Only the participant selected by the auction owner may
+    // formalize this quotation" — found while verifying this phase's changes
+    // end to end.
+    await container.auctionService.selectParticipant(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      auction.id,
+      rhmParticipant.id,
+    );
+    const quotation2 = await container.commercialQuotationService.createQuotation(
+      rajasthanHeavy.userId,
+      rajasthanHeavy.organizationId,
+      {
+        renterOrganizationId: desertHighway.organizationId,
+        requirementId: requirement2.id,
+        sourceAuctionId: auction.id,
+        machineId: rhmCrane.id,
+        startDate: daysFromNow(20),
+        rate: 8500,
+        rateUnit: "day",
+        validityDate: daysFromNow(19),
+      },
+    );
+    await container.commercialQuotationService.sendQuotation(
+      rajasthanHeavy.userId,
+      rajasthanHeavy.organizationId,
+      quotation2.id,
+    );
+    // Auction participant selection is not commercial acceptance — the Renter
+    // must still explicitly accept these final terms (see awardQuotation's
+    // renterAcceptedAt guard, held identically for Path C). Pre-existing
+    // seed-script gap, same class as Journey 1's missing acceptQuotation call.
+    await container.commercialQuotationService.acceptQuotation(
+      desertHighway.userId,
+      desertHighway.organizationId,
+      quotation2.id,
+    );
+    await container.commercialQuotationService.awardQuotation(
+      rajasthanHeavy.userId,
+      rajasthanHeavy.organizationId,
+      quotation2.id,
+    );
+    console.log("Journey 2 complete: RFQ -> Auction -> formalized quotation -> awarded Rental.");
+  }
 
-  // --- Execution: mobilization, activation, logsheets, and a full lifecycle for Rental 1 ---
-  await container.transportService.createTransport(apex.userId, apex.organizationId, rental1.id, {
-    leg: "mobilization",
-    pickupLocation: "Apex Yard, Jaipur",
-    destination: "Metro Bridge Site, Jaipur",
-    plannedDate: daysFromNow(-6),
-  });
-  await container.transportService.updateTransport(
-    apex.userId,
-    apex.organizationId,
-    rental1.id,
-    "mobilization",
-    { status: "dispatched" },
-  );
-  await container.transportService.updateTransport(
-    apex.userId,
-    apex.organizationId,
-    rental1.id,
-    "mobilization",
-    { status: "delivered", actualDate: daysFromNow(-5) },
-  );
-  await container.rentalService.updateRentalStatus(
-    apex.userId,
-    apex.organizationId,
-    rental1.id,
-    "active",
-  );
-  await container.logsheetService.submitLogsheet(apex.userId, apex.organizationId, rental1.id, {
-    logDate: daysFromNow(-5),
-    operatingHours: 8,
-    idleHours: 1,
-    overtimeHours: 0,
-  });
-  await container.logsheetService.submitLogsheet(apex.userId, apex.organizationId, rental1.id, {
-    logDate: daysFromNow(-4),
-    operatingHours: 9,
-    idleHours: 0.5,
-    overtimeHours: 1,
-  });
+  if (rental1.status !== "confirmed") {
+    console.log("Rental 1 execution already seeded, skipped.");
+  } else {
+    // --- Execution: mobilization, activation, logsheets, and a full lifecycle for Rental 1 ---
+    await container.transportService.createTransport(apex.userId, apex.organizationId, rental1.id, {
+      leg: "mobilization",
+      pickupLocation: "Apex Yard, Jaipur",
+      destination: "Metro Bridge Site, Jaipur",
+      plannedDate: daysFromNow(-6),
+    });
+    await container.transportService.updateTransport(
+      apex.userId,
+      apex.organizationId,
+      rental1.id,
+      "mobilization",
+      { status: "dispatched" },
+    );
+    await container.transportService.updateTransport(
+      apex.userId,
+      apex.organizationId,
+      rental1.id,
+      "mobilization",
+      { status: "delivered", actualDate: daysFromNow(-5) },
+    );
+    await container.rentalService.updateRentalStatus(
+      apex.userId,
+      apex.organizationId,
+      rental1.id,
+      "active",
+    );
+    await container.logsheetService.submitLogsheet(apex.userId, apex.organizationId, rental1.id, {
+      logDate: daysFromNow(-5),
+      operatingHours: 8,
+      idleHours: 1,
+      overtimeHours: 0,
+    });
+    await container.logsheetService.submitLogsheet(apex.userId, apex.organizationId, rental1.id, {
+      logDate: daysFromNow(-4),
+      operatingHours: 9,
+      idleHours: 0.5,
+      overtimeHours: 1,
+    });
 
-  const invoice1 = await container.billingService.createInvoice(apex.userId, apex.organizationId, {
-    rentalId: rental1.id,
-    billingPeriodStart: daysFromNow(-5),
-    billingPeriodEnd: daysFromNow(-4),
-    dueDate: daysFromNow(10),
-    taxAmount: 720,
-    lineItems: [{ description: "Excavator rental, 2 days @ 6000/day", quantity: 2, rate: 6000 }],
-  });
-  await container.billingService.updateInvoiceStatus(
-    apex.userId,
-    apex.organizationId,
-    invoice1.id,
-    "issued",
-  );
-  await container.billingService.recordPayment(apex.userId, apex.organizationId, invoice1.id, {
-    amount: 6000,
-    paidDate: daysFromNow(-3),
-    method: "bank_transfer",
-    reference: "NEFT-DEMO-0001",
-  });
-  console.log(
-    "Rental 1: mobilized, activated, logged, partially invoiced+paid (demonstrates an in-progress receivable).",
-  );
+    const invoice1 = await container.billingService.createInvoice(
+      apex.userId,
+      apex.organizationId,
+      {
+        rentalId: rental1.id,
+        billingPeriodStart: daysFromNow(-5),
+        billingPeriodEnd: daysFromNow(-4),
+        dueDate: daysFromNow(10),
+        taxAmount: 720,
+        lineItems: [
+          { description: "Excavator rental, 2 days @ 6000/day", quantity: 2, rate: 6000 },
+        ],
+      },
+    );
+    await container.billingService.updateInvoiceStatus(
+      apex.userId,
+      apex.organizationId,
+      invoice1.id,
+      "issued",
+    );
+    await container.billingService.recordPayment(apex.userId, apex.organizationId, invoice1.id, {
+      amount: 6000,
+      paidDate: daysFromNow(-3),
+      method: "bank_transfer",
+      reference: "NEFT-DEMO-0001",
+    });
+    console.log(
+      "Rental 1: mobilized, activated, logged, partially invoiced+paid (demonstrates an in-progress receivable).",
+    );
+  }
 
   // Rental 2 stays "confirmed" with no execution yet — a realistic
   // "just awarded, not yet mobilized" state for demo variety.
 
-  // --- Maintenance on the Rental Company's second (currently idle) machine ---
-  await container.maintenanceService.createMaintenance(apex.userId, apex.organizationId, {
-    machineId: apexExcavator2.id,
-    maintenanceType: "scheduled",
-    startDate: daysFromNow(-3),
-    endDate: daysFromNow(-1),
-    notes: "Routine 250-hour service.",
-  });
-  console.log("Logged a completed maintenance window on the idle second machine.");
+  const maintenanceSeeded = await db
+    .selectFrom("maintenance_records")
+    .select("id")
+    .where("machine_id", "=", apexExcavator2.id)
+    .executeTakeFirst();
+  if (maintenanceSeeded) {
+    console.log("Maintenance already seeded, skipped.");
+  } else {
+    // --- Maintenance on the Rental Company's second (currently idle) machine ---
+    await container.maintenanceService.createMaintenance(apex.userId, apex.organizationId, {
+      machineId: apexExcavator2.id,
+      maintenanceType: "scheduled",
+      startDate: daysFromNow(-3),
+      endDate: daysFromNow(-1),
+      notes: "Routine 250-hour service.",
+    });
+    console.log("Logged a completed maintenance window on the idle second machine.");
+  }
 
   console.log("\nDemo data ready. Sign in with any of:");
   console.log("  owner@apex-demo.fleetip.local / DemoPass123!  (Rental Company)");

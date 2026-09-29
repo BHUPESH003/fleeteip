@@ -3,12 +3,22 @@ import type {
   MaintenanceRecord as MaintenanceContract,
   MaintenanceStatus,
 } from "@fleetip/contracts/maintenance";
-import { ConflictError, NotFoundError } from "../../../shared/errors.js";
-import type { MachineRepositoryPort } from "../../equipment/domain/ports.js";
+import { MachineStatus } from "@fleetip/contracts/equipment";
+import { MaintenanceStatus as Status } from "@fleetip/contracts/maintenance";
+import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
+import type { MaintenanceListParams, Page } from "@fleetip/contracts/list";
+import { mapPage, type ParsedListQuery } from "../../../shared/list-query.js";
+import { canTransition as canMachineTransition } from "../../equipment/domain/machine-status.js";
+import type { MachineRecord, MachineRepositoryPort } from "../../equipment/domain/ports.js";
+import { availabilityConflictError, rentalConflict } from "../../marketplace/rental/application/availability.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/maintenance-status.js";
-import type { MaintenanceRecord, MaintenanceRepositoryPort } from "../domain/ports.js";
+import type {
+  MachineStatusChange,
+  MaintenanceRecord,
+  MaintenanceRepositoryPort,
+} from "../domain/ports.js";
 
 function toMaintenance(record: MaintenanceRecord): MaintenanceContract {
   return {
@@ -19,6 +29,7 @@ function toMaintenance(record: MaintenanceRecord): MaintenanceContract {
     endDate: record.end_date,
     status: record.status,
     notes: record.notes,
+    rentalId: record.rental_id,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
   };
@@ -32,11 +43,52 @@ export class MaintenanceService {
     private readonly permissionService: PermissionService,
   ) {}
 
+  /** Plan a job: created Scheduled, machine status untouched. */
   async createMaintenance(
     userId: string,
     rentalCompanyOrganizationId: string,
     input: CreateMaintenanceRequest,
   ): Promise<MaintenanceContract> {
+    await this.checkNewJob(userId, rentalCompanyOrganizationId, input);
+    const record = await this.maintenanceRepository.create({ ...input });
+    return toMaintenance(record);
+  }
+
+  /** Send to workshop: job created In progress and machine Active → Under maintenance, one transaction. */
+  async sendToWorkshop(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    input: CreateMaintenanceRequest,
+  ): Promise<MaintenanceContract> {
+    await this.permissionService.requirePermission(userId, rentalCompanyOrganizationId, "equipment.manage");
+    const machine = await this.checkNewJob(userId, rentalCompanyOrganizationId, input);
+    const machineStatus = machineMove(machine, MachineStatus.under_maintenance);
+    const record = await this.maintenanceRepository.create({
+      ...input,
+      status: Status.in_progress,
+      machineStatus,
+    });
+    return toMaintenance(record);
+  }
+
+  /** Log a job that already happened: created Completed in one write, machine status untouched. */
+  async logCompleted(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    input: CreateMaintenanceRequest,
+  ): Promise<MaintenanceContract> {
+    await this.checkNewJob(userId, rentalCompanyOrganizationId, input);
+    const record = await this.maintenanceRepository.create({ ...input, status: Status.completed });
+    return toMaintenance(record);
+  }
+
+  // Shared rules for every new job: tenant-scoped machine and rental link,
+  // and no overlap with a committing rental other than the linked one.
+  private async checkNewJob(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    input: CreateMaintenanceRequest,
+  ): Promise<MachineRecord> {
     await this.permissionService.requirePermission(
       userId,
       rentalCompanyOrganizationId,
@@ -48,23 +100,26 @@ export class MaintenanceService {
       throw new NotFoundError("Machine not found in this organization");
     }
 
-    const available = await this.rentalRepository.isAvailable(
-      input.machineId,
-      input.startDate,
-      input.endDate ?? null,
-    );
-    if (!available) {
-      throw new ConflictError("Machine is committed to a Rental for part of this period");
+    if (input.rentalId) {
+      const rental = await this.rentalRepository.findById(input.rentalId);
+      if (!rental || rental.rental_company_organization_id !== rentalCompanyOrganizationId) {
+        throw new NotFoundError("Rental not found in this organization");
+      }
+      if (rental.machine_id !== input.machineId) {
+        const message = "That rental is for a different machine";
+        throw new ValidationError(message, [{ path: "rentalId", message }]);
+      }
     }
 
-    const record = await this.maintenanceRepository.create({
-      machineId: input.machineId,
-      maintenanceType: input.maintenanceType,
-      startDate: input.startDate,
-      endDate: input.endDate,
-      notes: input.notes,
-    });
-    return toMaintenance(record);
+    const [blocker] = (
+      await this.rentalRepository.findCommittedOverlapping(
+        [input.machineId],
+        input.startDate,
+        input.endDate ?? null,
+      )
+    ).filter((rental) => rental.id !== input.rentalId);
+    if (blocker) throw availabilityConflictError(rentalConflict(blocker), "startDate");
+    return machine;
   }
 
   async listByMachine(
@@ -102,6 +157,21 @@ export class MaintenanceService {
     return records.map(toMaintenance);
   }
 
+  // Paged/filtered variant of listByOrganization (ticket l).
+  async listMaintenancePage(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    query: ParsedListQuery<MaintenanceListParams>,
+  ): Promise<Page<MaintenanceContract>> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "maintenance.manage",
+    );
+    const page = await this.maintenanceRepository.listMaintenancePage(rentalCompanyOrganizationId, query);
+    return mapPage(page, toMaintenance);
+  }
+
   async getMaintenanceRecord(
     userId: string,
     rentalCompanyOrganizationId: string,
@@ -126,6 +196,8 @@ export class MaintenanceService {
     rentalCompanyOrganizationId: string,
     maintenanceId: string,
     newStatus: MaintenanceStatus,
+    // Also move the machine, in the same transaction as the job's status.
+    newMachineStatus?: MachineStatus,
   ): Promise<MaintenanceContract> {
     await this.permissionService.requirePermission(
       userId,
@@ -143,7 +215,19 @@ export class MaintenanceService {
         `Cannot transition maintenance from ${existing.status} to ${newStatus}`,
       );
     }
-    const record = await this.maintenanceRepository.updateStatus(maintenanceId, newStatus);
+    let machineStatus: MachineStatusChange | undefined;
+    if (newMachineStatus) {
+      await this.permissionService.requirePermission(userId, rentalCompanyOrganizationId, "equipment.manage");
+      machineStatus = machineMove(machine, newMachineStatus);
+    }
+    const record = await this.maintenanceRepository.updateStatus(maintenanceId, newStatus, machineStatus);
     return toMaintenance(record);
   }
+}
+
+function machineMove(machine: MachineRecord, to: MachineStatus): MachineStatusChange {
+  if (!canMachineTransition(machine.status, to)) {
+    throw new ConflictError(`Cannot transition machine from ${machine.status} to ${to}`);
+  }
+  return { from: machine.status, to };
 }

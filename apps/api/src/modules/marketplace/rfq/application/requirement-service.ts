@@ -6,6 +6,8 @@ import type {
 import { RequirementStatus } from "@fleetip/contracts/rfq";
 import { ProjectStatus } from "@fleetip/contracts/project";
 import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
+import type { Page, RequirementDiscoveryParams } from "@fleetip/contracts/list";
+import { mapPage, type ParsedListQuery } from "../../../../shared/list-query.js";
 import type { ProductSubcategoryRepositoryPort } from "../../../catalogue/domain/ports.js";
 import type { ProjectRepositoryPort } from "../../project/domain/ports.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
@@ -68,6 +70,11 @@ export class RequirementService {
     );
     if (!subcategory) {
       throw new NotFoundError("Product subcategory not found");
+    }
+    // Soft cascade (0037): a disabled category disables its subcategories too.
+    if (subcategory.disabled_at || subcategory.category_disabled_at) {
+      const message = "This subcategory is disabled in the catalogue";
+      throw new ValidationError(message, [{ path: "productSubcategoryId", message }]);
     }
 
     const record = await this.requirementRepository.create({
@@ -182,6 +189,16 @@ export class RequirementService {
     );
     const records = await this.requirementRepository.listOpenForDiscovery();
     return records.map(toRequirement);
+  }
+
+  // Paged/filtered variant of discoverRequirements (ticket l).
+  async discoverRequirementsPage(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    query: ParsedListQuery<RequirementDiscoveryParams>,
+  ): Promise<Page<Requirement>> {
+    await this.permissionService.requirePermission(userId, rentalCompanyOrganizationId, "rfq.respond");
+    return mapPage(await this.requirementRepository.listOpenForDiscoveryPage(query), toRequirement);
   }
 
   async getRequirementForDiscovery(

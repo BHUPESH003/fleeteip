@@ -6,6 +6,8 @@ import type {
 import { TransportLeg, TransportStatus } from "@fleetip/contracts/transport";
 import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import { ConflictError, NotFoundError } from "../../../shared/errors.js";
+import type { Page, TransportListParams } from "@fleetip/contracts/list";
+import { mapPage, type ParsedListQuery } from "../../../shared/list-query.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
@@ -125,6 +127,17 @@ export class TransportService {
       rentalCompanyOrganizationId,
     );
     return records.map(toTransport);
+  }
+
+  // Paged/filtered variant of listByOrganization (ticket l).
+  async listTransportPage(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    query: ParsedListQuery<TransportListParams>,
+  ): Promise<Page<TransportContract>> {
+    await this.permissionService.requirePermission(userId, rentalCompanyOrganizationId, "transport.manage");
+    const page = await this.transportRepository.listTransportPage(rentalCompanyOrganizationId, query);
+    return mapPage(page, toTransport);
   }
 
   // A transport record's own id, with no rentalId already in hand — the

@@ -1,6 +1,9 @@
 import { TransportStatus } from "@fleetip/contracts/transport";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
+import type { TransportListParams } from "@fleetip/contracts/list";
+import { executePage } from "../../../infrastructure/database/list-page.js";
+import { containsPattern, refIdPrefix, type ParsedListQuery } from "../../../shared/list-query.js";
 import { ConflictError } from "../../../shared/errors.js";
 import type {
   CreateTransportInput,
@@ -120,6 +123,31 @@ export class TransportRepository implements TransportRepositoryPort {
       .orderBy("transport_records.created_at", "desc")
       .execute();
     return rows.map(toTransportRecord);
+  }
+
+  async listTransportPage(rentalCompanyOrganizationId: string, query: ParsedListQuery<TransportListParams>) {
+    let q = this.db
+      .selectFrom("transport_records")
+      .innerJoin("rentals", "rentals.id", "transport_records.rental_id")
+      .innerJoin("machines", "machines.id", "rentals.machine_id")
+      .where("rentals.rental_company_organization_id", "=", rentalCompanyOrganizationId)
+      .selectAll("transport_records");
+    if (query.status) q = q.where("transport_records.status", "=", query.status);
+    if (query.leg) q = q.where("transport_records.leg", "=", query.leg);
+    if (query.rentalId) q = q.where("transport_records.rental_id", "=", query.rentalId);
+    if (query.from) q = q.where("transport_records.planned_date", ">=", query.from);
+    if (query.to) q = q.where("transport_records.planned_date", "<=", query.to);
+    if (query.q) {
+      const pattern = containsPattern(query.q);
+      const idPrefix = refIdPrefix(query.q, "RN");
+      q = q.where((eb) =>
+        eb.or([
+          eb("machines.asset_code", "ilike", pattern),
+          ...(idPrefix ? [eb(sql<string>`rentals.id::text`, "like", idPrefix)] : []),
+        ]),
+      );
+    }
+    return executePage(q, "transport_records.created_at", "transport_records.id", query, toTransportRecord);
   }
 
   async update(id: string, updates: UpdateTransportInput) {

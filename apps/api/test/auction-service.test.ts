@@ -203,6 +203,9 @@ function fakeRequirementRepository(
   ],
 ): RequirementRepositoryPort {
   return {
+    listOpenForDiscoveryPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -481,14 +484,17 @@ describe("AuctionService", () => {
         updated_at: new Date(),
       },
     ]);
-    await expect(
-      service.createAuction("user-1", RENTER_ORG_ID, {
+    const error = await service
+      .createAuction("user-1", RENTER_ORG_ID, {
         requirementId: REQUIREMENT_ID,
         biddingDirection: "ascending",
         basePrice: 1000,
         ...RUNNING_WINDOW,
-      }),
-    ).rejects.toThrow(ConflictError);
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictError);
+    // The web form places this conflict under the requirement picker.
+    expect((error as ConflictError).field).toBe("requirementId");
   });
 
   it("rejects auction management for a Rental Company organization", async () => {

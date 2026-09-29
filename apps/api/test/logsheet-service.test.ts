@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { logsheetListQuerySchema } from "@fleetip/contracts/list";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import type {
   ActiveMembershipRecord,
@@ -155,6 +158,9 @@ function rental(overrides: Partial<RentalRecord> = {}): RentalRecord {
 
 function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -174,7 +180,7 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
     setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
-    isAvailable: async () => {
+    findCommittedOverlapping: async () => {
       throw new Error("not used in this test");
     },
     searchByOrganization: async () => {
@@ -190,6 +196,13 @@ function fakeLogsheetRepository(rentals: RentalRecord[] = []): LogsheetRepositor
   const records = new Map<string, LogsheetRecord>();
   let nextId = 1;
   return {
+    listLogsheetsPage: async (organizationId, query) => {
+      const own = new Set(rentals.filter((r) => r.rental_company_organization_id === organizationId).map((r) => r.id));
+      const rows = [...records.values()].filter(
+        (l) => own.has(l.rental_id) && (!query.from || l.log_date >= query.from),
+      );
+      return pageInMemory(rows, (l) => l.log_date, query);
+    },
     submit: async (input: SubmitLogsheetInput) => {
       const key = `${input.rentalId}:${input.logDate}`;
       const existing = [...records.values()].find(
@@ -416,5 +429,16 @@ describe("LogsheetService", () => {
         NotFoundError,
       );
     });
+  });
+
+  it("pages logsheets through the repository when list params are given", async () => {
+    const service = buildService([rental(), rental({ id: "rental-2" })]);
+    await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-02" });
+    await service.submitLogsheet("user-1", RC_ORG_ID, "rental-2", { logDate: "2026-03-05" });
+    await service.submitLogsheet("user-1", RC_ORG_ID, RENTAL_ID, { logDate: "2026-03-04" });
+    const query = parseListQuery(logsheetListQuerySchema, { from: "2026-03-03" })!;
+    const page = await service.listLogsheetsPage("user-1", RC_ORG_ID, query);
+    expect(page.items.map((l) => l.logDate)).toEqual(["2026-03-05", "2026-03-04"]);
+    expect(page.nextCursor).toBeNull();
   });
 });

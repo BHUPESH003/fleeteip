@@ -15,9 +15,10 @@ import { parseWithSchema } from "../../../shared/validate.js";
 /**
  * Every route here requires a valid staff session (getAuthenticatedStaffId)
  * — that IS the authorization check (see PlatformAdminService's own
- * comment for why no finer-grained permission exists yet). Frontend
- * visibility is never the enforcement point; each handler independently
- * re-verifies the session regardless of what the admin UI shows.
+ * comment for why no finer-grained permission exists yet). Enforced for
+ * every /admin/* route by the onRequest guard in app.ts
+ * (requireStaffSessionForAdminRoutes); the per-handler call below stays as
+ * the way a handler reads the staff id (cached, no second lookup).
  */
 export async function platformAdminRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get("/admin/dashboard", async (request) => {
@@ -136,6 +137,28 @@ export async function platformAdminRoutes(fastify: FastifyInstance): Promise<voi
         await getAuthenticatedStaffId(request);
         return container.platformAdminService.catalogueService.setProductDisabledAsPlatformAdmin(
           request.params.productId,
+          action === "disable",
+        );
+      },
+    );
+
+    fastify.post<{ Params: { categoryId: string } }>(
+      `/admin/catalogue/categories/:categoryId/${action}`,
+      async (request) => {
+        await getAuthenticatedStaffId(request);
+        return container.platformAdminService.catalogueService.setCategoryDisabledAsPlatformAdmin(
+          request.params.categoryId,
+          action === "disable",
+        );
+      },
+    );
+
+    fastify.post<{ Params: { subcategoryId: string } }>(
+      `/admin/catalogue/subcategories/:subcategoryId/${action}`,
+      async (request) => {
+        await getAuthenticatedStaffId(request);
+        return container.platformAdminService.catalogueService.setSubcategoryDisabledAsPlatformAdmin(
+          request.params.subcategoryId,
           action === "disable",
         );
       },

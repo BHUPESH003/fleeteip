@@ -51,6 +51,7 @@ import type {
   AuctionResultRecord,
 } from "../src/modules/marketplace/auction/domain/ports.js";
 import { RentalService } from "../src/modules/marketplace/rental/application/rental-service.js";
+import { fakeRentalChanges } from "./rental-changes-fake.js";
 import type {
   RentalRecord,
   RentalRepositoryPort,
@@ -191,6 +192,9 @@ function fakeRoleRepository(): RoleRepositoryPort {
 
 function fakeProductSubcategoryRepository(): ProductSubcategoryRepositoryPort {
   return {
+    setDisabledAt: async () => {
+      throw new Error("not used in this test");
+    },
     listByCategory: async () => {
       throw new Error("not used in this test");
     },
@@ -257,6 +261,9 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
   const requirements = new Map<string, RequirementRecord>();
   let nextId = 1;
   return {
+    listOpenForDiscoveryPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async (input) => {
       const record: RequirementRecord = {
         id: `requirement-${nextId++}`,
@@ -359,6 +366,9 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
   let nextId = 1;
   let nextRef = 1;
   return {
+    listQuotationsPage: async () => {
+      throw new Error("not used in this test");
+    },
     nextReferenceNumber: async () => `Q-2026-${nextRef++}`,
     create: async (input) => {
       const record: CommercialQuotationRecord = {
@@ -756,6 +766,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
     ],
   ]);
   return {
+    listMachinesPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -802,6 +815,9 @@ function fakeProductRepository(): ProductRepositoryPort {
 
 function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
   return {
+    listMaintenancePage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -817,7 +833,7 @@ function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
-    hasOverlappingMaintenance: async () => false,
+    findOpenOverlapping: async () => [],
   };
 }
 
@@ -825,6 +841,9 @@ function fakeRentalRepository(): RentalRepositoryPort {
   const rentals = new Map<string, RentalRecord>();
   let nextId = 1;
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async (input) => {
       const record: RentalRecord = {
         id: `rental-${nextId++}`,
@@ -898,7 +917,7 @@ function fakeRentalRepository(): RentalRepositoryPort {
       rentals.set(id, updated);
       return updated;
     },
-    isAvailable: async () => true,
+    findCommittedOverlapping: async () => [],
     searchByOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -991,6 +1010,7 @@ function buildHarness() {
     permissionService,
     maintenanceRepository,
     notificationService,
+    fakeRentalChanges(),
   );
   const auctionService = new AuctionService(
     auctionRepository,

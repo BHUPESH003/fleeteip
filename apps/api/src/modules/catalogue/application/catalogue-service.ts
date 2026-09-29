@@ -1,5 +1,6 @@
 import type {
   CapacityUnit,
+  CatalogueDisabledBy,
   CreateProductCategoryRequest,
   CreateProductRequest,
   CreateProductSubcategoryRequest,
@@ -22,11 +23,29 @@ import type {
   ProductSubcategoryRepositoryPort,
 } from "../domain/ports.js";
 
+const iso = (value: Date | string | null | undefined) =>
+  value ? new Date(value).toISOString() : null;
+
+// Soft cascade (0037): the highest disabled level wins — that's the one an
+// admin has to re-enable first.
+function disabledBy(record: {
+  disabled_at?: Date | string | null;
+  subcategory_disabled_at?: Date | string | null;
+  category_disabled_at?: Date | string | null;
+}): CatalogueDisabledBy | null {
+  if (record.category_disabled_at) return "category";
+  if (record.subcategory_disabled_at) return "subcategory";
+  if (record.disabled_at) return "self";
+  return null;
+}
+
 function toProductCategory(record: ProductCategoryRecord): ProductCategory {
   return {
     id: record.id,
     code: record.code,
     name: record.name,
+    disabledAt: iso(record.disabled_at),
+    disabledBy: disabledBy(record),
     createdAt: new Date(record.created_at).toISOString(),
   };
 }
@@ -37,6 +56,8 @@ function toProductSubcategory(record: ProductSubcategoryRecord): ProductSubcateg
     productCategoryId: record.product_category_id,
     code: record.code,
     name: record.name,
+    disabledAt: iso(record.disabled_at),
+    disabledBy: disabledBy(record),
     createdAt: new Date(record.created_at).toISOString(),
   };
 }
@@ -54,7 +75,8 @@ function toProduct(record: ProductRecord): Product {
     capacity: record.capacity,
     capacityUnit: record.capacity_unit as CapacityUnit | null,
     specifications: record.specifications as ProductSpecifications | null,
-    disabledAt: record.disabled_at ? new Date(record.disabled_at).toISOString() : null,
+    disabledAt: iso(record.disabled_at),
+    disabledBy: disabledBy(record),
     createdAt: new Date(record.created_at).toISOString(),
   };
 }
@@ -74,13 +96,18 @@ export class CatalogueService {
   // Reads stay public/unauthenticated — the Product Catalogue is
   // platform-level browsable reference data (see catalogue routes), not
   // organization-scoped, so there is nothing to authorize here.
-  async listCategories(): Promise<ProductCategory[]> {
-    const records = await this.productCategoryRepository.listAll();
+  // Lists leave out effectively-disabled items (pickers) unless
+  // includeDisabled; get-by-id always resolves.
+  async listCategories(includeDisabled = false): Promise<ProductCategory[]> {
+    const records = await this.productCategoryRepository.listAll(includeDisabled);
     return records.map(toProductCategory);
   }
 
-  async listSubcategories(categoryId: string): Promise<ProductSubcategory[]> {
-    const records = await this.productSubcategoryRepository.listByCategory(categoryId);
+  async listSubcategories(categoryId: string, includeDisabled = false): Promise<ProductSubcategory[]> {
+    const records = await this.productSubcategoryRepository.listByCategory(
+      categoryId,
+      includeDisabled,
+    );
     return records.map(toProductSubcategory);
   }
 
@@ -89,7 +116,7 @@ export class CatalogueService {
     return records.map(toProduct);
   }
 
-  // Get-by-id returns disabled products too — existing machines/rentals
+  // Get-by-id returns disabled items too — existing machines/rentals
   // must keep resolving their product.
   async getCategory(categoryId: string): Promise<ProductCategory> {
     const record = UUID.test(categoryId) ? await this.productCategoryRepository.findById(categoryId) : undefined;
@@ -302,5 +329,75 @@ export class CatalogueService {
       disabledAt: disabled ? new Date() : null,
     });
     return toProduct(record);
+  }
+
+  // --- Soft disable for taxonomy (0037). Children are left untouched: they
+  // read as disabled through the join, and re-enabling the parent restores
+  // every child that isn't disabled by itself. ---
+
+  async setCategoryDisabled(
+    userId: string,
+    organizationId: string,
+    categoryId: string,
+    disabled: boolean,
+  ): Promise<ProductCategory> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doSetCategoryDisabled(categoryId, disabled);
+  }
+
+  async setCategoryDisabledAsPlatformAdmin(
+    categoryId: string,
+    disabled: boolean,
+  ): Promise<ProductCategory> {
+    return this.doSetCategoryDisabled(categoryId, disabled);
+  }
+
+  private async doSetCategoryDisabled(
+    categoryId: string,
+    disabled: boolean,
+  ): Promise<ProductCategory> {
+    const existing = UUID.test(categoryId)
+      ? await this.productCategoryRepository.findById(categoryId)
+      : undefined;
+    if (!existing) throw new NotFoundError("Product category not found");
+    if (disabled === Boolean(existing.disabled_at)) return toProductCategory(existing);
+    const record = await this.productCategoryRepository.setDisabledAt(
+      categoryId,
+      disabled ? new Date() : null,
+    );
+    return toProductCategory(record);
+  }
+
+  async setSubcategoryDisabled(
+    userId: string,
+    organizationId: string,
+    subcategoryId: string,
+    disabled: boolean,
+  ): Promise<ProductSubcategory> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doSetSubcategoryDisabled(subcategoryId, disabled);
+  }
+
+  async setSubcategoryDisabledAsPlatformAdmin(
+    subcategoryId: string,
+    disabled: boolean,
+  ): Promise<ProductSubcategory> {
+    return this.doSetSubcategoryDisabled(subcategoryId, disabled);
+  }
+
+  private async doSetSubcategoryDisabled(
+    subcategoryId: string,
+    disabled: boolean,
+  ): Promise<ProductSubcategory> {
+    const existing = UUID.test(subcategoryId)
+      ? await this.productSubcategoryRepository.findById(subcategoryId)
+      : undefined;
+    if (!existing) throw new NotFoundError("Product subcategory not found");
+    if (disabled === Boolean(existing.disabled_at)) return toProductSubcategory(existing);
+    const record = await this.productSubcategoryRepository.setDisabledAt(
+      subcategoryId,
+      disabled ? new Date() : null,
+    );
+    return toProductSubcategory(record);
   }
 }

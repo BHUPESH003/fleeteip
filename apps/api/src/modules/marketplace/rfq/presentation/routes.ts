@@ -3,9 +3,11 @@ import {
   updateRequirementRequestSchema,
   updateRequirementStatusRequestSchema,
 } from "@fleetip/contracts/rfq";
+import { requirementDiscoveryQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../../shared/auth.js";
+import { parseListQuery } from "../../../../shared/list-query.js";
 import { parseWithSchema } from "../../../../shared/validate.js";
 
 export async function requirementRoutes(fastify: FastifyInstance): Promise<void> {
@@ -39,6 +41,10 @@ export async function requirementRoutes(fastify: FastifyInstance): Promise<void>
     "/organizations/:organizationId/requirement-discovery",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(requirementDiscoveryQuerySchema, request.query);
+      if (page) {
+        return container.requirementService.discoverRequirementsPage(userId, request.params.organizationId, page);
+      }
       return container.requirementService.discoverRequirements(
         userId,
         request.params.organizationId,

@@ -1,6 +1,11 @@
 import { InvoiceStatus } from "@fleetip/contracts/billing";
 import { sql, type Kysely } from "kysely";
+import type { InvoiceListParams } from "@fleetip/contracts/list";
 import type { Database } from "../../../infrastructure/database/types.js";
+import { executePage } from "../../../infrastructure/database/list-page.js";
+import { todayInBusinessZone } from "../../../shared/business-date.js";
+import { containsPattern, type ParsedListQuery } from "../../../shared/list-query.js";
+import { isFullyPaid } from "../domain/invoice-status.js";
 import type {
   CreateInvoiceInput,
   CreatePaymentInput,
@@ -52,7 +57,7 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
       RETURNING next_value - 1 AS value
     `.execute(this.db);
     const value = result.rows[0]?.value;
-    const year = new Date().getFullYear();
+    const year = todayInBusinessZone().slice(0, 4);
     return `INV-${year}-${value}`;
   }
 
@@ -104,7 +109,9 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
   }
 
   // One query: each invoice with its payment total / latest payment date.
-  private selectInvoicesWithPayments() {
+  // "Past due" uses the business day as a parameter, not the DB session's
+  // current_date (risk register §2.5).
+  private selectInvoicesWithPayments(today = todayInBusinessZone()) {
     return this.db
       .selectFrom("invoices")
       .leftJoin(
@@ -124,7 +131,7 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
       .select([
         sql<number>`coalesce(payment_totals.amount_paid, 0)`.as("amount_paid"),
         "payment_totals.last_paid_date",
-        sql<boolean>`invoices.due_date < current_date`.as("past_due"),
+        sql<boolean>`invoices.due_date < ${today}::date`.as("past_due"),
       ]);
   }
 
@@ -143,6 +150,38 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
       .orderBy("invoices.created_at", "desc")
       .execute();
     return rows as InvoiceListRecord[];
+  }
+
+  async listInvoicesPage(
+    party: "rentalCompany" | "renter",
+    organizationId: string,
+    query: ParsedListQuery<InvoiceListParams>,
+  ) {
+    const today = todayInBusinessZone();
+    let q = this.selectInvoicesWithPayments(today);
+    q =
+      party === "rentalCompany"
+        ? q.where("invoices.rental_company_organization_id", "=", organizationId)
+        : q.where("invoices.rental_id", "in", (eb) =>
+            eb.selectFrom("rentals").select("rentals.id").where("rentals.renter_organization_id", "=", organizationId),
+          );
+    if (query.status === InvoiceStatus.overdue) {
+      // Matches the list's `overdue` flag: flipped already, or issued and past due.
+      q = q.where((eb) =>
+        eb.or([
+          eb("invoices.status", "=", InvoiceStatus.overdue),
+          eb.and([eb("invoices.status", "=", InvoiceStatus.issued), eb("invoices.due_date", "<", today)]),
+        ]),
+      );
+    } else if (query.status) {
+      q = q.where("invoices.status", "=", query.status);
+    }
+    if (query.rentalId) q = q.where("invoices.rental_id", "=", query.rentalId);
+    if (query.from) q = q.where("invoices.due_date", ">=", query.from);
+    if (query.to) q = q.where("invoices.due_date", "<=", query.to);
+    if (query.q) q = q.where("invoices.invoice_number", "ilike", containsPattern(query.q));
+    const sortColumn = { createdAt: "invoices.created_at", dueDate: "invoices.due_date" }[query.sort];
+    return executePage(q, sortColumn, "invoices.id", query, (row) => row as InvoiceListRecord);
   }
 
   async listLineItems(invoiceId: string) {
@@ -180,7 +219,7 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
       .set({ status: InvoiceStatus.overdue, updated_at: new Date() })
       .where("id", "=", id)
       .where("status", "=", InvoiceStatus.issued)
-      .where(sql<boolean>`due_date < current_date`)
+      .where("due_date", "<", todayInBusinessZone())
       .returning(INVOICE_COLUMNS)
       .executeTakeFirst();
     if (row) return row as InvoiceRecord;
@@ -214,7 +253,7 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
       const amountPaid = Number(sumResult.rows[0]?.total ?? 0);
 
       let updatedInvoice = invoice;
-      if (amountPaid >= Number(invoice.total_amount) && invoice.status !== InvoiceStatus.paid) {
+      if (isFullyPaid(Number(invoice.total_amount), amountPaid) && invoice.status !== InvoiceStatus.paid) {
         updatedInvoice = await trx
           .updateTable("invoices")
           .set({ status: InvoiceStatus.paid, updated_at: new Date() })

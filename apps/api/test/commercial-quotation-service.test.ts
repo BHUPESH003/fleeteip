@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { quotationListQuerySchema } from "@fleetip/contracts/list";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import type {
   ActiveMembershipRecord,
@@ -38,6 +41,7 @@ import type {
   UpdateRentalTermsInput,
 } from "../src/modules/marketplace/rental/domain/ports.js";
 import { RentalService } from "../src/modules/marketplace/rental/application/rental-service.js";
+import { fakeRentalChanges } from "./rental-changes-fake.js";
 import type {
   ApplyAcceptedOfferInput,
   CommercialQuotationRecord,
@@ -250,6 +254,9 @@ function machine(overrides: Partial<MachineRecord> = {}): MachineRecord {
 
 function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort {
   return {
+    listMachinesPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -307,6 +314,9 @@ function fakeRequirementRepository(
 ): RequirementRepositoryPort {
   const store = new Map(requirements.map((r) => [r.id, r]));
   return {
+    listOpenForDiscoveryPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -556,6 +566,9 @@ function fakeRentalRepository(): RentalRepositoryPort {
   const rentals = new Map<string, RentalRecord>();
   let nextId = 1;
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async (input: CreateRentalInput) => {
       const record: RentalRecord = {
         id: `rental-${nextId++}`,
@@ -631,12 +644,13 @@ function fakeRentalRepository(): RentalRepositoryPort {
       rentals.set(id, updated);
       return updated;
     },
-    isAvailable: async (machineId, startDate, endDate) => {
-      const committed = [...rentals.values()].filter(
-        (r) => r.machine_id === machineId && ["confirmed", "active", "off_rent"].includes(r.status),
-      );
-      return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
-    },
+    findCommittedOverlapping: async (machineIds, startDate, endDate) =>
+      [...rentals.values()].filter(
+        (r) =>
+          machineIds.includes(r.machine_id) &&
+          ["confirmed", "active", "off_rent"].includes(r.status) &&
+          overlaps(startDate, endDate, r.start_date, r.end_date),
+      ),
     searchByOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -652,6 +666,14 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
   let sequence = 1;
 
   return {
+    listQuotationsPage: async (party, organizationId, query) => {
+      const rows = [...quotations.values()].filter((q) =>
+        party === "rentalCompany"
+          ? q.rental_company_organization_id === organizationId
+          : q.renter_organization_id === organizationId && q.status !== "draft",
+      );
+      return pageInMemory(rows, (q) => q.reference_number, query);
+    },
     nextReferenceNumber: async () => `Q-2026-${sequence++}`,
     create: async (input: CreateCommercialQuotationInput) => {
       const record: CommercialQuotationRecord = {
@@ -922,6 +944,9 @@ function fakeQuotationOfferRepository(): QuotationOfferRepositoryPort {
 // award() only needs createRental to succeed.
 function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
   return {
+    listMaintenancePage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -937,7 +962,7 @@ function fakeMaintenanceRepository(): MaintenanceRepositoryPort {
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
-    hasOverlappingMaintenance: async () => false,
+    findOpenOverlapping: async () => [],
   };
 }
 
@@ -950,6 +975,7 @@ function buildRentalService(machines: MachineRecord[] = [machine()]) {
       fakePermissionService(),
       fakeMaintenanceRepository(),
       fakeNotificationService(),
+      fakeRentalChanges(),
     ),
   };
 }
@@ -1268,6 +1294,7 @@ describe("CommercialQuotationService", () => {
       fakePermissionService(),
       fakeMaintenanceRepository(),
       fakeNotificationService(),
+      fakeRentalChanges(),
     );
     const requirementRepository = fakeRequirementRepository();
     const service = new CommercialQuotationService(
@@ -1733,5 +1760,15 @@ describe("CommercialQuotationService", () => {
         }),
       ).rejects.toThrow(ConflictError);
     });
+  });
+
+  it("pages quotations through the repository when list params are given", async () => {
+    const service = buildService();
+    const first = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+    await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+    const query = parseListQuery(quotationListQuerySchema, { dir: "asc", limit: "1" })!;
+    const page = await service.listQuotationsPage("user-1", RC_ORG_ID, query);
+    expect(page.items.map((q) => q.id)).toEqual([first.id]);
+    expect(page.nextCursor).toEqual(expect.any(String));
   });
 });

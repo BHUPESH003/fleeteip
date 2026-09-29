@@ -16,10 +16,22 @@ import type {
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
 import { EquipmentService } from "../src/modules/equipment/application/equipment-service.js";
+import type {
+  MaintenanceRecord,
+  MaintenanceRepositoryPort,
+} from "../src/modules/maintenance/domain/ports.js";
+import type {
+  RentalRecord,
+  RentalRepositoryPort,
+} from "../src/modules/marketplace/rental/domain/ports.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
+import { machineListQuerySchema } from "@fleetip/contracts/list";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const DISABLED_PRODUCT_ID = "product-disabled";
+const INHERITED_DISABLED_PRODUCT_ID = "product-under-disabled-category";
 const PRODUCT_ID = "product-1";
 
 // Every test grants the role/permission unconditionally — PermissionService's
@@ -94,7 +106,9 @@ function fakeProductRepository(): ProductRepositoryPort {
         ? product
         : id === DISABLED_PRODUCT_ID
           ? { ...product, id, disabled_at: new Date() }
-          : undefined,
+          : id === INHERITED_DISABLED_PRODUCT_ID
+            ? { ...product, id, category_disabled_at: new Date() }
+            : undefined,
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -146,6 +160,12 @@ function fakeMachineRepository(): MachineRepositoryPort {
   let nextId = 1;
 
   return {
+    listMachinesPage: async (organizationId, query) => {
+      const rows = [...machines.values()].filter(
+        (m) => m.organization_id === organizationId && (!query.status || m.status === query.status),
+      );
+      return pageInMemory(rows, (m) => m.asset_code, query);
+    },
     create: async (input) => {
       const record: MachineRecord = {
         id: `machine-${nextId++}`,
@@ -201,11 +221,28 @@ function fakeMachineRepository(): MachineRepositoryPort {
   };
 }
 
-function buildService() {
+// What the retire guard reads: rentals still holding dates and open workshop jobs.
+function fakeCommitments(commitments: { rentals?: RentalRecord[]; jobs?: MaintenanceRecord[] } = {}) {
+  return {
+    rentalRepository: {
+      findCommittedOverlapping: async (machineIds: string[]) =>
+        (commitments.rentals ?? []).filter((r) => machineIds.includes(r.machine_id)),
+    } as unknown as RentalRepositoryPort,
+    maintenanceRepository: {
+      findOpenOverlapping: async (machineIds: string[]) =>
+        (commitments.jobs ?? []).filter((j) => machineIds.includes(j.machine_id)),
+    } as unknown as MaintenanceRepositoryPort,
+  };
+}
+
+function buildService(commitments: { rentals?: RentalRecord[]; jobs?: MaintenanceRecord[] } = {}) {
+  const { rentalRepository, maintenanceRepository } = fakeCommitments(commitments);
   return new EquipmentService(
     fakeMachineRepository(),
     fakeProductRepository(),
     fakePermissionService(),
+    rentalRepository,
+    maintenanceRepository,
   );
 }
 
@@ -228,6 +265,16 @@ describe("EquipmentService", () => {
     await expect(
       service.createMachine("user-1", "org-1", { ...baseInput, productId: DISABLED_PRODUCT_ID }),
     ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects creating a machine on a product under a disabled category", async () => {
+    const service = buildService();
+    await expect(
+      service.createMachine("user-1", "org-1", {
+        ...baseInput,
+        productId: INHERITED_DISABLED_PRODUCT_ID,
+      }),
+    ).rejects.toMatchObject({ constructor: ValidationError, issues: [{ path: "productId" }] });
   });
 
   it("rejects a duplicate asset code within the same organization", async () => {
@@ -314,14 +361,64 @@ describe("EquipmentService", () => {
     // permission-service.test.ts for its dedicated coverage) — exercised
     // here end-to-end through EquipmentService to prove the two are wired
     // together correctly, not just independently correct.
+    const { rentalRepository, maintenanceRepository } = fakeCommitments();
     const service = new EquipmentService(
       fakeMachineRepository(),
       fakeProductRepository(),
       fakePermissionService("renter"),
+      rentalRepository,
+      maintenanceRepository,
     );
 
     await expect(service.createMachine("user-1", "renter-org", baseInput)).rejects.toThrow(
       ForbiddenError,
     );
+  });
+  it("refuses to retire a machine with a booked, active or returning rental, naming it", async () => {
+    for (const status of ["confirmed", "active", "off_rent"] as const) {
+      const service = buildService({
+        rentals: [
+          { id: "abcdef12-rental", machine_id: "machine-1", status, start_date: "2026-01-01", end_date: null } as RentalRecord,
+        ],
+      });
+      const machine = await service.createMachine("user-1", "org-1", baseInput);
+      await expect(
+        service.updateMachineStatus("user-1", "org-1", machine.id, "retired"),
+      ).rejects.toMatchObject({
+        constructor: ConflictError,
+        message: expect.stringContaining("RN-ABCDEF12"),
+        conflict: { kind: "rental", id: "abcdef12-rental", reference: "RN-ABCDEF12" },
+      });
+    }
+  });
+
+  it("refuses to retire a machine with an open workshop job", async () => {
+    const service = buildService({
+      jobs: [
+        { id: "job-1", machine_id: "machine-1", status: "scheduled", start_date: "2026-05-01", end_date: null } as MaintenanceRecord,
+      ],
+    });
+    const machine = await service.createMachine("user-1", "org-1", baseInput);
+    await expect(
+      service.updateMachineStatus("user-1", "org-1", machine.id, "retired"),
+    ).rejects.toMatchObject({ constructor: ConflictError, conflict: { kind: "maintenance", id: "job-1" } });
+  });
+
+  it("retires a machine with nothing booked", async () => {
+    const service = buildService();
+    const machine = await service.createMachine("user-1", "org-1", baseInput);
+    const retired = await service.updateMachineStatus("user-1", "org-1", machine.id, "retired");
+    expect(retired.status).toBe("retired");
+  });
+
+  it("pages machines through the repository when list params are given", async () => {
+    const service = buildService();
+    for (const assetCode of ["EXC-003", "EXC-001", "EXC-002"]) {
+      await service.createMachine("user-1", "org-1", { ...baseInput, assetCode });
+    }
+    const query = parseListQuery(machineListQuerySchema, { sort: "assetCode", dir: "asc", limit: "2" })!;
+    const page = await service.listMachinesPage("user-1", "org-1", query);
+    expect(page.items.map((m) => m.assetCode)).toEqual(["EXC-001", "EXC-002"]);
+    expect(page.nextCursor).toEqual(expect.any(String));
   });
 });

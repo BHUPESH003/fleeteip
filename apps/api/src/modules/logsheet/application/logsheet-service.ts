@@ -3,6 +3,8 @@ import { isFutureIsoDate } from "@fleetip/contracts/shared";
 import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import { RentalStatus } from "@fleetip/contracts/rental";
 import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
+import type { LogsheetListParams, Page } from "@fleetip/contracts/list";
+import { mapPage, type ParsedListQuery } from "../../../shared/list-query.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
@@ -157,5 +159,16 @@ export class LogsheetService {
       rentalCompanyOrganizationId,
     );
     return records.map(toLogsheet);
+  }
+
+  // Paged/filtered variant of listByOrganization (ticket l).
+  async listLogsheetsPage(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    query: ParsedListQuery<LogsheetListParams>,
+  ): Promise<Page<Logsheet>> {
+    await this.permissionService.requirePermission(userId, rentalCompanyOrganizationId, "logsheet.manage");
+    const page = await this.logsheetRepository.listLogsheetsPage(rentalCompanyOrganizationId, query);
+    return mapPage(page, toLogsheet);
   }
 }

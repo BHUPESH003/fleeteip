@@ -138,6 +138,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
     created_at: new Date(),
   };
   return {
+    listMachinesPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },

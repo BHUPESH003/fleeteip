@@ -22,24 +22,37 @@ function isUniqueViolation(error: unknown): boolean {
 export class ProductRepository implements ProductRepositoryPort {
   constructor(private readonly db: Kysely<Database>) {}
 
+  // Every read joins the ancestors' own flags (soft cascade, 0037).
+  private selectWithAncestors() {
+    return this.db
+      .selectFrom("products as p")
+      .innerJoin("product_subcategories as s", "s.id", "p.product_subcategory_id")
+      .innerJoin("product_categories as c", "c.id", "s.product_category_id")
+      .selectAll("p")
+      .select(["s.disabled_at as subcategory_disabled_at", "c.disabled_at as category_disabled_at"]);
+  }
+
   listAll(subcategoryId?: string, includeDisabled = false) {
-    let query = this.db.selectFrom("products").selectAll();
+    let query = this.selectWithAncestors();
     if (subcategoryId !== undefined) {
-      query = query.where("product_subcategory_id", "=", subcategoryId);
+      query = query.where("p.product_subcategory_id", "=", subcategoryId);
     }
     if (!includeDisabled) {
-      query = query.where("disabled_at", "is", null);
+      query = query
+        .where("p.disabled_at", "is", null)
+        .where("s.disabled_at", "is", null)
+        .where("c.disabled_at", "is", null);
     }
     return query.execute();
   }
 
   findById(id: string) {
-    return this.db.selectFrom("products").selectAll().where("id", "=", id).executeTakeFirst();
+    return this.selectWithAncestors().where("p.id", "=", id).executeTakeFirst();
   }
 
   async create(input: CreateProductInput) {
     try {
-      return await this.db
+      const { id } = await this.db
         .insertInto("products")
         .values({
           product_subcategory_id: input.productSubcategoryId,
@@ -49,8 +62,9 @@ export class ProductRepository implements ProductRepositoryPort {
           capacity_unit: input.capacityUnit ?? null,
           specifications: input.specifications ? JSON.stringify(input.specifications) : null,
         })
-        .returningAll()
+        .returning("id")
         .executeTakeFirstOrThrow();
+      return await this.selectWithAncestors().where("p.id", "=", id).executeTakeFirstOrThrow();
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictError("A product with this manufacturer and name already exists");
@@ -61,7 +75,7 @@ export class ProductRepository implements ProductRepositoryPort {
 
   async update(id: string, updates: UpdateProductInput) {
     try {
-      return await this.db
+      await this.db
         .updateTable("products")
         .set({
           ...(updates.name !== undefined && { name: updates.name }),
@@ -74,8 +88,8 @@ export class ProductRepository implements ProductRepositoryPort {
           ...(updates.disabledAt !== undefined && { disabled_at: updates.disabledAt }),
         })
         .where("id", "=", id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
+        .execute();
+      return await this.selectWithAncestors().where("p.id", "=", id).executeTakeFirstOrThrow();
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictError("A product with this manufacturer and name already exists");

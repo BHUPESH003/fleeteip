@@ -8,7 +8,10 @@ import type {
   RecordPaymentRequest,
 } from "@fleetip/contracts/billing";
 import { InvoiceStatus } from "@fleetip/contracts/billing";
+import type { InvoiceListParams, Page } from "@fleetip/contracts/list";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../../shared/errors.js";
+import { mapPage, type ParsedListQuery } from "../../../shared/list-query.js";
+import { fromPaise, roundRupees, sumPaise, toPaise } from "../../../shared/money.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import { NotificationService } from "../../notification/application/notification-service.js";
@@ -42,18 +45,18 @@ function toInvoice(record: InvoiceRecord): Invoice {
 }
 
 function toInvoiceListItem(record: InvoiceListRecord): InvoiceListItem {
-  const balanceDue = record.total_amount - record.amount_paid;
+  const balanceDuePaise = toPaise(record.total_amount) - toPaise(record.amount_paid);
   // Same rule as getInvoiceDetail's markOverdueIfDue (issued + past due),
   // plus the already-flipped status, and only while money is still owed.
   const overdue =
-    balanceDue > 0 &&
+    balanceDuePaise > 0 &&
     (record.status === InvoiceStatus.overdue ||
       (record.status === InvoiceStatus.issued && record.past_due));
   return {
     ...toInvoice(record),
-    balanceDue,
+    balanceDue: fromPaise(balanceDuePaise),
     overdue,
-    paidAt: balanceDue <= 0 ? record.last_paid_date : null,
+    paidAt: balanceDuePaise <= 0 ? record.last_paid_date : null,
   };
 }
 
@@ -128,12 +131,13 @@ export class BillingService {
       description: item.description,
       quantity: item.quantity,
       rate: item.rate,
-      amount: item.quantity * item.rate,
+      amount: roundRupees(item.quantity * item.rate),
     }));
-    const subtotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
-    const taxAmount = input.taxAmount ?? 0;
-    const adjustmentAmount = input.adjustmentAmount ?? 0;
-    const totalAmount = subtotal + taxAmount + adjustmentAmount;
+    // In paise, so 0.1 + 0.2 is 0.30 (risk register §2.4).
+    const subtotal = fromPaise(sumPaise(lineItems.map((item) => item.amount)));
+    const taxAmount = roundRupees(input.taxAmount ?? 0);
+    const adjustmentAmount = roundRupees(input.adjustmentAmount ?? 0);
+    const totalAmount = fromPaise(sumPaise([subtotal, taxAmount, adjustmentAmount]));
 
     const invoiceNumber = await this.invoiceRepository.nextInvoiceNumber(
       rentalCompanyOrganizationId,
@@ -178,6 +182,23 @@ export class BillingService {
     throw new ForbiddenError();
   }
 
+  // Paged/filtered variant of listInvoices (ticket l); same party rules.
+  async listInvoicesPage(
+    userId: string,
+    organizationId: string,
+    query: ParsedListQuery<InvoiceListParams>,
+  ): Promise<Page<InvoiceListItem>> {
+    if (await this.permissionService.hasPermission(userId, organizationId, "billing.manage")) {
+      const page = await this.invoiceRepository.listInvoicesPage("rentalCompany", organizationId, query);
+      return mapPage(page, toInvoiceListItem);
+    }
+    if (await this.permissionService.hasPermission(userId, organizationId, "billing.respond")) {
+      const page = await this.invoiceRepository.listInvoicesPage("renter", organizationId, query);
+      return mapPage(page, toInvoiceListItem);
+    }
+    throw new ForbiddenError();
+  }
+
   async getInvoiceDetail(
     userId: string,
     organizationId: string,
@@ -211,14 +232,14 @@ export class BillingService {
       this.invoiceRepository.listLineItems(invoiceId),
       this.invoiceRepository.listPayments(invoiceId),
     ]);
-    const amountPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+    const amountPaidPaise = sumPaise(payments.map((payment) => payment.amount));
 
     return {
       invoice: toInvoice(record),
       lineItems: lineItems.map(toLineItem),
       payments: payments.map(toPayment),
-      amountPaid,
-      balanceDue: record.total_amount - amountPaid,
+      amountPaid: fromPaise(amountPaidPaise),
+      balanceDue: fromPaise(toPaise(record.total_amount) - amountPaidPaise),
     };
   }
 

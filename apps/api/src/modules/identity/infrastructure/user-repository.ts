@@ -50,4 +50,17 @@ export class UserRepository implements UserRepositoryPort {
       .returning(["id", "email", "display_name", "status", "created_at"])
       .executeTakeFirstOrThrow();
   }
+
+  async findPasswordHashById(id: string) {
+    const row = await this.db
+      .selectFrom("users")
+      .select("password_hash")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return row?.password_hash;
+  }
+
+  updatePasswordHash(id: string, passwordHash: string) {
+    return this.db.updateTable("users").set({ password_hash: passwordHash }).where("id", "=", id).execute();
+  }
 }

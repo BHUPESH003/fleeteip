@@ -2,9 +2,11 @@ import {
   createTransportRequestSchema,
   updateTransportRequestSchema,
 } from "@fleetip/contracts/transport";
+import { transportListQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../shared/auth.js";
+import { parseListQuery } from "../../../shared/list-query.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
 export async function transportRoutes(fastify: FastifyInstance): Promise<void> {
@@ -14,6 +16,8 @@ export async function transportRoutes(fastify: FastifyInstance): Promise<void> {
     "/organizations/:organizationId/transport-records",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(transportListQuerySchema, request.query);
+      if (page) return container.transportService.listTransportPage(userId, request.params.organizationId, page);
       return container.transportService.listByOrganization(userId, request.params.organizationId);
     },
   );

@@ -3,9 +3,11 @@ import {
   recordPaymentRequestSchema,
   updateInvoiceStatusRequestSchema,
 } from "@fleetip/contracts/billing";
+import { invoiceListQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../shared/auth.js";
+import { parseListQuery } from "../../../shared/list-query.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
 export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
@@ -28,6 +30,10 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
     "/organizations/:organizationId/invoices",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(invoiceListQuerySchema, request.query);
+      if (page) {
+        return container.billingService.listInvoicesPage(userId, request.params.organizationId, page);
+      }
       return container.billingService.listInvoices(userId, request.params.organizationId);
     },
   );

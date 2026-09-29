@@ -6,9 +6,11 @@ import {
   respondToAlternateDatesRequestSchema,
   updateCommercialQuotationTermsRequestSchema,
 } from "@fleetip/contracts/quotation";
+import { quotationListQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../../shared/auth.js";
+import { parseListQuery } from "../../../../shared/list-query.js";
 import { parseWithSchema } from "../../../../shared/validate.js";
 
 export async function commercialQuotationRoutes(fastify: FastifyInstance): Promise<void> {
@@ -57,6 +59,14 @@ export async function commercialQuotationRoutes(fastify: FastifyInstance): Promi
     "/organizations/:organizationId/quotations",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(quotationListQuerySchema, request.query);
+      if (page) {
+        return container.commercialQuotationService.listQuotationsPage(
+          userId,
+          request.params.organizationId,
+          page,
+        );
+      }
       return container.commercialQuotationService.listQuotations(
         userId,
         request.params.organizationId,

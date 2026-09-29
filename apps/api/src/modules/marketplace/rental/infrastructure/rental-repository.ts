@@ -1,9 +1,15 @@
 import { RentalStatus, ActualDatesVerificationStatus } from "@fleetip/contracts/rental";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Updateable } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
+import type { RentalListParams } from "@fleetip/contracts/list";
+import { executePage } from "../../../../infrastructure/database/list-page.js";
+import { containsPattern, refIdPrefix, type ParsedListQuery } from "../../../../shared/list-query.js";
 import { ConflictError } from "../../../../shared/errors.js";
 import type {
   CreateRentalInput,
+  RecordRentalEventInput,
+  RentalChangeRepositoryPort,
+  RentalEventRecord,
   RentalRecord,
   RentalRepositoryPort,
   UpdateRentalTermsInput,
@@ -36,6 +42,10 @@ const RENTAL_COLUMNS = [
   "actual_end_date",
   "actual_dates_verification_status",
   "actual_dates_dispute_reason",
+  "proposed_start_date",
+  "proposed_end_date",
+  "date_change_reason",
+  "date_change_proposed_at",
   "created_at",
   "updated_at",
 ] as const;
@@ -76,7 +86,14 @@ function isExclusionViolation(error: unknown): boolean {
   );
 }
 
-export class RentalRepository implements RentalRepositoryPort {
+const CLEARED_DATE_CHANGE = {
+  proposed_start_date: null,
+  proposed_end_date: null,
+  date_change_reason: null,
+  date_change_proposed_at: null,
+};
+
+export class RentalRepository implements RentalRepositoryPort, RentalChangeRepositoryPort {
   constructor(private readonly db: Kysely<Database>) {}
 
   async create(input: CreateRentalInput): Promise<RentalRecord> {
@@ -142,6 +159,38 @@ export class RentalRepository implements RentalRepositoryPort {
       .where("renter_organization_id", "=", renterOrganizationId)
       .execute();
     return rows.map(toRentalRecord);
+  }
+
+  async listRentalsPage(
+    party: "rentalCompany" | "renter",
+    organizationId: string,
+    query: ParsedListQuery<RentalListParams>,
+  ) {
+    let q = this.db
+      .selectFrom("rentals")
+      .selectAll()
+      .where(party === "rentalCompany" ? "rental_company_organization_id" : "renter_organization_id", "=", organizationId);
+    if (query.status) q = q.where("status", "=", query.status);
+    if (query.machineId) q = q.where("machine_id", "=", query.machineId);
+    // Overlap with [from, to]; an open-ended rental never ends.
+    if (query.to) q = q.where("start_date", "<=", query.to);
+    if (query.from) {
+      const from = query.from;
+      q = q.where((eb) => eb.or([eb("end_date", "is", null), eb("end_date", ">=", from)]));
+    }
+    if (query.q) {
+      const pattern = containsPattern(query.q);
+      const idPrefix = refIdPrefix(query.q, "RN");
+      q = q.where((eb) =>
+        eb.or([
+          eb("project_name", "ilike", pattern),
+          eb("machine_id", "in", eb.selectFrom("machines").select("machines.id").where("machines.asset_code", "ilike", pattern)),
+          ...(idPrefix ? [eb(sql<string>`rentals.id::text`, "like", idPrefix)] : []),
+        ]),
+      );
+    }
+    const sortColumn = { createdAt: "rentals.created_at", startDate: "rentals.start_date" }[query.sort];
+    return executePage(q, sortColumn, "rentals.id", query, toRentalRecord);
   }
 
   async updateTerms(id: string, updates: UpdateRentalTermsInput) {
@@ -213,16 +262,17 @@ export class RentalRepository implements RentalRepositoryPort {
     return toRentalRecord(row);
   }
 
-  async isAvailable(machineId: string, startDate: string, endDate: string | null) {
-    const result = await sql<{ available: boolean }>`
-      SELECT NOT EXISTS (
-        SELECT 1 FROM rentals
-        WHERE machine_id = ${machineId}
-          AND status IN ('confirmed', 'active', 'off_rent')
-          AND commitment_range && daterange(${startDate}, ${endDate}, '[]')
-      ) AS available
-    `.execute(this.db);
-    return result.rows[0]?.available ?? false;
+  async findCommittedOverlapping(machineIds: string[], startDate: string, endDate: string | null) {
+    if (machineIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom("rentals")
+      .selectAll()
+      .where("machine_id", "in", machineIds)
+      .where("status", "in", [RentalStatus.confirmed, RentalStatus.active, RentalStatus.off_rent])
+      .where(sql<boolean>`commitment_range && daterange(${startDate}, ${endDate}, '[]')`)
+      .orderBy("start_date")
+      .execute();
+    return rows.map(toRentalRecord);
   }
 
   async searchByOrganization(rentalCompanyOrganizationId: string, query: string) {
@@ -250,5 +300,85 @@ export class RentalRepository implements RentalRepositoryPort {
       .limit(10)
       .execute();
     return rows.map(toRentalRecord);
+  }
+
+  async proposeDateChange(
+    id: string,
+    proposal: { startDate: string; endDate: string | null; reason: string | null },
+  ) {
+    return this.patch(id, {
+      proposed_start_date: proposal.startDate,
+      proposed_end_date: proposal.endDate,
+      date_change_reason: proposal.reason,
+      date_change_proposed_at: new Date(),
+    });
+  }
+
+  async clearDateChange(id: string) {
+    return this.patch(id, CLEARED_DATE_CHANGE);
+  }
+
+  async changeDates(id: string, startDate: string, endDate: string | null) {
+    try {
+      return await this.patch(id, { start_date: startDate, end_date: endDate, ...CLEARED_DATE_CHANGE });
+    } catch (error) {
+      if (isExclusionViolation(error)) {
+        throw new ConflictError("Machine is already committed for an overlapping period");
+      }
+      throw error;
+    }
+  }
+
+  async correctActualDates(id: string, actualStartDate: string, actualEndDate: string | null) {
+    return this.patch(id, {
+      actual_start_date: actualStartDate,
+      actual_end_date: actualEndDate,
+      actual_dates_verification_status: ActualDatesVerificationStatus.pending,
+      actual_dates_dispute_reason: null,
+    });
+  }
+
+  async recordEvent(input: RecordRentalEventInput) {
+    await this.db
+      .insertInto("rental_events")
+      .values({
+        rental_id: input.rentalId,
+        organization_id: input.organizationId,
+        actor_user_id: input.actorUserId,
+        type: input.type,
+        detail: input.detail ? JSON.stringify(input.detail) : null,
+      })
+      .execute();
+  }
+
+  async listEvents(rentalId: string) {
+    const rows = await this.db
+      .selectFrom("rental_events")
+      .leftJoin("organizations", "organizations.id", "rental_events.organization_id")
+      .select([
+        "rental_events.id as id",
+        "rental_events.rental_id as rental_id",
+        "rental_events.organization_id as organization_id",
+        "organizations.name as organization_name",
+        "rental_events.type as type",
+        "rental_events.detail as detail",
+        "rental_events.created_at as created_at",
+      ])
+      .where("rental_events.rental_id", "=", rentalId)
+      .orderBy("rental_events.created_at", "desc")
+      .execute();
+    // type/detail are only ever written by recordEvent from the closed
+    // contract enum and a plain object — same narrowing as toRentalRecord.
+    return rows as RentalEventRecord[];
+  }
+
+  private async patch(id: string, values: Updateable<Database["rentals"]>) {
+    const row = await this.db
+      .updateTable("rentals")
+      .set({ ...values, updated_at: new Date() })
+      .where("id", "=", id)
+      .returning(RENTAL_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toRentalRecord(row);
   }
 }

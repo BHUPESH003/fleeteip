@@ -1,4 +1,6 @@
 import type { MachineStatus } from "@fleetip/contracts/equipment";
+import type { MachineListParams } from "@fleetip/contracts/list";
+import type { Page, ParsedListQuery } from "../../../shared/list-query.js";
 
 export interface MachineRecord {
   id: string;
@@ -33,6 +35,10 @@ export interface MachineRepositoryPort {
   create(input: CreateMachineInput): Promise<MachineRecord>;
   findById(id: string): Promise<MachineRecord | undefined>;
   listByOrganization(organizationId: string): Promise<MachineRecord[]>;
+  listMachinesPage(
+    organizationId: string,
+    query: ParsedListQuery<MachineListParams>,
+  ): Promise<Page<MachineRecord>>;
   updateStatus(id: string, status: MachineStatus): Promise<MachineRecord>;
   updateDetails(id: string, updates: UpdateMachineInput): Promise<MachineRecord>;
   // excludeMachineId lets the update path check "would this new asset code

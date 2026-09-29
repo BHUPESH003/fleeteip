@@ -249,6 +249,9 @@ function fakeOrganizationTypeRepository(): OrganizationRepositoryPort {
 
 function fakeMachineRepository(): MachineRepositoryPort {
   return {
+    listMachinesPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -274,6 +277,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
 
 function fakeRequirementRepository(): RequirementRepositoryPort {
   return {
+    listOpenForDiscoveryPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -303,6 +309,9 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
 
 function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort {
   return {
+    listQuotationsPage: async () => {
+      throw new Error("not used in this test");
+    },
     nextReferenceNumber: async () => {
       throw new Error("not used in this test");
     },
@@ -355,6 +364,9 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
 
 function fakeRentalRepository(): RentalRepositoryPort {
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -376,7 +388,7 @@ function fakeRentalRepository(): RentalRepositoryPort {
     setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
-    isAvailable: async () => {
+    findCommittedOverlapping: async () => {
       throw new Error("not used in this test");
     },
     searchByOrganization: async (rentalCompanyOrganizationId, query) =>

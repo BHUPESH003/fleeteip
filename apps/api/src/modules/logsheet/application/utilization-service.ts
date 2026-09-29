@@ -6,6 +6,7 @@ import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import type { LogsheetRepositoryPort } from "../domain/ports.js";
+import { todayInBusinessZone } from "../../../shared/business-date.js";
 
 function daysBetweenInclusive(startDate: string, endDate: string): number {
   const start = new Date(`${startDate}T00:00:00Z`);
@@ -53,7 +54,7 @@ export class UtilizationService {
     }
 
     const totals = await this.logsheetRepository.getRentalTotals(rentalId);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInBusinessZone();
     // "Days so far" for a start date still in the future (advance-booked,
     // not yet active) — 0, not a negative count.
     const totalRentalDays = Math.max(daysBetweenInclusive(rental.start_date, rental.end_date ?? today), 0);

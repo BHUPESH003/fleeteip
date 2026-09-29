@@ -1,4 +1,6 @@
 import type { TransportLeg, TransportStatus } from "@fleetip/contracts/transport";
+import type { TransportListParams } from "@fleetip/contracts/list";
+import type { Page, ParsedListQuery } from "../../../shared/list-query.js";
 
 export interface TransportRecord {
   id: string;
@@ -27,15 +29,16 @@ export interface CreateTransportInput {
   notes?: string;
 }
 
+// undefined = unchanged, null = clear (see updateTransportRequestSchema).
 export interface UpdateTransportInput {
-  pickupLocation?: string;
-  destination?: string;
-  plannedDate?: string;
+  pickupLocation?: string | null;
+  destination?: string | null;
+  plannedDate?: string | null;
   actualDate?: string;
   status?: TransportStatus;
-  transportDetails?: string;
-  charges?: number;
-  notes?: string;
+  transportDetails?: string | null;
+  charges?: number | null;
+  notes?: string | null;
 }
 
 export interface TransportRepositoryPort {
@@ -47,5 +50,9 @@ export interface TransportRepositoryPort {
   // Company's own rentals, not one rental at a time. A single join, not a
   // loop over listByRental per rental.
   listByRentalCompanyOrganization(rentalCompanyOrganizationId: string): Promise<TransportRecord[]>;
+  listTransportPage(
+    rentalCompanyOrganizationId: string,
+    query: ParsedListQuery<TransportListParams>,
+  ): Promise<Page<TransportRecord>>;
   update(id: string, updates: UpdateTransportInput): Promise<TransportRecord>;
 }

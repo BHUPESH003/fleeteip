@@ -1,3 +1,4 @@
+import { UNUSED_SESSION_MANAGEMENT_METHODS, UNUSED_USER_PASSWORD_METHODS } from "./identity-fakes.js";
 import { describe, expect, it } from "vitest";
 import type {
   OrganizationRepositoryPort,
@@ -81,6 +82,7 @@ function fakeUserRepository(): UserRepositoryPort {
       user.status = status;
       return user;
     },
+    ...UNUSED_USER_PASSWORD_METHODS,
   };
 }
 
@@ -109,6 +111,9 @@ function fakeRequirementRepository(): RequirementRepositoryPort {
     updated_at: new Date(),
   };
   return {
+    listOpenForDiscoveryPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -213,9 +218,15 @@ function buildService(deletedSessionsFor: string[] = []) {
         throw new Error("not used in this test");
       },
       codeExists: async () => false,
+      setDisabledAt: async () => {
+        throw new Error("not used in this test");
+      },
     },
     {
       listByCategory: async () => [],
+      setDisabledAt: async () => {
+        throw new Error("not used in this test");
+      },
       findById: async () => undefined,
       create: async () => {
         throw new Error("not used in this test");
@@ -252,6 +263,7 @@ function buildService(deletedSessionsFor: string[] = []) {
       findActiveByTokenHash: async () => undefined,
       deleteByTokenHash: async () => undefined,
       deleteByUserId: async (userId) => deletedSessionsFor.push(userId),
+      ...UNUSED_SESSION_MANAGEMENT_METHODS,
     },
   );
 }

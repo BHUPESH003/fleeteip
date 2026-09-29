@@ -156,6 +156,9 @@ function rental(overrides: Partial<RentalRecord> = {}): RentalRecord {
 
 function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -175,7 +178,7 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
     setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
-    isAvailable: async () => {
+    findCommittedOverlapping: async () => {
       throw new Error("not used in this test");
     },
     searchByOrganization: async () => {
@@ -204,6 +207,9 @@ function machine(overrides: Partial<MachineRecord> = {}): MachineRecord {
 
 function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort {
   return {
+    listMachinesPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -228,6 +234,9 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
 
 function fakeLogsheetRepository(totals: UtilizationTotals): LogsheetRepositoryPort {
   return {
+    listLogsheetsPage: async () => {
+      throw new Error("not used in this test");
+    },
     submit: async () => {
       throw new Error("not used in this test");
     },

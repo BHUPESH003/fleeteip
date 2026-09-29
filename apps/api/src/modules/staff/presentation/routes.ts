@@ -1,5 +1,5 @@
 import { staffLoginRequestSchema } from "@fleetip/contracts/platform-admin";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { env } from "../../../infrastructure/config/env.js";
 import { container } from "../../../infrastructure/container.js";
 import { getStaffSessionToken } from "../../../shared/auth.js";
@@ -18,7 +18,11 @@ function setStaffSessionCookie(reply: FastifyReply, token: string, expiresAt: Da
 }
 
 // Same brute-force protection as tenant login — see identity/presentation/routes.ts.
-const AUTH_RATE_LIMIT = { max: 10, timeWindow: "1 minute" };
+const AUTH_RATE_LIMIT = {
+  max: 10,
+  timeWindow: "1 minute",
+  keyGenerator: (request: FastifyRequest) => request.ip,
+};
 
 export async function staffRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post(

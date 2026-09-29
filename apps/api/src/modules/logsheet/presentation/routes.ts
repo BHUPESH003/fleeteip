@@ -1,7 +1,9 @@
 import { submitLogsheetRequestSchema } from "@fleetip/contracts/logsheet";
+import { logsheetListQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../shared/auth.js";
+import { parseListQuery } from "../../../shared/list-query.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
 export async function logsheetRoutes(fastify: FastifyInstance): Promise<void> {
@@ -11,6 +13,8 @@ export async function logsheetRoutes(fastify: FastifyInstance): Promise<void> {
     "/organizations/:organizationId/logsheets",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(logsheetListQuerySchema, request.query);
+      if (page) return container.logsheetService.listLogsheetsPage(userId, request.params.organizationId, page);
       return container.logsheetService.listByOrganization(userId, request.params.organizationId);
     },
   );

@@ -1,6 +1,10 @@
 import { CommercialQuotationStatus, AlternateDateStatus } from "@fleetip/contracts/quotation";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
+import type { QuotationListParams } from "@fleetip/contracts/list";
+import { executePage } from "../../../../infrastructure/database/list-page.js";
+import { todayInBusinessZone } from "../../../../shared/business-date.js";
+import { containsPattern, type ParsedListQuery } from "../../../../shared/list-query.js";
 import type {
   ApplyAcceptedOfferInput,
   CommercialQuotationRecord,
@@ -162,6 +166,26 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
     return rows.map(toQuotationRecord);
   }
 
+  async listQuotationsPage(
+    party: "rentalCompany" | "renter",
+    organizationId: string,
+    query: ParsedListQuery<QuotationListParams>,
+  ) {
+    let q = this.db.selectFrom("commercial_quotations").selectAll();
+    q =
+      party === "rentalCompany"
+        ? q.where("rental_company_organization_id", "=", organizationId)
+        : q.where("renter_organization_id", "=", organizationId).where("status", "!=", CommercialQuotationStatus.draft);
+    if (query.status) q = q.where("status", "=", query.status);
+    if (query.machineId) q = q.where("machine_id", "=", query.machineId);
+    if (query.q) q = q.where("reference_number", "ilike", containsPattern(query.q));
+    const sortColumn = {
+      createdAt: "commercial_quotations.created_at",
+      validityDate: "commercial_quotations.validity_date",
+    }[query.sort];
+    return executePage(q, sortColumn, "commercial_quotations.id", query, toQuotationRecord);
+  }
+
   async listByRenter(renterOrganizationId: string) {
     const rows = await this.db
       .selectFrom("commercial_quotations")
@@ -264,7 +288,7 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
       .set({ status: CommercialQuotationStatus.expired, updated_at: new Date() })
       .where("id", "=", id)
       .where("status", "in", [CommercialQuotationStatus.sent, CommercialQuotationStatus.negotiating])
-      .where(sql<boolean>`validity_date < current_date`)
+      .where("validity_date", "<", todayInBusinessZone())
       .returning(QUOTATION_COLUMNS)
       .executeTakeFirst();
     if (row) return toQuotationRecord(row);

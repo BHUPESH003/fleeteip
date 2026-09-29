@@ -1,7 +1,11 @@
+// Disable fields are optional so older test fakes stay valid; the
+// repositories always return them. `*_disabled_at` are the ancestors' own
+// flags, joined in by the repository (soft cascade, 0037).
 export interface ProductCategoryRecord {
   id: string;
   code: string;
   name: string;
+  disabled_at?: Date | string | null;
   created_at: Date | string;
 }
 
@@ -11,17 +15,17 @@ export interface CreateProductCategoryInput {
 }
 
 export interface ProductCategoryRepositoryPort {
-  listAll(): Promise<ProductCategoryRecord[]>;
+  // Disabled categories are excluded unless includeDisabled is true.
+  listAll(includeDisabled?: boolean): Promise<ProductCategoryRecord[]>;
   findById(id: string): Promise<ProductCategoryRecord | undefined>;
   create(input: CreateProductCategoryInput): Promise<ProductCategoryRecord>;
   updateName(id: string, name: string): Promise<ProductCategoryRecord>;
   codeExists(code: string): Promise<boolean>;
+  setDisabledAt(id: string, disabledAt: Date | null): Promise<ProductCategoryRecord>;
   // No delete() — product_subcategories.product_category_id references this
   // table with ON DELETE RESTRICT (0003_create_product_catalogue.ts), so a
-  // populated category can never be hard-deleted anyway. No soft-delete
-  // column exists on this table; adding one is deferred until the target UI
-  // actually needs to retire a category (documented limitation, not an
-  // oversight — see docs/frontend-backend-gap-report.md).
+  // populated category can never be hard-deleted anyway. Retiring one is
+  // setDisabledAt (0037 soft cascade).
 }
 
 export interface ProductSubcategoryRecord {
@@ -29,6 +33,8 @@ export interface ProductSubcategoryRecord {
   product_category_id: string;
   code: string;
   name: string;
+  disabled_at?: Date | string | null;
+  category_disabled_at?: Date | string | null;
   created_at: Date | string;
 }
 
@@ -39,11 +45,14 @@ export interface CreateProductSubcategoryInput {
 }
 
 export interface ProductSubcategoryRepositoryPort {
-  listByCategory(categoryId: string): Promise<ProductSubcategoryRecord[]>;
+  // Effectively-disabled subcategories (self or category) are excluded
+  // unless includeDisabled is true.
+  listByCategory(categoryId: string, includeDisabled?: boolean): Promise<ProductSubcategoryRecord[]>;
   findById(id: string): Promise<ProductSubcategoryRecord | undefined>;
   create(input: CreateProductSubcategoryInput): Promise<ProductSubcategoryRecord>;
   updateName(id: string, name: string): Promise<ProductSubcategoryRecord>;
   codeExistsInCategory(categoryId: string, code: string): Promise<boolean>;
+  setDisabledAt(id: string, disabledAt: Date | null): Promise<ProductSubcategoryRecord>;
   // No delete() — same ON DELETE RESTRICT reasoning as ProductCategory above
   // (products.product_subcategory_id references this table).
 }
@@ -58,6 +67,8 @@ export interface ProductRecord {
   specifications: unknown | null;
   // ponytail: optional so pre-0030 test fakes stay valid; the DB always returns it.
   disabled_at?: Date | string | null;
+  subcategory_disabled_at?: Date | string | null;
+  category_disabled_at?: Date | string | null;
   created_at: Date | string;
 }
 
@@ -81,7 +92,8 @@ export interface UpdateProductInput {
 }
 
 export interface ProductRepositoryPort {
-  // Disabled products are excluded unless includeDisabled is true.
+  // Effectively-disabled products (self or any ancestor) are excluded
+  // unless includeDisabled is true.
   listAll(subcategoryId?: string, includeDisabled?: boolean): Promise<ProductRecord[]>;
   findById(id: string): Promise<ProductRecord | undefined>;
   create(input: CreateProductInput): Promise<ProductRecord>;

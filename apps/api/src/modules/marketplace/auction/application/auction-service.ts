@@ -176,7 +176,7 @@ export class AuctionService {
       throw new NotFoundError("Requirement not found in this organization");
     }
     if (requirement.status !== RequirementStatus.open) {
-      throw new ConflictError("Cannot run an auction against a requirement that is not open");
+      throw new ConflictError("Cannot run an auction against a requirement that is not open", "requirementId");
     }
 
     const record = await this.auctionRepository.create({

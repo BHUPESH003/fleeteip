@@ -1,3 +1,4 @@
+import { UNUSED_SESSION_MANAGEMENT_METHODS, UNUSED_USER_PASSWORD_METHODS } from "./identity-fakes.js";
 import { describe, expect, it } from "vitest";
 import { PasswordResetService } from "../src/modules/identity/application/password-reset-service.js";
 import { hashPassword, verifyPassword } from "../src/modules/identity/domain/password.js";
@@ -53,6 +54,7 @@ async function setup(
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
+    ...UNUSED_USER_PASSWORD_METHODS,
   };
 
   const tokenRepository: PasswordResetTokenRepositoryPort = {
@@ -91,6 +93,7 @@ async function setup(
     deleteByUserId: async (userId) => {
       deletedSessionsFor.push(userId);
     },
+    ...UNUSED_SESSION_MANAGEMENT_METHODS,
   };
 
   const service = new PasswordResetService(

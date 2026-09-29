@@ -1,6 +1,10 @@
 import { RequirementStatus } from "@fleetip/contracts/rfq";
-import { sql, type Kysely } from "kysely";
+import type { Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
+import type { RequirementDiscoveryParams } from "@fleetip/contracts/list";
+import { executePage } from "../../../../infrastructure/database/list-page.js";
+import { todayInBusinessZone } from "../../../../shared/business-date.js";
+import { containsPattern, type ParsedListQuery } from "../../../../shared/list-query.js";
 import type {
   CreateRequirementInput,
   RequirementRecord,
@@ -102,10 +106,31 @@ export class RequirementRepository implements RequirementRepositoryPort {
       .selectFrom("requirements")
       .selectAll()
       .where("status", "=", RequirementStatus.open)
-      .where(sql<boolean>`validity_date >= current_date`)
+      .where("validity_date", ">=", todayInBusinessZone())
       .orderBy("created_at", "desc")
       .execute();
     return rows.map(toRequirementRecord);
+  }
+
+  async listOpenForDiscoveryPage(query: ParsedListQuery<RequirementDiscoveryParams>) {
+    let q = this.db
+      .selectFrom("requirements")
+      .selectAll()
+      .where("status", "=", RequirementStatus.open)
+      .where("validity_date", ">=", todayInBusinessZone());
+    if (query.productSubcategoryId) q = q.where("product_subcategory_id", "=", query.productSubcategoryId);
+    if (query.from) q = q.where("requested_start_date", ">=", query.from);
+    if (query.to) q = q.where("requested_start_date", "<=", query.to);
+    if (query.q) {
+      const pattern = containsPattern(query.q);
+      q = q.where((eb) => eb.or([eb("project_name", "ilike", pattern), eb("project_location", "ilike", pattern)]));
+    }
+    const sortColumn = {
+      createdAt: "requirements.created_at",
+      requestedStartDate: "requirements.requested_start_date",
+      validityDate: "requirements.validity_date",
+    }[query.sort];
+    return executePage(q, sortColumn, "requirements.id", query, toRequirementRecord);
   }
 
   async updateStatus(id: string, status: RequirementStatus) {

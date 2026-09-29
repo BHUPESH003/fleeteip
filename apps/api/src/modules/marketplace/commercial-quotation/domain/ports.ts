@@ -1,4 +1,6 @@
 import type { ClientSnapshot, OperatorScope, RateUnit } from "@fleetip/contracts/rental";
+import type { QuotationListParams } from "@fleetip/contracts/list";
+import type { Page, ParsedListQuery } from "../../../../shared/list-query.js";
 import type {
   AlternateDateStatus,
   CommercialQuotationStatus,
@@ -128,6 +130,13 @@ export interface CommercialQuotationRepositoryPort {
   findById(id: string): Promise<CommercialQuotationRecord | undefined>;
   listByRentalCompany(rentalCompanyOrganizationId: string): Promise<CommercialQuotationRecord[]>;
   listByRenter(renterOrganizationId: string): Promise<CommercialQuotationRecord[]>;
+  // One keyset page of either party's quotations (the renter side never
+  // includes drafts), filtered server-side (ticket l).
+  listQuotationsPage(
+    party: "rentalCompany" | "renter",
+    organizationId: string,
+    query: ParsedListQuery<QuotationListParams>,
+  ): Promise<Page<CommercialQuotationRecord>>;
   updateTerms(
     id: string,
     updates: UpdateCommercialQuotationTermsInput,

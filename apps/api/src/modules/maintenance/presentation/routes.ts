@@ -1,10 +1,13 @@
 import {
   createMaintenanceRequestSchema,
+  logCompletedMaintenanceRequestSchema,
   updateMaintenanceStatusRequestSchema,
 } from "@fleetip/contracts/maintenance";
+import { maintenanceListQuerySchema } from "@fleetip/contracts/list";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../shared/auth.js";
+import { parseListQuery } from "../../../shared/list-query.js";
 import { parseWithSchema } from "../../../shared/validate.js";
 
 export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void> {
@@ -14,6 +17,38 @@ export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void>
       const userId = await getAuthenticatedUserId(request);
       const body = parseWithSchema(createMaintenanceRequestSchema, request.body);
       const record = await container.maintenanceService.createMaintenance(
+        userId,
+        request.params.organizationId,
+        body,
+      );
+      reply.code(201);
+      return record;
+    },
+  );
+
+  // Job In progress + machine Under maintenance, one transaction.
+  fastify.post<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/maintenance-records/send-to-workshop",
+    async (request, reply) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(createMaintenanceRequestSchema, request.body);
+      const record = await container.maintenanceService.sendToWorkshop(
+        userId,
+        request.params.organizationId,
+        body,
+      );
+      reply.code(201);
+      return record;
+    },
+  );
+
+  // A job that already happened, created Completed in one write.
+  fastify.post<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/maintenance-records/log-completed",
+    async (request, reply) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(logCompletedMaintenanceRequestSchema, request.body);
+      const record = await container.maintenanceService.logCompleted(
         userId,
         request.params.organizationId,
         body,
@@ -44,6 +79,10 @@ export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void>
     "/organizations/:organizationId/maintenance-records",
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
+      const page = parseListQuery(maintenanceListQuerySchema, request.query);
+      if (page) {
+        return container.maintenanceService.listMaintenancePage(userId, request.params.organizationId, page);
+      }
       return container.maintenanceService.listByOrganization(userId, request.params.organizationId);
     },
   );
@@ -70,6 +109,7 @@ export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void>
         request.params.organizationId,
         request.params.maintenanceId,
         body.status,
+        body.machineStatus,
       );
     },
   );

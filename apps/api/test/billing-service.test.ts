@@ -23,6 +23,10 @@ import { BillingService } from "../src/modules/billing/application/billing-servi
 import { NotificationService } from "../src/modules/notification/application/notification-service.js";
 import type { NotificationRepositoryPort } from "../src/modules/notification/domain/ports.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { invoiceListQuerySchema } from "@fleetip/contracts/list";
+import { isFullyPaid } from "../src/modules/billing/domain/invoice-status.js";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
@@ -157,6 +161,9 @@ function rental(overrides: Partial<RentalRecord> = {}): RentalRecord {
 
 function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
   return {
+    listRentalsPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -176,7 +183,7 @@ function fakeRentalRepository(rentals: RentalRecord[]): RentalRepositoryPort {
     setActualDatesVerification: async () => {
       throw new Error("not used in this test");
     },
-    isAvailable: async () => {
+    findCommittedOverlapping: async () => {
       throw new Error("not used in this test");
     },
     searchByOrganization: async () => {
@@ -194,6 +201,20 @@ function fakeInvoiceRepository(): InvoiceRepositoryPort {
   const payments = new Map<string, PaymentRecord[]>();
   let nextId = 1;
   let sequence = 1;
+  const listFor = (rentalCompanyOrganizationId: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    return [...invoices.values()]
+      .filter((i) => i.rental_company_organization_id === rentalCompanyOrganizationId)
+      .map((i) => {
+        const invoicePayments = payments.get(i.id) ?? [];
+        return {
+          ...i,
+          amount_paid: invoicePayments.reduce((sum, p) => sum + p.amount, 0),
+          last_paid_date: invoicePayments.map((p) => p.paid_date).sort().at(-1) ?? null,
+          past_due: i.due_date < today,
+        };
+      });
+  };
 
   return {
     nextInvoiceNumber: async () => `INV-2026-${sequence++}`,
@@ -233,20 +254,11 @@ function fakeInvoiceRepository(): InvoiceRepositoryPort {
       return record;
     },
     findById: async (id) => invoices.get(id),
-    listByRentalCompany: async (rentalCompanyOrganizationId) => {
-      const today = new Date().toISOString().slice(0, 10);
-      return [...invoices.values()]
-        .filter((i) => i.rental_company_organization_id === rentalCompanyOrganizationId)
-        .map((i) => {
-          const invoicePayments = payments.get(i.id) ?? [];
-          return {
-            ...i,
-            amount_paid: invoicePayments.reduce((sum, p) => sum + p.amount, 0),
-            last_paid_date:
-              invoicePayments.map((p) => p.paid_date).sort().at(-1) ?? null,
-            past_due: i.due_date < today,
-          };
-        });
+    listByRentalCompany: async (rentalCompanyOrganizationId) => listFor(rentalCompanyOrganizationId),
+    listInvoicesPage: async (party, organizationId, query) => {
+      if (party !== "rentalCompany") throw new Error("not used in this test");
+      const rows = listFor(organizationId).filter((i) => !query.status || i.status === query.status);
+      return pageInMemory(rows, (i) => i.due_date, query);
     },
     listByRenter: async () => {
       throw new Error("not used in this test");
@@ -289,7 +301,7 @@ function fakeInvoiceRepository(): InvoiceRepositoryPort {
 
       const amountPaid = [...existingPayments, payment].reduce((sum, p) => sum + p.amount, 0);
       let updatedInvoice = invoice;
-      if (amountPaid >= invoice.total_amount && invoice.status !== "paid") {
+      if (isFullyPaid(invoice.total_amount, amountPaid) && invoice.status !== "paid") {
         updatedInvoice = { ...invoice, status: "paid", updated_at: new Date() };
         invoices.set(input.invoiceId, updatedInvoice);
       }
@@ -483,5 +495,64 @@ describe("BillingService", () => {
       balanceDue: 5000,
     });
     expect(list.find((i) => i.id === draft.id)).toMatchObject({ overdue: false });
+  });
+
+  it("totals line items in paise (0.1 + 0.2 is 0.30)", async () => {
+    const service = buildService();
+    const invoice = await service.createInvoice("user-1", RC_ORG_ID, {
+      ...baseInput,
+      lineItems: [
+        { description: "a", quantity: 1, rate: 0.1 },
+        { description: "b", quantity: 1, rate: 0.2 },
+        { description: "c", quantity: 0.3, rate: 123.45 }, // 37.035 -> 37.04
+      ],
+      taxAmount: 0.1,
+    });
+    expect(invoice.subtotal).toBe(37.34);
+    expect(invoice.totalAmount).toBe(37.44);
+  });
+
+  it("marks paid when float-awkward partial payments exactly cover the total", async () => {
+    const service = buildService();
+    const invoice = await service.createInvoice("user-1", RC_ORG_ID, {
+      ...baseInput,
+      lineItems: [{ description: "a", quantity: 1, rate: 0.3 }],
+    });
+    await service.updateInvoiceStatus("user-1", RC_ORG_ID, invoice.id, "issued");
+    await service.recordPayment("user-1", RC_ORG_ID, invoice.id, { amount: 0.1, paidDate: "2026-03-15" });
+    const paid = await service.recordPayment("user-1", RC_ORG_ID, invoice.id, {
+      amount: 0.2,
+      paidDate: "2026-03-16",
+    });
+    expect(paid.status).toBe("paid");
+    const detail = await service.getInvoiceDetail("user-1", RC_ORG_ID, invoice.id);
+    expect(detail).toMatchObject({ amountPaid: 0.3, balanceDue: 0 });
+    const [listed] = await service.listInvoices("user-1", RC_ORG_ID);
+    expect(listed).toMatchObject({ balanceDue: 0, paidAt: "2026-03-16" });
+  });
+
+  it("marks an overpaid invoice paid with a negative balance", async () => {
+    const service = buildService();
+    const invoice = await service.createInvoice("user-1", RC_ORG_ID, baseInput);
+    await service.updateInvoiceStatus("user-1", RC_ORG_ID, invoice.id, "issued");
+    const paid = await service.recordPayment("user-1", RC_ORG_ID, invoice.id, {
+      amount: 5000.1,
+      paidDate: "2026-03-15",
+    });
+    expect(paid.status).toBe("paid");
+    const detail = await service.getInvoiceDetail("user-1", RC_ORG_ID, invoice.id);
+    expect(detail.balanceDue).toBe(-0.1);
+  });
+
+  it("pages invoices through the repository when list params are given", async () => {
+    const service = buildService();
+    const early = await service.createInvoice("user-1", RC_ORG_ID, { ...baseInput, dueDate: "2099-01-01" });
+    const late = await service.createInvoice("user-1", RC_ORG_ID, baseInput);
+    const query = parseListQuery(invoiceListQuerySchema, { limit: "1", sort: "dueDate", dir: "asc" })!;
+    const page = await service.listInvoicesPage("user-1", RC_ORG_ID, query);
+    expect(page.items.map((i) => i.id)).toEqual([early.id]);
+    expect(page.items[0]).toMatchObject({ balanceDue: 5000, overdue: false });
+    expect(page.nextCursor).toEqual(expect.any(String));
+    expect(late.id).not.toBe(early.id);
   });
 });

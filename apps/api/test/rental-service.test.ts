@@ -14,7 +14,10 @@ import type {
   MachineRecord,
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
-import type { MaintenanceRepositoryPort } from "../src/modules/maintenance/domain/ports.js";
+import type {
+  MaintenanceRecord,
+  MaintenanceRepositoryPort,
+} from "../src/modules/maintenance/domain/ports.js";
 import type {
   CreateRentalInput,
   RentalRecord,
@@ -22,6 +25,10 @@ import type {
   UpdateRentalTermsInput,
 } from "../src/modules/marketplace/rental/domain/ports.js";
 import { RentalService } from "../src/modules/marketplace/rental/application/rental-service.js";
+import { fakeRentalChanges } from "./rental-changes-fake.js";
+import { rentalListQuerySchema } from "@fleetip/contracts/list";
+import { parseListQuery } from "../src/shared/list-query.js";
+import { pageInMemory } from "./list-page-fake.js";
 import {
   ConflictError,
   ForbiddenError,
@@ -148,6 +155,9 @@ function fakeOrganizationTypeRepository(
 
 function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort {
   return {
+    listMachinesPage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -155,9 +165,8 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
     search: async () => {
       throw new Error("not used in this test");
     },
-    listByOrganization: async () => {
-      throw new Error("not used in this test");
-    },
+    listByOrganization: async (organizationId) =>
+      machines.filter((machine) => machine.organization_id === organizationId),
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
@@ -204,6 +213,14 @@ function fakeRentalRepository(): RentalRepositoryPort {
   let nextId = 1;
 
   return {
+    listRentalsPage: async (party, organizationId, query) => {
+      const rows = [...rentals.values()].filter(
+        (r) =>
+          (party === "renter" ? r.renter_organization_id : r.rental_company_organization_id) === organizationId &&
+          (!query.status || r.status === query.status),
+      );
+      return pageInMemory(rows, (r) => r.start_date, query);
+    },
     create: async (input: CreateRentalInput) => {
       const record: RentalRecord = {
         id: `rental-${nextId++}`,
@@ -285,12 +302,13 @@ function fakeRentalRepository(): RentalRepositoryPort {
       rentals.set(id, updated);
       return updated;
     },
-    isAvailable: async (machineId, startDate, endDate) => {
-      const committed = [...rentals.values()].filter(
-        (r) => r.machine_id === machineId && ["confirmed", "active", "off_rent"].includes(r.status),
-      );
-      return !committed.some((r) => overlaps(startDate, endDate, r.start_date, r.end_date));
-    },
+    findCommittedOverlapping: async (machineIds, startDate, endDate) =>
+      [...rentals.values()].filter(
+        (r) =>
+          machineIds.includes(r.machine_id) &&
+          ["confirmed", "active", "off_rent"].includes(r.status) &&
+          overlaps(startDate, endDate, r.start_date, r.end_date),
+      ),
     searchByOrganization: async () => {
       throw new Error("not used in this test");
     },
@@ -300,8 +318,27 @@ function fakeRentalRepository(): RentalRepositoryPort {
   };
 }
 
+function openJob(overrides: Partial<MaintenanceRecord> = {}): MaintenanceRecord {
+  return {
+    id: "maintenance-1",
+    machine_id: MACHINE_ID,
+    maintenance_type: "breakdown",
+    start_date: "2026-01-01",
+    end_date: null,
+    status: "in_progress",
+    notes: null,
+    rental_id: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+    ...overrides,
+  };
+}
+
 function fakeMaintenanceRepository(hasConflict = false): MaintenanceRepositoryPort {
   return {
+    listMaintenancePage: async () => {
+      throw new Error("not used in this test");
+    },
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -317,7 +354,7 @@ function fakeMaintenanceRepository(hasConflict = false): MaintenanceRepositoryPo
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
-    hasOverlappingMaintenance: async () => hasConflict,
+    findOpenOverlapping: async () => (hasConflict ? [openJob()] : []),
   };
 }
 
@@ -345,7 +382,11 @@ function fakeNotificationService(): NotificationService {
   return new NotificationService(throwingRepo, fakePermissionService());
 }
 
-function buildService(machines: MachineRecord[] = [machine()], hasConflictingMaintenance = false) {
+function buildService(
+  machines: MachineRecord[] = [machine()],
+  hasConflictingMaintenance = false,
+  maintenanceRepository: MaintenanceRepositoryPort = fakeMaintenanceRepository(hasConflictingMaintenance),
+) {
   return new RentalService(
     fakeRentalRepository(),
     fakeMachineRepository(machines),
@@ -355,8 +396,9 @@ function buildService(machines: MachineRecord[] = [machine()], hasConflictingMai
       [RC_ORG_ID]: "rental_company",
     }),
     fakePermissionService(),
-    fakeMaintenanceRepository(hasConflictingMaintenance),
+    maintenanceRepository,
     fakeNotificationService(),
+    fakeRentalChanges(),
   );
 }
 
@@ -527,8 +569,9 @@ describe("RentalService", () => {
       fakeMachineRepository([machine()]),
       fakeOrganizationTypeRepository({ [RENTER_ORG_ID]: "renter", [RC_ORG_ID]: "rental_company" }),
       fakePermissionService(),
-      { ...fakeMaintenanceRepository(), hasOverlappingMaintenance: async () => hasConflict },
+      { ...fakeMaintenanceRepository(), findOpenOverlapping: async () => (hasConflict ? [openJob()] : []) },
       fakeNotificationService(),
+      fakeRentalChanges(),
     );
     const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
     hasConflict = true;
@@ -637,7 +680,81 @@ describe("RentalService", () => {
         machineId: MACHINE_ID,
         startDate: "2026-05-01",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ available: true, conflicts: [] });
+  });
+
+  it("counts an open workshop job as unavailable, and names it", async () => {
+    const service = buildService([machine()], true);
+    await expect(
+      service.checkAvailability("user-1", RC_ORG_ID, { machineId: MACHINE_ID, startDate: "2026-05-01" }),
+    ).resolves.toEqual({
+      available: false,
+      conflicts: [
+        {
+          kind: "maintenance",
+          id: "maintenance-1",
+          reference: "Workshop job 2026-01-01",
+          startDate: "2026-01-01",
+          endDate: null,
+        },
+      ],
+    });
+  });
+
+  it("names the overlapping rental in a create 409 and its conflict detail", async () => {
+    const service = buildService();
+    const first = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    const reference = `RN-${first.id.slice(0, 8).toUpperCase()}`;
+    await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toMatchObject({
+      constructor: ConflictError,
+      message: expect.stringContaining(reference),
+      conflict: { kind: "rental", id: first.id, reference },
+    });
+  });
+
+  it("names the workshop job when maintenance blocks a create", async () => {
+    const service = buildService([machine()], true);
+    await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toMatchObject({
+      constructor: ConflictError,
+      conflict: { kind: "maintenance", id: "maintenance-1" },
+    });
+  });
+
+  it("lets a rental start over a workshop job logged against that same rental", async () => {
+    let jobs: MaintenanceRecord[] = [];
+    const service = buildService([machine()], false, {
+      ...fakeMaintenanceRepository(),
+      findOpenOverlapping: async () => jobs,
+    });
+    const rental = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    jobs = [openJob({ rental_id: rental.id })];
+    await expect(service.updateRentalStatus("user-1", RC_ORG_ID, rental.id, "active")).resolves.toMatchObject({
+      status: "active",
+    });
+  });
+
+  it("checks many machines' availability in one call, one result per machine", async () => {
+    const service = buildService([machine(), machine({ id: "machine-2" })]);
+    const booked = await service.createRental("user-1", RC_ORG_ID, baseInput);
+    const { results } = await service.checkMachinesAvailability("user-1", RC_ORG_ID, {
+      machineIds: [MACHINE_ID, "machine-2"],
+      startDate: "2026-03-05",
+      endDate: "2026-03-06",
+    });
+    expect(results).toEqual([
+      { machineId: MACHINE_ID, available: false, conflicts: [expect.objectContaining({ kind: "rental", id: booked.id })] },
+      { machineId: "machine-2", available: true, conflicts: [] },
+    ]);
+  });
+
+  it("refuses a batch availability check that includes another organization's machine", async () => {
+    const service = buildService([machine(), machine({ id: "machine-2", organization_id: "some-other-org" })]);
+    await expect(
+      service.checkMachinesAvailability("user-1", RC_ORG_ID, {
+        machineIds: [MACHINE_ID, "machine-2"],
+        startDate: "2026-03-05",
+      }),
+    ).rejects.toThrow(NotFoundError);
   });
 
   it("hides another organization's machine behind NotFoundError when checking availability", async () => {
@@ -658,6 +775,7 @@ describe("RentalService", () => {
       fakePermissionService("renter"),
       fakeMaintenanceRepository(),
       fakeNotificationService(),
+      fakeRentalChanges(),
     );
     await expect(service.createRental("user-1", RC_ORG_ID, baseInput)).rejects.toThrow(
       ForbiddenError,
@@ -690,5 +808,24 @@ describe("RentalService", () => {
     expect(asRentalCompany).toHaveLength(1);
     expect(asRentalCompany[0]?.machineAssetCode).toBeNull();
     expect(asRentalCompany[0]?.rentalCompanyOrganizationName).toBeNull();
+  });
+
+  it("pages a Renter's rentals with the machine resolved server-side", async () => {
+    const service = buildService();
+    for (const startDate of ["2026-03-01", "2026-04-01"]) {
+      await service.createRental("user-1", RC_ORG_ID, {
+        machineId: MACHINE_ID,
+        renterOrganizationId: RENTER_ORG_ID,
+        startDate,
+        endDate: startDate.replace("-01", "-10"),
+        rate: 5000,
+        rateUnit: "day",
+      });
+    }
+    const query = parseListQuery(rentalListQuerySchema, { sort: "startDate", limit: "1" })!;
+    const page = await service.listRentalsPage("user-2", RENTER_ORG_ID, query);
+    expect(page.items.map((r) => r.startDate)).toEqual(["2026-04-01"]);
+    expect(page.items[0]?.machineAssetCode).toBe(machine().asset_code);
+    expect(page.nextCursor).toEqual(expect.any(String));
   });
 });

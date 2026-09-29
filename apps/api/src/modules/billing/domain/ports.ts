@@ -1,4 +1,6 @@
 import type { InvoiceStatus } from "@fleetip/contracts/billing";
+import type { InvoiceListParams } from "@fleetip/contracts/list";
+import type { Page, ParsedListQuery } from "../../../shared/list-query.js";
 
 export interface InvoiceRecord {
   id: string;
@@ -22,7 +24,7 @@ export interface InvoiceRecord {
 export interface InvoiceListRecord extends InvoiceRecord {
   amount_paid: number;
   last_paid_date: string | null;
-  // due_date < current_date, evaluated by the database like markOverdueIfDue.
+  // due_date < today in the business time zone, like markOverdueIfDue.
   past_due: boolean;
 }
 
@@ -84,6 +86,12 @@ export interface InvoiceRepositoryPort {
   findById(id: string): Promise<InvoiceRecord | undefined>;
   listByRentalCompany(rentalCompanyOrganizationId: string): Promise<InvoiceListRecord[]>;
   listByRenter(renterOrganizationId: string): Promise<InvoiceListRecord[]>;
+  // One keyset page of either party's invoices, filtered server-side.
+  listInvoicesPage(
+    party: "rentalCompany" | "renter",
+    organizationId: string,
+    query: ParsedListQuery<InvoiceListParams>,
+  ): Promise<Page<InvoiceListRecord>>;
   listLineItems(invoiceId: string): Promise<InvoiceLineItemRecord[]>;
   listPayments(invoiceId: string): Promise<PaymentRecord[]>;
   updateStatus(id: string, status: InvoiceStatus): Promise<InvoiceRecord>;

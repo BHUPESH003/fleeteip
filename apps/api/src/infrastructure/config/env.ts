@@ -13,6 +13,25 @@ const envSchema = z.object({
   // different cookie name, different table, different login endpoint.
   STAFF_SESSION_COOKIE_NAME: z.string().default("fleetip_staff_session"),
   WEB_ORIGIN: z.string().url().default("http://localhost:3000"),
+  // Daily reminders scheduler (modules/reminders), started by index.ts only.
+  // "false" turns it off, e.g. for a second API instance you want quiet.
+  REMINDERS_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+  // Business day for every date-only "today" (overdue, validity) — read by
+  // shared/business-date.ts. Validated here so a typo fails at startup.
+  BUSINESS_TIME_ZONE: z
+    .string()
+    .default("Asia/Kolkata")
+    .refine((tz) => {
+      try {
+        new Intl.DateTimeFormat("en-CA", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "BUSINESS_TIME_ZONE must be an IANA time zone, e.g. Asia/Kolkata"),
 });
 
 function loadEnv() {

@@ -25,7 +25,14 @@ import { organizationRoutes } from "./modules/organizations/presentation/routes.
 import { inviteRoutes } from "./modules/organizations/presentation/invite-routes.js";
 import { searchRoutes } from "./modules/search/presentation/routes.js";
 import { transportRoutes } from "./modules/transport/presentation/routes.js";
+import {
+  getSessionToken,
+  getStaffSessionToken,
+  requireStaffSessionForAdminRoutes,
+} from "./shared/auth.js";
 import { AppError, ConflictError, ValidationError } from "./shared/errors.js";
+
+const GLOBAL_RATE_LIMIT_PER_MINUTE = 300;
 
 export async function buildApp() {
   const app = Fastify({
@@ -36,18 +43,30 @@ export async function buildApp() {
 
   await app.register(cors, { origin: env.WEB_ORIGIN, credentials: true });
   await app.register(cookie, { secret: env.SESSION_COOKIE_SECRET });
-  // global: false — registered here so routes can opt in via `config.rateLimit`,
-  // not applied to the whole API. Only /auth/login and /auth/signup opt in
-  // (brute-force/enumeration protection); everything else is unaffected.
-  await app.register(rateLimit, { global: false });
+  // Global default: GLOBAL_RATE_LIMIT_PER_MINUTE per signed-in session (a
+  // validly signed session cookie — a forged one can't mint fresh buckets),
+  // else per IP. Auth routes keep their stricter per-IP AUTH_RATE_LIMIT via
+  // route config; /health opts out. In-memory store, so the limit is per API process.
+  // ponytail: per-process memory store — move to the Redis store when the API runs on more than one instance.
+  await app.register(rateLimit, {
+    max: GLOBAL_RATE_LIMIT_PER_MINUTE,
+    timeWindow: "1 minute",
+    keyGenerator: (request) => {
+      const session = getSessionToken(request) ?? getStaffSessionToken(request);
+      return session ? `session:${session}` : `ip:${request.ip}`;
+    },
+    errorResponseBuilder: (_request, context) =>
+      new AppError(`Too many requests. Try again in ${context.after}.`, 429, "rate_limited"),
+  });
+  app.addHook("onRequest", requireStaffSessionForAdminRoutes);
 
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     if (error instanceof AppError) {
       const detail =
         error instanceof ValidationError && error.issues.length
           ? { issues: error.issues }
-          : error instanceof ConflictError && error.field
-            ? { field: error.field }
+          : error instanceof ConflictError
+            ? { ...(error.field && { field: error.field }), ...(error.conflict && { conflict: error.conflict }) }
             : {};
       reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, ...detail } });
       return;
@@ -69,7 +88,7 @@ export async function buildApp() {
     reply.code(500).send({ error: { code: "internal_error", message: "Something went wrong" } });
   });
 
-  app.get("/health", async () => ({ status: "ok" }));
+  app.get("/health", { config: { rateLimit: false } }, async () => ({ status: "ok" }));
 
   await app.register(identityRoutes);
   await app.register(organizationRoutes);

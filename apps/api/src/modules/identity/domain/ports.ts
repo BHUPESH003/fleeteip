@@ -27,19 +27,40 @@ export interface UserRepositoryPort {
   // Platform Admin only — see OrganizationRepositoryPort.listAllForPlatformAdmin.
   listAllForPlatformAdmin(): Promise<PublicUserRecord[]>;
   updateStatus(id: string, status: "active" | "suspended"): Promise<PublicUserRecord>;
+  findPasswordHashById(id: string): Promise<string | undefined>;
+  updatePasswordHash(id: string, passwordHash: string): Promise<unknown>;
 }
 
 export interface SessionRecord {
   id: string;
   user_id: string;
   expires_at: Date | string;
+  last_seen_at: Date | string;
+}
+
+export interface SessionListRecord {
+  id: string;
+  created_at: Date | string;
+  last_seen_at: Date | string;
+  user_agent: string | null;
 }
 
 export interface SessionRepositoryPort {
-  create(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<SessionRecord>;
+  create(input: {
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    userAgent?: string | null;
+  }): Promise<SessionRecord>;
   findActiveByTokenHash(tokenHash: string): Promise<SessionRecord | undefined>;
   deleteByTokenHash(tokenHash: string): Promise<unknown>;
   deleteByUserId(userId: string): Promise<unknown>;
+  touch(id: string): Promise<unknown>;
+  /** Unexpired sessions of this user, most recently used first. */
+  listActiveByUserId(userId: string): Promise<SessionListRecord[]>;
+  /** Scoped to the user — returns false when the id isn't one of theirs. */
+  deleteByIdForUser(id: string, userId: string): Promise<boolean>;
+  deleteOthersForUser(userId: string, keepSessionId: string): Promise<unknown>;
 }
 
 export interface PasswordResetTokenRecord {

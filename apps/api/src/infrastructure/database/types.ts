@@ -102,6 +102,16 @@ export interface SessionsTable {
   token_hash: string;
   expires_at: Timestamp;
   created_at: CreatedAt;
+  last_seen_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  user_agent: string | null;
+}
+
+export interface ReminderLogTable {
+  id: Generated<string>;
+  kind: string;
+  record_id: string;
+  business_date: string;
+  created_at: CreatedAt;
 }
 
 export interface PasswordResetTokensTable {
@@ -123,11 +133,13 @@ export interface Database {
   memberships: MembershipsTable;
   sessions: SessionsTable;
   password_reset_tokens: PasswordResetTokensTable;
+  reminder_log: ReminderLogTable;
   product_categories: ProductCategoriesTable;
   product_subcategories: ProductSubcategoriesTable;
   products: ProductsTable;
   machines: MachinesTable;
   rentals: RentalsTable;
+  rental_events: RentalEventsTable;
   requirements: RequirementsTable;
   auctions: AuctionsTable;
   auction_participants: AuctionParticipantsTable;
@@ -161,6 +173,8 @@ export interface ProductCategoriesTable {
   id: Generated<string>;
   code: string;
   name: string;
+  // 0037: soft disable — cascades to children at read time, never deleted.
+  disabled_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: CreatedAt;
 }
 
@@ -169,6 +183,8 @@ export interface ProductSubcategoriesTable {
   product_category_id: string;
   code: string;
   name: string;
+  // 0037: soft disable — cascades to children at read time, never deleted.
+  disabled_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: CreatedAt;
 }
 
@@ -194,6 +210,16 @@ export interface MachinesTable {
   registration_number: string;
   year_of_manufacture: number | null;
   status: string;
+  created_at: CreatedAt;
+}
+
+export interface RentalEventsTable {
+  id: Generated<string>;
+  rental_id: string;
+  organization_id: string;
+  actor_user_id: string | null;
+  type: string;
+  detail: unknown | null;
   created_at: CreatedAt;
 }
 
@@ -225,6 +251,11 @@ export interface RentalsTable {
   actual_end_date: string | null;
   actual_dates_verification_status: string | null;
   actual_dates_dispute_reason: string | null;
+  // Pending date-change proposal (0032) — all null unless one is pending.
+  proposed_start_date: string | null;
+  proposed_end_date: string | null;
+  date_change_reason: string | null;
+  date_change_proposed_at: Date | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
   // commitment_range (generated, daterange) intentionally omitted — the app
@@ -479,6 +510,7 @@ export interface MaintenanceRecordsTable {
   end_date: string | null;
   status: string;
   notes: string | null;
+  rental_id: string | null;
   created_at: CreatedAt;
   updated_at: UpdatedAt;
 }

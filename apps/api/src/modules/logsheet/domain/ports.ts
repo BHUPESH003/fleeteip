@@ -1,3 +1,6 @@
+import type { LogsheetListParams } from "@fleetip/contracts/list";
+import type { Page, ParsedListQuery } from "../../../shared/list-query.js";
+
 export interface LogsheetRecord {
   id: string;
   rental_id: string;
@@ -48,6 +51,10 @@ export interface LogsheetRepositoryPort {
   // Standalone Logsheets screen — every logsheet across the Rental Company's
   // own rentals, not one rental at a time. A single join, not a loop.
   listByRentalCompanyOrganization(rentalCompanyOrganizationId: string): Promise<LogsheetRecord[]>;
+  listLogsheetsPage(
+    rentalCompanyOrganizationId: string,
+    query: ParsedListQuery<LogsheetListParams>,
+  ): Promise<Page<LogsheetRecord>>;
   getRentalTotals(rentalId: string): Promise<UtilizationTotals>;
   getMachineTotals(machineId: string): Promise<UtilizationTotals>;
 }

@@ -1,4 +1,6 @@
 import type { RateUnit } from "@fleetip/contracts/rental";
+import type { RequirementDiscoveryParams } from "@fleetip/contracts/list";
+import type { Page, ParsedListQuery } from "../../../../shared/list-query.js";
 import type { CrewRequirement, RequirementStatus, ShiftPattern } from "@fleetip/contracts/rfq";
 
 export interface RequirementRecord {
@@ -71,6 +73,8 @@ export interface RequirementRepositoryPort {
   // Discovery set for Rental Companies — open and not yet past validityDate.
   // See docs/marketplace-core-loop-design.md §4.
   listOpenForDiscovery(): Promise<RequirementRecord[]>;
+  // One keyset page of listOpenForDiscovery, filtered server-side (ticket l).
+  listOpenForDiscoveryPage(query: ParsedListQuery<RequirementDiscoveryParams>): Promise<Page<RequirementRecord>>;
   updateStatus(id: string, status: RequirementStatus): Promise<RequirementRecord>;
   updateFields(id: string, updates: UpdateRequirementFieldsInput): Promise<RequirementRecord>;
   // Global search — project name match, this Renter's own requirements only.

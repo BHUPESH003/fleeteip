@@ -1,3 +1,4 @@
+import { UNUSED_SESSION_MANAGEMENT_METHODS, UNUSED_USER_PASSWORD_METHODS } from "./identity-fakes.js";
 import { describe, expect, it } from "vitest";
 import type {
   MembershipRepositoryPort,
@@ -28,12 +29,19 @@ function fakeUserRepository(users: UserRecord[]): UserRepositoryPort {
     updateStatus: async () => {
       throw new Error("not used in this test");
     },
+    ...UNUSED_USER_PASSWORD_METHODS,
   };
 }
 
 function fakeSessionRepository(): SessionRepositoryPort {
   return {
-    create: async (input) => ({ id: "session-1", user_id: input.userId, expires_at: input.expiresAt }),
+    ...UNUSED_SESSION_MANAGEMENT_METHODS,
+    create: async (input) => ({
+      id: "session-1",
+      user_id: input.userId,
+      expires_at: input.expiresAt,
+      last_seen_at: new Date(),
+    }),
     findActiveByTokenHash: async () => {
       throw new Error("not used in this test");
     },
