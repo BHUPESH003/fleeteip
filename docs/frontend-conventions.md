@@ -101,3 +101,9 @@ const OPEN: RentalStatus[] = [RentalStatus.confirmed, RentalStatus.active];
 - `OFFLINE_HINT` comes from `lib/errors.ts`. Never copy the sentence into a file.
 - Status chips: `<Status domain="rental" value={...} />` (`lib/status.tsx`). No local status maps.
 - Formatting: `lib/format.ts` (dates, money, `rentalRef`, `requirementRef`).
+- "Today" is the business day in Asia/Kolkata, not the browser's zone. Use
+  `todayIsoDate()` from `lib/format.ts` (or `@fleetip/contracts/shared`) for
+  every date-only comparison (overdue, "starts today", date-picker minimums).
+  Never write `new Date().toISOString().slice(0, 10)`: that's the UTC date,
+  which is still yesterday in India until 05:30. The API uses the same zone
+  (`BUSINESS_TIME_ZONE`, default Asia/Kolkata).

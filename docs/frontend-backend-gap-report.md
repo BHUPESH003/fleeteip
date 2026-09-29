@@ -1274,18 +1274,18 @@ item and says so in words; none is faked.
 
 | Gap | Screen | Workaround today | Priority |
 |---|---|---|---|
-| Invoice list has no `balanceDue` / overdue (ticket d) | Billing, dashboards, rental Invoices tab | One `getInvoiceDetail` per unpaid invoice, 6 at a time | High |
-| No paid-at date on invoices | Billing "Paid this month" figure | Uses `updatedAt` of paid invoices, which is approximate | Medium |
-| No server-side filter/sort/paging (ticket l) | Every list | Filters in the browser on the full list | Medium |
-| No batch availability check (tickets b, l) | Machines list "Free between" filter | One `checkRentalAvailability` per machine, 6 at a time; maintenance overlap is checked in the browser | Medium |
-| 409 names neither the field nor the conflicting record (tickets b, m) | Register/Edit machine, Log maintenance | Machine 409 is mapped to asset code, the only unique constraint; the maintenance form finds the overlapping rental in the browser before submitting | Medium |
-| No maintenance get-by-id | Maintenance detail | Found through `?machineId=` or the org-wide list | Low |
+| Invoice list has no `balanceDue` / overdue (ticket d) | Billing, dashboards, rental Invoices tab | Fixed: list returns `balanceDue`, `overdue`, `paidAt`; billing, dashboards and rental detail use them | Done |
+| No paid-at date on invoices | Billing "Paid this month" figure | Fixed: `paidAt` = date of the clearing payment | Done |
+| No server-side filter/sort/paging (ticket l) | Every list | API done (see "Server-side paging (ticket l)" below). Screens still page, sort and filter the full list in the browser. Switching needs summary endpoints for the figure tiles; deferred until a load test shows it's needed (risk register §4.1) | Medium |
+| No batch availability check (tickets b, l) | Machines list "Free between" filter | Fixed: `POST /machines/availability` (one call, max 1000 machines); maintenance overlap checked on the server | Done |
+| 409 names neither the field nor the conflicting record (tickets b, m) | Register/Edit machine, Log maintenance | Fixed: 400s return `issues[]`, field-level 409s return `field`, and availability 409s name and carry the conflicting rental or job (`error.conflict`) | Done |
+| No maintenance get-by-id | Maintenance detail | Fixed: `GET /organizations/:id/maintenance-records/:recordId`; the maintenance detail page uses it | Done |
 | Renter-side "my response" / auction per requirement is a 404 probe | Open market list and detail (Rental Company) | One `/response` and one `/auction` call per requirement; a 404 means none. Noisy in the console, not an error. A list field would remove N calls | Low |
-| Rental dates can't be changed (ticket j); actual dates can't be edited after a dispute | Rental detail | Explained in the Edit terms dialog and on the dispute card | Medium |
-| Optional rental-term and transport fields can be corrected but not cleared | Edit rental terms, transport plan | The field stays filled; the dialog says so | Low |
-| No per-rental activity log | Rental detail | Shows the created and last-changed dates | Low |
-| Workshop job can't be linked to a rental (ticket f) | Rental Workshop tab | Lists the machine's jobs that overlap the rental dates | Low |
-| No reminders or scheduler (ticket i) | Attention lists | Attention rows are derived when the page loads | Low |
+| Rental dates can't be changed (ticket j); actual dates can't be edited after a dispute | Rental detail | Fixed: date-change proposal the Renter accepts or rejects; the Rental Company corrects disputed actual dates | Done |
+| Optional rental-term and transport fields can be corrected but not cleared | Edit rental terms, transport plan | Fixed: update schemas accept `null` (machine chassis number and year still can't be cleared) | Done |
+| No per-rental activity log | Rental detail | Fixed: `rental_events` + `GET …/rentals/:id/events`; Activity card on rental detail | Done |
+| Workshop job can't be linked to a rental (ticket f) | Rental Workshop tab | Fixed: `maintenance_records.rental_id` (0034); send-to-workshop and log-maintenance offer the link; the Workshop tab counts linked jobs | Done |
+| No reminders or scheduler (ticket i) | Attention lists | Fixed: daily in-process reminders job (in-app notifications; email waits for SES + SQS) | Done |
 
 ### Backend build (2026-09-29)
 
@@ -1305,12 +1305,39 @@ New gaps found while building:
 | Gap | Priority |
 |---|---|
 | Reset emails only go to the API log (`LogMailer`); links sit in logs. Needs a real provider before production | Critical |
-| Password-reset request does extra work for a known email, so response time can hint that an account exists; move the send to a queue | Low |
+| Password-reset request does extra work for a known email, so response time can hint that an account exists | Low — mail send no longer awaited; token writes remain until SQS |
 | Categories and subcategories can't be disabled (needs cascade rules for children and requirements) | Low |
-| Tenant catalogue "Disable" menu item isn't wired to the new endpoint yet | Low |
-| Non-UUID `:id` path params still return 500 on most routes (catalogue now 404s) | Low |
-| The API still accepts quotation term and scope-item edits while `sent`/`negotiating`; the UI now offers term edits only on drafts | Decision |
-| Accepting alternate dates sets `end_date` to the proposed end date even when none was proposed, clearing the existing end date | Medium |
+| Tenant catalogue "Disable" menu item isn't wired to the new endpoint yet | Fixed |
+| Non-UUID `:id` path params still return 500 on most routes (catalogue now 404s) | Fixed — global 22P02 → 404 |
+| The API still accepts quotation term and scope-item edits while `sent`/`negotiating` | Fixed — frozen after send (API and UI) |
+| Accepting alternate dates sets `end_date` to the proposed end date even when none was proposed, clearing the existing end date | Fixed — keeps the current end date; a start-only proposal past it is rejected |
+
+### Server-side paging (ticket l)
+
+Optional and backwards compatible: a list endpoint called with **none** of the
+params below returns the same full array as before. With **any** of them it
+returns `{ items, nextCursor }` (`Page<T>`, `@fleetip/contracts/list`).
+
+Common params: `limit` (1–200, default 50; out of range is a 400), `sort`,
+`dir` (`asc`/`desc`), `cursor` (opaque; pass back the previous `nextCursor`,
+with the same `sort`/`dir`, or you get a 400). Paging is keyset on
+(sort value, id), so ties page stably. `q` is a case-insensitive "contains".
+Dates are `YYYY-MM-DD`, inclusive.
+
+| Endpoint | `sort` (default first, `desc`) | Filters | Client method |
+|---|---|---|---|
+| `GET …/machines` | `createdAt`, `assetCode` | `status`, `q` (asset code, registration, chassis) | `listMachinesPage` |
+| `GET …/rentals` | `createdAt`, `startDate` | `status`, `machineId`, `from`/`to` (overlap), `q` (RN- ref, asset code, project) | `listRentalsPage` |
+| `GET …/invoices` | `createdAt`, `dueDate` | `status` (`overdue` includes issued past due), `rentalId`, `from`/`to` (due date), `q` (invoice number) | `listInvoicesPage` |
+| `GET …/maintenance-records` | `startDate`, `createdAt` | `status`, `maintenanceType`, `machineId`, `from`/`to` (start date), `q` (asset code, registration) | `listMaintenanceRecordsPage` |
+| `GET …/logsheets` | `logDate`, `createdAt` | `rentalId`, `machineId`, `from`/`to` (log date) | `listLogsheetsPage` |
+| `GET …/transport-records` | `createdAt` | `status`, `leg`, `rentalId`, `from`/`to` (planned date), `q` (RN- ref, asset code) | `listTransportRecordsPage` |
+| `GET …/quotations` | `createdAt`, `validityDate` | `status`, `machineId`, `q` (reference number) | `listQuotationsPage` |
+| `GET …/requirement-discovery` | `createdAt`, `requestedStartDate`, `validityDate` | `productSubcategoryId`, `from`/`to` (requested start), `q` (project name, location) | `discoverRequirementsPage` |
+
+Not server-side yet: the derived views (late dispatch, late start, "waiting on
+renter") and text search on joined names (customer, product). Those screens
+keep filtering in the browser.
 
 ---
 
