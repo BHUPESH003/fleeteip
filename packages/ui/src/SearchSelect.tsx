@@ -25,6 +25,8 @@ export interface SearchSelectProps extends FieldStateProps {
   loading?: boolean;
   disabled?: boolean;
   id?: string;
+  /** Lands on the text input, so useForm can focus the first invalid field by name. */
+  name?: string;
   className?: string;
   onBlur?: () => void;
 }
@@ -49,6 +51,7 @@ export function SearchSelect({
   loading,
   disabled,
   id,
+  name,
   className,
   onBlur,
 }: SearchSelectProps) {
@@ -115,6 +118,7 @@ export function SearchSelect({
           <Icon name="search" size={14} className="ml-2.5 text-meta-light" />
           <input
             id={inputId}
+            name={name}
             type="text"
             role="combobox"
             aria-expanded={open}

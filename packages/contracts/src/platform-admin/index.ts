@@ -19,12 +19,18 @@ export type StaffLoginRequest = z.infer<typeof staffLoginRequestSchema>;
 // Platform Admin's own view of a tenant organization/user — carries
 // `status` (suspend/reactivate), which the tenant-facing Organization/User
 // contract types never expose.
+/** Whether a tenant organization or user may sign in and act (Platform Admin suspend/reactivate). */
+export const accountStatusSchema = z.enum(["active", "suspended"]);
+export type AccountStatus = z.infer<typeof accountStatusSchema>;
+/** AccountStatus.x names each value once; `AccountStatus` is also the type. */
+export const AccountStatus = accountStatusSchema.enum;
+
 export const platformOrganizationSchema = z.object({
   id: z.string().uuid(),
   organizationTypeCode: z.string(),
   name: z.string(),
   code: z.string(),
-  status: z.enum(["active", "suspended"]),
+  status: accountStatusSchema,
   createdAt: z.string().datetime(),
 });
 export type PlatformOrganization = z.infer<typeof platformOrganizationSchema>;
@@ -33,13 +39,13 @@ export const platformUserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   displayName: z.string(),
-  status: z.enum(["active", "suspended"]),
+  status: accountStatusSchema,
   createdAt: z.string().datetime(),
 });
 export type PlatformUser = z.infer<typeof platformUserSchema>;
 
 export const updateStatusRequestSchema = z.object({
-  status: z.enum(["active", "suspended"]),
+  status: accountStatusSchema,
 });
 export type UpdateStatusRequest = z.infer<typeof updateStatusRequestSchema>;
 

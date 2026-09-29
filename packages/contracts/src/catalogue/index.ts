@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+// Soft cascade (0030 products, 0037 categories/subcategories): an item is
+// "effectively disabled" when it or any ancestor has disabledAt set.
+// disabledBy names the highest disabled level ("category" beats
+// "subcategory" beats "self") — the one that has to be re-enabled first.
+// disabledAt is always the item's own flag.
+export const catalogueDisabledBySchema = z.enum(["self", "subcategory", "category"]);
+export type CatalogueDisabledBy = z.infer<typeof catalogueDisabledBySchema>;
+export const CatalogueDisabledBy = catalogueDisabledBySchema.enum;
+
+const disableFields = {
+  disabledAt: z.string().datetime().nullable(),
+  disabledBy: catalogueDisabledBySchema.nullable(),
+};
+
 export const productCategorySchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(200),
@@ -8,6 +22,7 @@ export const productCategorySchema = z.object({
     .min(2)
     .max(10)
     .regex(/^[A-Z0-9]+$/, "code must be uppercase letters/numbers only"),
+  ...disableFields,
   createdAt: z.string().datetime(),
 });
 
@@ -22,6 +37,7 @@ export const productSubcategorySchema = z.object({
     .min(2)
     .max(20)
     .regex(/^[A-Z0-9]+$/, "code must be uppercase letters/numbers only"),
+  ...disableFields,
   createdAt: z.string().datetime(),
 });
 
@@ -98,7 +114,7 @@ export const productSchema = z.object({
   specifications: productSpecificationsSchema.nullable(),
   // Soft disable: set = hidden from pickers and new machine registrations,
   // but still resolvable by id so existing machines/rentals keep their name.
-  disabledAt: z.string().datetime().nullable(),
+  ...disableFields,
   createdAt: z.string().datetime(),
 });
 
@@ -112,12 +128,19 @@ export type ListProductSubcategoriesQuery = z.infer<typeof listProductSubcategor
 
 export const listProductsQuerySchema = z.object({
   subcategoryId: z.string().uuid().optional(),
-  // Disabled products are excluded by default (pickers); "true" includes
+  // Effectively-disabled products (self or any ancestor) are excluded by default (pickers); "true" includes
   // them for name lookups and catalogue management.
   includeDisabled: z.enum(["true", "false"]).optional(),
 });
 
 export type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;
+
+// Same default for category/subcategory lists: effectively-disabled items
+// are left out unless includeDisabled is "true".
+export const listCatalogueQuerySchema = z.object({
+  includeDisabled: z.enum(["true", "false"]).optional(),
+});
+export type ListCatalogueQuery = z.infer<typeof listCatalogueQuerySchema>;
 
 // --- Platform administration: create/update the shared Product Catalogue ---
 // Gated by catalogue.manage — see PERMISSION_ORGANIZATION_TYPES in

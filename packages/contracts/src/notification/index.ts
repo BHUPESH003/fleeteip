@@ -7,9 +7,7 @@ import { z } from "zod";
 // Work Order issuance, Rental status transitions, Transport/mobilization
 // updates, and Billing events. Still deliberately not covered: bare
 // Requirement creation (no single well-defined recipient in a
-// broadcast-discovery marketplace with no subscription feature) and a
-// time-based "rental ending soon" reminder (needs a scheduler/cron, no such
-// infra exists yet — flagged as Phase 2/infra work, not added here).
+// broadcast-discovery marketplace with no subscription feature).
 export const notificationTypeSchema = z.enum([
   "requirement.response_received",
   "requirement.quotation_requested",
@@ -31,10 +29,19 @@ export const notificationTypeSchema = z.enum([
   "rental.completed",
   "rental.actual_dates_verified",
   "rental.actual_dates_disputed",
+  "rental.actual_dates_corrected",
+  "rental.date_change_proposed",
+  "rental.date_change_responded",
+  "rental.date_change_withdrawn",
   "transport.dispatched",
   "transport.delivered",
   "billing.invoice_issued",
   "billing.payment_recorded",
+  // Daily reminders (apps/api/src/modules/reminders), once per record per business day.
+  "reminder.rental_ending_soon",
+  "reminder.rental_end_passed",
+  "reminder.invoice_overdue",
+  "reminder.logsheet_missing",
 ]);
 export type NotificationType = z.infer<typeof notificationTypeSchema>;
 /** NotificationType.x names each value once; `NotificationType` is also the type. */

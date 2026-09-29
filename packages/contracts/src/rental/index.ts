@@ -45,6 +45,16 @@ export const clientSnapshotSchema = z.object({
 });
 export type ClientSnapshot = z.infer<typeof clientSnapshotSchema>;
 
+// A change to the planned dates the Rental Company proposed and the Renter
+// hasn't answered yet (one at a time). endDate null = open-ended.
+export const rentalDateChangeSchema = z.object({
+  startDate: z.string().date(),
+  endDate: z.string().date().nullable(),
+  reason: z.string().min(1).max(500).nullable(),
+  proposedAt: z.string().datetime(),
+});
+export type RentalDateChange = z.infer<typeof rentalDateChangeSchema>;
+
 export const rentalSchema = z.object({
   id: z.string().uuid(),
   rentalCompanyOrganizationId: z.string().uuid(),
@@ -81,6 +91,7 @@ export const rentalSchema = z.object({
   actualEndDate: z.string().date().nullable(),
   actualDatesVerificationStatus: actualDatesVerificationStatusSchema.nullable(),
   actualDatesDisputeReason: z.string().min(1).max(500).nullable(),
+  pendingDateChange: rentalDateChangeSchema.nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   // Resolved server-side, only for a Renter viewing their own rentals (they
@@ -131,24 +142,25 @@ export const createRentalRequestSchema = z
 export type CreateRentalRequest = z.infer<typeof createRentalRequestSchema>;
 
 // Only the fields §11 locks as editable while status = confirmed. Machine
-// assignment, party, and dates are deliberately excluded — changing those
-// would require re-running the availability check (§9/§10), a different
-// operation than correcting a term before execution starts.
+// assignment, party, and dates are deliberately excluded — dates change
+// through proposeRentalDateChangeRequestSchema (re-runs the availability
+// check, needs the Renter's approval). Omitted = unchanged; null = remove
+// the value (rate/rateUnit are required on a rental, so never null).
 export const updateRentalTermsRequestSchema = z.object({
-  projectName: z.string().min(1).max(200).optional(),
-  projectLocation: z.string().min(1).max(200).optional(),
+  projectName: z.string().min(1).max(200).nullable().optional(),
+  projectLocation: z.string().min(1).max(200).nullable().optional(),
   rate: z.number().positive().optional(),
   rateUnit: rateUnitSchema.optional(),
-  mobilizationCharge: z.number().nonnegative().optional(),
-  demobilizationCharge: z.number().nonnegative().optional(),
-  paymentTerms: z.string().min(1).max(1000).optional(),
-  shiftStructure: z.string().min(1).max(500).optional(),
-  overtimeRate: z.number().nonnegative().optional(),
-  sundayCondition: z.string().min(1).max(500).optional(),
-  fuelNorms: z.string().min(1).max(500).optional(),
-  operatorScope: operatorScopeSchema.optional(),
-  noticePeriodDays: z.number().int().nonnegative().optional(),
-  dehireTerms: z.string().min(1).max(1000).optional(),
+  mobilizationCharge: z.number().nonnegative().nullable().optional(),
+  demobilizationCharge: z.number().nonnegative().nullable().optional(),
+  paymentTerms: z.string().min(1).max(1000).nullable().optional(),
+  shiftStructure: z.string().min(1).max(500).nullable().optional(),
+  overtimeRate: z.number().nonnegative().nullable().optional(),
+  sundayCondition: z.string().min(1).max(500).nullable().optional(),
+  fuelNorms: z.string().min(1).max(500).nullable().optional(),
+  operatorScope: operatorScopeSchema.nullable().optional(),
+  noticePeriodDays: z.number().int().nonnegative().nullable().optional(),
+  dehireTerms: z.string().min(1).max(1000).nullable().optional(),
 });
 export type UpdateRentalTermsRequest = z.infer<typeof updateRentalTermsRequestSchema>;
 
@@ -172,9 +184,130 @@ export const disputeActualDatesRequestSchema = z.object({
 });
 export type DisputeActualDatesRequest = z.infer<typeof disputeActualDatesRequestSchema>;
 
+// Rental Company proposes new planned dates. While confirmed: startDate
+// and endDate. While active: endDate only (extension or early end) — the
+// service enforces which applies. endDate null = open-ended. Applies
+// directly when the customer isn't a FleetIP organization.
+export const proposeRentalDateChangeRequestSchema = z
+  .object({
+    startDate: z.string().date().optional(),
+    endDate: z.string().date().nullable(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .refine((data) => !data.startDate || !isPastIsoDate(data.startDate), {
+    message: "Start date cannot be in the past",
+    path: ["startDate"],
+  })
+  .refine((data) => !data.startDate || !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
+  });
+export type ProposeRentalDateChangeRequest = z.infer<typeof proposeRentalDateChangeRequestSchema>;
+
+export const respondToRentalDateChangeRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+});
+export type RespondToRentalDateChangeRequest = z.infer<typeof respondToRentalDateChangeRequestSchema>;
+
+// Rental Company's answer to a dispute: corrected actual dates, which go
+// back to "pending" for the Renter to verify or dispute again.
+export const correctActualDatesRequestSchema = z
+  .object({
+    actualStartDate: z.string().date(),
+    actualEndDate: z.string().date().optional(),
+  })
+  .refine((data) => !isFutureIsoDate(data.actualStartDate), {
+    message: "Actual start date cannot be in the future",
+    path: ["actualStartDate"],
+  })
+  .refine((data) => !data.actualEndDate || !isFutureIsoDate(data.actualEndDate), {
+    message: "Actual end date cannot be in the future",
+    path: ["actualEndDate"],
+  })
+  .refine((data) => !data.actualEndDate || data.actualEndDate >= data.actualStartDate, {
+    message: "Actual end date cannot be before the actual start date",
+    path: ["actualEndDate"],
+  });
+export type CorrectActualDatesRequest = z.infer<typeof correctActualDatesRequestSchema>;
+
+export const rentalEventTypeSchema = z.enum([
+  "created",
+  "status_changed",
+  "terms_edited",
+  "actual_dates_verified",
+  "actual_dates_disputed",
+  "actual_dates_corrected",
+  "date_change_proposed",
+  "date_change_accepted",
+  "date_change_rejected",
+  "date_change_withdrawn",
+  "dates_changed",
+]);
+export type RentalEventType = z.infer<typeof rentalEventTypeSchema>;
+/** RentalEventType.x names each value once; `RentalEventType` is also the type. */
+export const RentalEventType = rentalEventTypeSchema.enum;
+
+// One line of a rental's activity log. Attributed to the acting
+// organization only — never a user, so neither party sees the other's staff.
+export const rentalEventSchema = z.object({
+  id: z.string().uuid(),
+  rentalId: z.string().uuid(),
+  type: rentalEventTypeSchema,
+  // Per type: status_changed {from, to, actualDate?}; terms_edited {fields};
+  // date_change_* / dates_changed {startDate, endDate, reason?};
+  // actual_dates_disputed {reason}; actual_dates_corrected {actualStartDate, actualEndDate}.
+  detail: z.record(z.unknown()).nullable(),
+  organizationId: z.string().uuid(),
+  organizationName: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type RentalEvent = z.infer<typeof rentalEventSchema>;
+
 export const checkMachineAvailabilityQuerySchema = z.object({
   machineId: z.string().uuid(),
   startDate: z.string().date(),
   endDate: z.string().date().optional(),
 });
 export type CheckMachineAvailabilityQuery = z.infer<typeof checkMachineAvailabilityQuerySchema>;
+
+// What makes a machine unavailable over a window: a committing rental
+// (confirmed/active/off_rent) or an open workshop job (scheduled/in_progress).
+// `reference` is what a person reads: "RN-1A2B3C4D", or "Workshop job 2026-10-01".
+// Also sent as `error.conflict` on a 409 caused by one of these.
+export const availabilityConflictKindSchema = z.enum(["rental", "maintenance"]);
+export type AvailabilityConflictKind = z.infer<typeof availabilityConflictKindSchema>;
+export const AvailabilityConflictKind = availabilityConflictKindSchema.enum;
+
+export const availabilityConflictSchema = z.object({
+  kind: availabilityConflictKindSchema,
+  id: z.string().uuid(),
+  reference: z.string(),
+  startDate: z.string().date(),
+  endDate: z.string().date().nullable(),
+});
+export type AvailabilityConflict = z.infer<typeof availabilityConflictSchema>;
+
+/** GET /rentals/availability response. `available` is kept for older callers; it is `conflicts.length === 0`. */
+export const machineAvailabilitySchema = z.object({
+  available: z.boolean(),
+  conflicts: z.array(availabilityConflictSchema),
+});
+export type MachineAvailability = z.infer<typeof machineAvailabilitySchema>;
+
+/** POST /organizations/:organizationId/machines/availability — one answer per machine, one query set. */
+export const checkMachinesAvailabilityRequestSchema = z
+  .object({
+    machineIds: z.array(z.string().uuid()).min(1).max(1000),
+    startDate: z.string().date(),
+    endDate: z.string().date().optional(),
+  })
+  .refine((data) => !data.endDate || data.endDate >= data.startDate, {
+    message: "End date cannot be before the start date",
+    path: ["endDate"],
+  });
+export type CheckMachinesAvailabilityRequest = z.infer<typeof checkMachinesAvailabilityRequestSchema>;
+
+export const machinesAvailabilityResponseSchema = z.object({
+  results: z.array(machineAvailabilitySchema.extend({ machineId: z.string().uuid() })),
+});
+export type MachinesAvailabilityResponse = z.infer<typeof machinesAvailabilityResponseSchema>;

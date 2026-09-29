@@ -39,16 +39,18 @@ export const createTransportRequestSchema = z.object({
 });
 export type CreateTransportRequest = z.infer<typeof createTransportRequestSchema>;
 
+// Omitted = unchanged; null = remove the value. actualDate and status
+// record what happened, so they can be corrected but not removed.
 export const updateTransportRequestSchema = z
   .object({
-    pickupLocation: z.string().min(1).max(300).optional(),
-    destination: z.string().min(1).max(300).optional(),
-    plannedDate: z.string().date().optional(),
+    pickupLocation: z.string().min(1).max(300).nullable().optional(),
+    destination: z.string().min(1).max(300).nullable().optional(),
+    plannedDate: z.string().date().nullable().optional(),
     actualDate: z.string().date().optional(),
     status: transportStatusSchema.optional(),
-    transportDetails: z.string().min(1).max(1000).optional(),
-    charges: z.number().nonnegative().optional(),
-    notes: z.string().min(1).max(2000).optional(),
+    transportDetails: z.string().min(1).max(1000).nullable().optional(),
+    charges: z.number().nonnegative().nullable().optional(),
+    notes: z.string().min(1).max(2000).nullable().optional(),
   })
   // No ordering rule against plannedDate — dispatch can legitimately happen
   // earlier or later than planned. actualDate records something that has

@@ -47,3 +47,23 @@ export const authenticatedSessionSchema = z.object({
   memberships: z.array(membershipWithOrganizationSchema),
 });
 export type AuthenticatedSession = z.infer<typeof authenticatedSessionSchema>;
+
+/** Signed-in password change. newPassword follows the signup rules; the other sessions are signed out. */
+export const changePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: passwordSchema,
+});
+export type ChangePasswordRequest = z.infer<typeof changePasswordRequestSchema>;
+
+/** One signed-in device. Never carries token data. */
+export const sessionSummarySchema = z.object({
+  id: z.string().uuid(),
+  createdAt: z.string().datetime(),
+  lastSeenAt: z.string().datetime(),
+  userAgent: z.string().nullable(),
+  current: z.boolean(),
+});
+export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+
+export const sessionListResponseSchema = z.object({ sessions: z.array(sessionSummarySchema) });
+export type SessionListResponse = z.infer<typeof sessionListResponseSchema>;

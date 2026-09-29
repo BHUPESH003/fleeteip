@@ -32,6 +32,8 @@ export type {
   FieldStateProps,
 } from "./Field";
 export { SearchSelect } from "./SearchSelect";
+export { FilterChip } from "./FilterChip";
+export type { FilterChipProps } from "./FilterChip";
 export type { SearchSelectOption, SearchSelectProps } from "./SearchSelect";
 export { PageHeader, PageBody, IdentityTile } from "./PageHeader";
 export type { PageHeaderProps, Breadcrumb } from "./PageHeader";

@@ -1,8 +1,24 @@
 // Calendar-date ("YYYY-MM-DD", z.string().date()'s format) comparisons.
 // Plain string comparison sorts these correctly with no Date-object /
 // timezone parsing needed — every caller here already works in that format.
+//
+// "Today" is always the business day in India (risk register §2.5), never the
+// browser's or server's own clock zone — otherwise an invoice or rental flips
+// overdue at 05:30 IST (UTC midnight) on one side and at midnight on the other.
+export const BUSINESS_TIME_ZONE = "Asia/Kolkata";
+
+// "YYYY-MM-DD" of `now` in `timeZone` (en-CA formats dates as YYYY-MM-DD).
+export function isoDateInTimeZone(timeZone: string, now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
 export function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  return isoDateInTimeZone(BUSINESS_TIME_ZONE);
 }
 
 export function isPastIsoDate(date: string): boolean {
