@@ -3,9 +3,11 @@ import type {
   Invoice,
   InvoiceDetail,
   InvoiceLineItem,
+  InvoiceListItem,
   Payment,
   RecordPaymentRequest,
 } from "@fleetip/contracts/billing";
+import { InvoiceStatus } from "@fleetip/contracts/billing";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
@@ -13,6 +15,7 @@ import { NotificationService } from "../../notification/application/notification
 import { canTransition } from "../domain/invoice-status.js";
 import type {
   InvoiceLineItemRecord,
+  InvoiceListRecord,
   InvoiceRecord,
   InvoiceRepositoryPort,
   PaymentRecord,
@@ -35,6 +38,22 @@ function toInvoice(record: InvoiceRecord): Invoice {
     notes: record.notes,
     createdAt: new Date(record.created_at).toISOString(),
     updatedAt: new Date(record.updated_at).toISOString(),
+  };
+}
+
+function toInvoiceListItem(record: InvoiceListRecord): InvoiceListItem {
+  const balanceDue = record.total_amount - record.amount_paid;
+  // Same rule as getInvoiceDetail's markOverdueIfDue (issued + past due),
+  // plus the already-flipped status, and only while money is still owed.
+  const overdue =
+    balanceDue > 0 &&
+    (record.status === InvoiceStatus.overdue ||
+      (record.status === InvoiceStatus.issued && record.past_due));
+  return {
+    ...toInvoice(record),
+    balanceDue,
+    overdue,
+    paidAt: balanceDue <= 0 ? record.last_paid_date : null,
   };
 }
 
@@ -137,7 +156,7 @@ export class BillingService {
     return toInvoice(record);
   }
 
-  async listInvoices(userId: string, organizationId: string): Promise<Invoice[]> {
+  async listInvoices(userId: string, organizationId: string): Promise<InvoiceListItem[]> {
     const canManage = await this.permissionService.hasPermission(
       userId,
       organizationId,
@@ -145,7 +164,7 @@ export class BillingService {
     );
     if (canManage) {
       const records = await this.invoiceRepository.listByRentalCompany(organizationId);
-      return records.map(toInvoice);
+      return records.map(toInvoiceListItem);
     }
     const canRespond = await this.permissionService.hasPermission(
       userId,
@@ -154,7 +173,7 @@ export class BillingService {
     );
     if (canRespond) {
       const records = await this.invoiceRepository.listByRenter(organizationId);
-      return records.map(toInvoice);
+      return records.map(toInvoiceListItem);
     }
     throw new ForbiddenError();
   }
@@ -219,7 +238,7 @@ export class BillingService {
       throw new ConflictError(`Cannot transition invoice from ${existing.status} to ${status}`);
     }
     const record = await this.invoiceRepository.updateStatus(invoiceId, status);
-    if (status === "issued") {
+    if (status === InvoiceStatus.issued) {
       await this.notifyRenterOfInvoice(record.rental_id, {
         type: "billing.invoice_issued",
         title: "Invoice issued",
@@ -243,7 +262,7 @@ export class BillingService {
       "billing.manage",
     );
     const existing = await this.requireOwnedInvoice(rentalCompanyOrganizationId, invoiceId);
-    if (existing.status !== "issued" && existing.status !== "overdue") {
+    if (existing.status !== InvoiceStatus.issued && existing.status !== InvoiceStatus.overdue) {
       throw new ConflictError("Payments can only be recorded against an issued invoice");
     }
 

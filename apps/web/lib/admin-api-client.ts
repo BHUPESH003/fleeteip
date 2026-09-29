@@ -124,4 +124,9 @@ export const adminApiClient = {
       method: "PATCH",
       body: JSON.stringify(input),
     }),
+  setProductDisabled: (productId: string, disabled: boolean) =>
+    adminRequest<Product>(
+      `/admin/catalogue/products/${productId}/${disabled ? "disable" : "enable"}`,
+      { method: "POST" },
+    ),
 };

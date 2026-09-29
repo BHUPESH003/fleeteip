@@ -1,4 +1,4 @@
-import type { CommercialQuotationStatus } from "@fleetip/contracts/quotation";
+import { CommercialQuotationStatus, AlternateDateStatus } from "@fleetip/contracts/quotation";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import type {
@@ -135,8 +135,8 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
         validity_date: input.validityDate,
         commercial_notes: input.commercialNotes ?? null,
         company_terms: input.companyTerms ?? null,
-        status: "draft",
-        alternate_date_status: "none",
+        status: CommercialQuotationStatus.draft,
+        alternate_date_status: AlternateDateStatus.none,
       })
       .returning(QUOTATION_COLUMNS)
       .executeTakeFirstOrThrow();
@@ -261,9 +261,9 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
   async expireIfDue(id: string) {
     const row = await this.db
       .updateTable("commercial_quotations")
-      .set({ status: "expired", updated_at: new Date() })
+      .set({ status: CommercialQuotationStatus.expired, updated_at: new Date() })
       .where("id", "=", id)
-      .where("status", "in", ["sent", "negotiating"])
+      .where("status", "in", [CommercialQuotationStatus.sent, CommercialQuotationStatus.negotiating])
       .where(sql<boolean>`validity_date < current_date`)
       .returning(QUOTATION_COLUMNS)
       .executeTakeFirst();
@@ -285,7 +285,7 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
       .set({
         proposed_alternate_start_date: input.startDate,
         proposed_alternate_end_date: input.endDate ?? null,
-        alternate_date_status: "pending",
+        alternate_date_status: AlternateDateStatus.pending,
         alternate_date_reason: input.reason ?? null,
         updated_at: new Date(),
       })
@@ -306,7 +306,8 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
               .executeTakeFirstOrThrow();
             return {
               start_date: current.proposed_alternate_start_date ?? current.start_date,
-              end_date: current.proposed_alternate_end_date,
+              // A proposal without an end date keeps the current one.
+              end_date: current.proposed_alternate_end_date ?? current.end_date,
             };
           })()
         : {};
@@ -314,7 +315,7 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
       .updateTable("commercial_quotations")
       .set({
         ...dateFields,
-        alternate_date_status: "none",
+        alternate_date_status: AlternateDateStatus.none,
         proposed_alternate_start_date: null,
         proposed_alternate_end_date: null,
         alternate_date_reason: null,

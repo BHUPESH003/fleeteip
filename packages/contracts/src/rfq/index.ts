@@ -4,6 +4,8 @@ import { isPastIsoDate } from "../shared/dates.js";
 
 export const requirementStatusSchema = z.enum(["open", "closed", "cancelled"]);
 export type RequirementStatus = z.infer<typeof requirementStatusSchema>;
+/** RequirementStatus.x names each value once; `RequirementStatus` is also the type. */
+export const RequirementStatus = requirementStatusSchema.enum;
 
 // Client-validated normal-rental-requirement inputs (this phase's brief):
 // single/double shift, or "flexi" (flexible — whatever shift pattern the
@@ -12,9 +14,13 @@ export type RequirementStatus = z.infer<typeof requirementStatusSchema>;
 // time, night-shift preference).
 export const shiftPatternSchema = z.enum(["single", "double", "flexi"]);
 export type ShiftPattern = z.infer<typeof shiftPatternSchema>;
+/** ShiftPattern.x names each value once; `ShiftPattern` is also the type. */
+export const ShiftPattern = shiftPatternSchema.enum;
 
 export const crewRequirementSchema = z.enum(["one_crew_set", "two_crew_sets"]);
 export type CrewRequirement = z.infer<typeof crewRequirementSchema>;
+/** CrewRequirement.x names each value once; `CrewRequirement` is also the type. */
+export const CrewRequirement = crewRequirementSchema.enum;
 
 export const requirementSchema = z.object({
   id: z.string().uuid(),

@@ -203,7 +203,7 @@ function fakeAuctionRepository(): AuctionRepositoryPort {
   };
 }
 
-function buildService() {
+function buildService(deletedSessionsFor: string[] = []) {
   const catalogueService = new CatalogueService(
     {
       listAll: async () => [],
@@ -245,6 +245,14 @@ function buildService() {
     fakeUserRepository(),
     fakeRequirementRepository(),
     fakeAuctionRepository(),
+    {
+      create: async () => {
+        throw new Error("not used in this test");
+      },
+      findActiveByTokenHash: async () => undefined,
+      deleteByTokenHash: async () => undefined,
+      deleteByUserId: async (userId) => deletedSessionsFor.push(userId),
+    },
   );
 }
 
@@ -272,11 +280,16 @@ describe("PlatformAdminService", () => {
   });
 
   it("lists every user and can suspend one", async () => {
-    const service = buildService();
+    const deleted: string[] = [];
+    const service = buildService(deleted);
     const users = await service.listUsers();
     expect(users).toHaveLength(1);
     const suspended = await service.setUserStatus("user-1", "suspended");
     expect(suspended.status).toBe("suspended");
+    // Suspending signs the user out everywhere.
+    expect(deleted).toEqual(["user-1"]);
+    await service.setUserStatus("user-1", "active");
+    expect(deleted).toEqual(["user-1"]);
   });
 
   it("creates a catalogue category without any organization/permission context", async () => {

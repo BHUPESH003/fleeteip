@@ -1,4 +1,4 @@
-import type { QuotationOfferStatus } from "@fleetip/contracts/quotation";
+import { QuotationOfferStatus } from "@fleetip/contracts/quotation";
 import type { Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import type {
@@ -43,7 +43,7 @@ export class QuotationOfferRepository implements QuotationOfferRepositoryPort {
         start_date: input.startDate,
         end_date: input.endDate ?? null,
         notes: input.notes ?? null,
-        status: "pending",
+        status: QuotationOfferStatus.pending,
       })
       .returning(OFFER_COLUMNS)
       .executeTakeFirstOrThrow();
@@ -72,9 +72,9 @@ export class QuotationOfferRepository implements QuotationOfferRepositoryPort {
   async supersedePending(quotationId: string): Promise<void> {
     await this.db
       .updateTable("quotation_offers")
-      .set({ status: "superseded" })
+      .set({ status: QuotationOfferStatus.superseded })
       .where("quotation_id", "=", quotationId)
-      .where("status", "=", "pending")
+      .where("status", "=", QuotationOfferStatus.pending)
       .execute();
   }
 

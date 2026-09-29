@@ -12,6 +12,7 @@ export const baseConfig = tseslint.config(
       "**/build/**",
       "**/.next/**",
       "**/coverage/**",
+      "design/**",
       "**/node_modules/**",
       "**/next-env.d.ts",
       "public_html/**",

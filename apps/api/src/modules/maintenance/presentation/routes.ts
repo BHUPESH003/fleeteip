@@ -48,6 +48,18 @@ export async function maintenanceRoutes(fastify: FastifyInstance): Promise<void>
     },
   );
 
+  fastify.get<{ Params: { organizationId: string; maintenanceId: string } }>(
+    "/organizations/:organizationId/maintenance-records/:maintenanceId",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.maintenanceService.getMaintenanceRecord(
+        userId,
+        request.params.organizationId,
+        request.params.maintenanceId,
+      );
+    },
+  );
+
   fastify.patch<{ Params: { organizationId: string; maintenanceId: string } }>(
     "/organizations/:organizationId/maintenance-records/:maintenanceId/status",
     async (request) => {

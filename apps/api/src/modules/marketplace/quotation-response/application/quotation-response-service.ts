@@ -2,6 +2,8 @@ import type {
   QuotationResponse,
   SubmitQuotationResponseRequest,
 } from "@fleetip/contracts/quotation";
+import { QuotationResponseStatus } from "@fleetip/contracts/quotation";
+import { RequirementStatus } from "@fleetip/contracts/rfq";
 import { ConflictError, NotFoundError } from "../../../../shared/errors.js";
 import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
 import { NotificationService } from "../../../notification/application/notification-service.js";
@@ -51,7 +53,7 @@ export class QuotationResponseService {
     if (!requirement) {
       throw new NotFoundError("Requirement not found");
     }
-    if (requirement.status !== "open") {
+    if (requirement.status !== RequirementStatus.open) {
       throw new ConflictError("Cannot respond to a requirement that is not open");
     }
 
@@ -117,7 +119,7 @@ export class QuotationResponseService {
       requirementId,
       rentalCompanyOrganizationId,
     );
-    if (!response || response.status !== "interested") {
+    if (!response || response.status !== QuotationResponseStatus.interested) {
       throw new ConflictError(
         "Can only request a quotation from a rental company that responded as interested",
       );

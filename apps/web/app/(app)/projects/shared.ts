@@ -1,12 +1,20 @@
-import type { ProjectStatus } from "@fleetip/contracts/project";
-import type { StatusMap } from "@fleetip/ui";
+import { ProjectStatus, type Project } from "@fleetip/contracts/project";
 
-export const PROJECT_STATUS_MAP: StatusMap = {
-  active: { label: "Active", tone: "info" },
-  completed: { label: "Completed", tone: "success" },
-  cancelled: { label: "Cancelled", tone: "danger" },
-};
+/** "Kharadi · Pune, Maharashtra" — district/state only when recorded. */
+export function projectRegion(project: Pick<Project, "district" | "state">): string | null {
+  const parts = [project.district, project.state].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
 
-export function projectStatus(status: ProjectStatus) {
-  return PROJECT_STATUS_MAP[status];
+/** Only an active project can take new requirements (RequirementService.createRequirement). */
+export function acceptsRequirements(project: Pick<Project, "status">): boolean {
+  return project.status === ProjectStatus.active;
+}
+
+/** Search haystack for the projects list and the project picker. */
+export function projectSearchText(project: Project): string {
+  return [project.projectCode, project.projectName, project.projectType, project.siteLocation, project.district, project.state]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }

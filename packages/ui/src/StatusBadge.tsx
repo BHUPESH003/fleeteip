@@ -1,4 +1,4 @@
-import { Badge, type BadgeTone } from "./Badge";
+import { Badge, type BadgeSize, type BadgeTone, type BadgeVariant } from "./Badge";
 
 export interface StatusMapEntry {
   label: string;
@@ -10,20 +10,30 @@ export type StatusMap = Record<string, StatusMapEntry>;
 export interface StatusBadgeProps {
   status: string;
   map: StatusMap;
+  size?: BadgeSize;
+  variant?: BadgeVariant;
+  /** Hover text; defaults to "<status>" so a chip always explains itself. */
+  title?: string;
   className?: string;
 }
 
 /**
- * Thin wrapper over Badge driven by a per-domain {status: {label, tone}}
- * map defined at the call site — keeps FleetIP's status vocabularies out
- * of @fleetip/ui while retiring the copy-pasted STATUS_LABEL/STATUS_BADGE
- * objects duplicated per page.
+ * Badge driven by a per-domain {status: {label, tone}} map defined by the
+ * app (apps/web/lib/status.tsx) — keeps FleetIP's status vocabularies out
+ * of @fleetip/ui. Unknown values fall back to the raw value in gray rather
+ * than inventing a label.
  */
-export function StatusBadge({ status, map, className }: StatusBadgeProps) {
+export function StatusBadge({ status, map, size, variant, title, className }: StatusBadgeProps) {
   const entry = map[status];
   return (
-    <Badge tone={entry?.tone ?? "neutral"} className={className}>
-      {entry?.label ?? status}
+    <Badge
+      tone={entry?.tone ?? "neutral"}
+      size={size}
+      variant={variant}
+      title={title}
+      className={className}
+    >
+      {entry?.label ?? status.replace(/_/g, " ")}
     </Badge>
   );
 }

@@ -1,427 +1,511 @@
 "use client";
 
-import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
-import type { Machine } from "@fleetip/contracts/equipment";
-import type { Auction } from "@fleetip/contracts/auction";
+import { AuctionStatus, type Auction } from "@fleetip/contracts/auction";
+import type { Product } from "@fleetip/contracts/catalogue";
+import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { QuotationResponse } from "@fleetip/contracts/quotation";
 import type { Requirement } from "@fleetip/contracts/rfq";
 import {
-  AllocationBar,
   AttentionStrip,
   Badge,
   Button,
-  Dialog,
+  CellStack,
+  Checkbox,
   EmptyState,
   ErrorState,
-  Input,
-  LoadingState,
+  Menu,
+  PageBody,
   PageHeader,
-  Select,
-  StatusBadge,
+  Pagination,
   Table,
+  TableFooter,
+  TableSkeleton,
+  TableToolbar,
+  TabPanel,
+  Tabs,
   Tbody,
   Td,
   Th,
   Thead,
   Tr,
+  UILink,
+  cx,
+  useToast,
+  type MenuItem,
 } from "@fleetip/ui";
-import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { daysUntil, formatDate } from "../../../lib/format";
+import { useConnection } from "../../../lib/connection";
+import { describeError } from "../../../lib/errors";
+import { formatDate, formatRate, todayIsoDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
-import { RESPONSE_STATUS_MAP, validityTone } from "./shared";
+import { Status, statusLabel } from "../../../lib/status";
+import { optional, useLoad } from "../../../lib/use-load";
+import { RespondDialog } from "./RespondDialog";
+import { SearchField, directed, pageSlice, PAGE_SIZE, useListState, useSticky } from "./list-kit";
+import {
+  durationLabel,
+  equipmentLine,
+  loadSubcategoryIndex,
+  quantityLine,
+  requirementRef,
+  subcategoryName,
+  validityInfo,
+  type SubcategoryEntry,
+} from "./shared";
 
-type Filter = "all" | "needs_response" | "responded" | "in_auction" | "closed";
+type View = "needs_response" | "responded" | "in_auction" | "all";
+const VIEWS: View[] = ["needs_response", "responded", "in_auction", "all"];
 
-interface Loaded {
+interface MarketData {
   requirements: Requirement[];
   responses: Map<string, QuotationResponse>;
-  activeAuctions: Map<string, Auction>;
-  subcategoriesById: Map<string, ProductSubcategory>;
-  stockedSubcategoryIds: Set<string>;
-  machineCountBySubcategory: Map<string, number>;
+  /** The requirement's non-cancelled auction, when there is one (getActiveAuctionForRequirement). */
+  auctions: Map<string, Auction>;
+  subcategories: Map<string, SubcategoryEntry>;
+  /** Non-retired machines per subcategory. null when the role can't see the fleet (equipment.manage). */
+  machineCounts: Map<string, number> | null;
 }
 
-export function OpenMarket({
-  organizationId,
-  highlightedRequirementId,
-}: {
-  organizationId: string;
-  highlightedRequirementId: string | null;
-}) {
+interface Access {
+  machines: boolean;
+  auctions: boolean;
+  quotations: boolean;
+}
+
+async function loadMarket(organizationId: string, access: Access): Promise<MarketData> {
+  const [requirements, subcategories, machines, products] = await Promise.all([
+    apiClient.discoverRequirements(organizationId) as Promise<Requirement[]>,
+    loadSubcategoryIndex(),
+    // Fleet counts are enrichment, not this page's purpose (rfq.respond is):
+    // a role without equipment.manage still gets a working Open Market, just
+    // no "only equipment I stock" filter and no shortfall hint.
+    optional(access.machines, () => apiClient.listMachines(organizationId) as Promise<Machine[]>, null as Machine[] | null),
+    optional(access.machines, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
+  ]);
+  const [responseEntries, auctionEntries] = await Promise.all([
+    Promise.all(
+      requirements.map(async (r) => {
+        try {
+          return [r.id, (await apiClient.getMyResponse(organizationId, r.id)) as QuotationResponse] as const;
+        } catch {
+          // 404 = no response from this company yet.
+          return null;
+        }
+      }),
+    ),
+    Promise.all(
+      requirements.map((r) =>
+        // auction.participate only; a 404 means no auction on this requirement.
+        optional(
+          access.auctions,
+          async () => [r.id, (await apiClient.getActiveAuctionForRequirement(organizationId, r.id)) as Auction] as const,
+          null as (readonly [string, Auction]) | null,
+        ),
+      ),
+    ),
+  ]);
+
+  let machineCounts: Map<string, number> | null = null;
+  if (machines) {
+    const productSubcategory = new Map(products.map((p) => [p.id, p.productSubcategoryId]));
+    machineCounts = new Map();
+    for (const machine of machines) {
+      if (machine.status === MachineStatus.retired) continue;
+      const sub = productSubcategory.get(machine.productId);
+      if (sub) machineCounts.set(sub, (machineCounts.get(sub) ?? 0) + 1);
+    }
+  }
+
+  return {
+    requirements,
+    responses: new Map(responseEntries.filter((e): e is readonly [string, QuotationResponse] => e !== null)),
+    auctions: new Map(auctionEntries.filter((e): e is readonly [string, Auction] => e !== null)),
+    subcategories,
+    machineCounts,
+  };
+}
+
+const auctionRunning = (auction: Auction | undefined) => auction?.status === AuctionStatus.live || auction?.status === AuctionStatus.scheduled;
+
+export function OpenMarket({ organizationId }: { organizationId: string }) {
   const { hasPermission } = useSession();
-  // stockedSubcategoryIds (the "only equipment I stock" filter) is
-  // enrichment, not the point of this page (rfq.respond is) — a role
-  // without equipment.manage still gets a fully working open market, just
-  // with an empty stocked set, same as a rental company with no fleet yet
-  // (the checkbox then simply yields no matches via the existing EmptyState).
-  const canListMachines = hasPermission("equipment.manage");
+  const { online } = useConnection();
+  const toast = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const access: Access = {
+    machines: hasPermission("equipment.manage"),
+    auctions: hasPermission("auction.participate"),
+    quotations: hasPermission("quotation.manage"),
+  };
+  const list = useListState("requirements", { sort: "validity", dir: "asc" });
+  const { get, set, search, activeQuery, sortKey, dir, page, setPage, toggleSort, sortDirection } = list;
 
-  const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("needs_response");
-  const [onlyStocked, setOnlyStocked] = useState(false);
-  const [respondingId, setRespondingId] = useState<string | null>(highlightedRequirementId);
+  const { data, error, loading, reload, setData } = useLoad(
+    () => loadMarket(organizationId, access),
+    [organizationId, access.machines, access.auctions],
+  );
+  const [respondingId, setRespondingId] = useState<string | null>(null);
 
-  async function load() {
-    try {
-      const [requirements, categories, machines, products] = await Promise.all([
-        apiClient.discoverRequirements(organizationId) as Promise<Requirement[]>,
-        apiClient.listProductCategories() as Promise<ProductCategory[]>,
-        canListMachines ? (apiClient.listMachines(organizationId) as Promise<Machine[]>) : Promise.resolve([]),
-        apiClient.listProducts() as Promise<Product[]>,
-      ]);
-      const subcategoryLists = await Promise.all(
-        categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
-      );
-      const [responseEntries, auctionEntries] = await Promise.all([
-        Promise.all(
-          requirements.map(async (r) => {
-            try {
-              return [r.id, (await apiClient.getMyResponse(organizationId, r.id)) as QuotationResponse] as const;
-            } catch {
-              return null;
-            }
-          }),
-        ),
-        Promise.all(
-          requirements.map(async (r) => {
-            try {
-              const auction = (await apiClient.getActiveAuctionForRequirement(
-                organizationId,
-                r.id,
-              )) as Auction;
-              return [r.id, auction] as const;
-            } catch {
-              return null;
-            }
-          }),
-        ),
-      ]);
+  const viewParam = get("view");
+  const view: View = (VIEWS as string[]).includes(viewParam) ? (viewParam as View) : "needs_response";
+  const onlyStocked = get("stocked") === "1" && access.machines;
 
-      const productsById = new Map(products.map((p) => [p.id, p]));
-      const subcategoryIdsByMachine = machines
-        .map((m) => productsById.get(m.productId)?.productSubcategoryId)
-        .filter((id): id is string => Boolean(id));
-      const stockedSubcategoryIds = new Set(subcategoryIdsByMachine);
-      const machineCountBySubcategory = new Map<string, number>();
-      for (const id of subcategoryIdsByMachine) {
-        machineCountBySubcategory.set(id, (machineCountBySubcategory.get(id) ?? 0) + 1);
-      }
-
-      setData({
-        requirements,
-        responses: new Map(responseEntries.filter((e): e is readonly [string, QuotationResponse] => e !== null)),
-        activeAuctions: new Map(auctionEntries.filter((e): e is readonly [string, Auction] => e !== null)),
-        subcategoriesById: new Map(subcategoryLists.flat().map((s) => [s.id, s])),
-        stockedSubcategoryIds,
-        machineCountBySubcategory,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load open market");
-    }
-  }
-
+  // ?requirementId= opens the respond dialog for that requirement. An
+  // effect keyed on the param (never a useState initializer — the App
+  // Router doesn't remount on a query-only change), run once the list has
+  // loaded, then the param is stripped so the same link works twice.
+  const requirementIdParam = searchParams.get("requirementId");
   useEffect(() => {
-    void load();
-  }, [organizationId, canListMachines]);
-
-  useEffect(() => {
-    if (highlightedRequirementId) setRespondingId(highlightedRequirementId);
-  }, [highlightedRequirementId]);
-
-  async function handleRespond(event: FormEvent<HTMLFormElement>, requirementId: string) {
-    event.preventDefault();
-    setError(null);
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const interested = form.get("interested") === "yes";
-    try {
-      await apiClient.submitResponse(organizationId, requirementId, {
-        status: interested ? "interested" : "not_interested",
-        indicativeRate: interested ? Number(form.get("indicativeRate")) : undefined,
-        indicativeRateUnit: interested
-          ? (String(form.get("indicativeRateUnit")) as "shift" | "day" | "week" | "month")
-          : undefined,
-        notes: form.get("notes") ? String(form.get("notes")) : undefined,
+    if (!requirementIdParam || !data) return;
+    const found = data.requirements.find((r) => r.id === requirementIdParam);
+    if (found) setRespondingId(found.id);
+    else
+      toast.info({
+        title: `${requirementRef(requirementIdParam)} isn't open for responses`,
+        body: "It may have closed, been cancelled or passed its validity date.",
       });
-      setRespondingId(null);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit response");
-    }
-  }
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("requirementId");
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [requirementIdParam, data]);
 
-  const sorted = useMemo(() => {
-    if (!data) return [];
-    return [...data.requirements].sort(
-      (a, b) => daysUntil(a.validityDate) - daysUntil(b.validityDate),
-    );
-  }, [data]);
+  const today = todayIsoDate();
+  const requirements = useMemo(() => data?.requirements ?? [], [data]);
+
+  const counts = useMemo(() => {
+    const out: Record<View, number> = { needs_response: 0, responded: 0, in_auction: 0, all: requirements.length };
+    if (!data) return out;
+    for (const r of requirements) {
+      if (data.responses.has(r.id)) out.responded += 1;
+      else out.needs_response += 1;
+      if (auctionRunning(data.auctions.get(r.id))) out.in_auction += 1;
+    }
+    return out;
+  }, [data, requirements]);
 
   const filtered = useMemo(() => {
     if (!data) return [];
-    return sorted.filter((r) => {
-      if (onlyStocked && !data.stockedSubcategoryIds.has(r.productSubcategoryId)) return false;
-      if (filter === "all") return true;
-      if (r.status !== "open") return filter === "closed";
-      if (filter === "closed") return false;
-      const hasResponse = data.responses.has(r.id);
-      const inAuction = data.activeAuctions.has(r.id);
-      if (filter === "needs_response") return !hasResponse;
-      if (filter === "responded") return hasResponse;
-      if (filter === "in_auction") return inAuction;
+    const out = requirements.filter((r) => {
+      const response = data.responses.get(r.id);
+      if (view === "needs_response" && response) return false;
+      if (view === "responded" && !response) return false;
+      if (view === "in_auction" && !auctionRunning(data.auctions.get(r.id))) return false;
+      if (onlyStocked && !(data.machineCounts?.get(r.productSubcategoryId) ?? 0)) return false;
+      if (activeQuery) {
+        const haystack = [
+          requirementRef(r.id),
+          equipmentLine(r, subcategoryName(data.subcategories, r.productSubcategoryId)),
+          r.projectName,
+          r.projectLocation,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(activeQuery)) return false;
+      }
       return true;
     });
-  }, [sorted, data, filter, onlyStocked]);
+    const compare =
+      sortKey === "start"
+        ? (a: Requirement, b: Requirement) => a.requestedStartDate.localeCompare(b.requestedStartDate)
+        : sortKey === "posted"
+          ? (a: Requirement, b: Requirement) => a.createdAt.localeCompare(b.createdAt)
+          : (a: Requirement, b: Requirement) => a.validityDate.localeCompare(b.validityDate);
+    return [...out].sort(directed(compare, dir));
+  }, [data, requirements, view, onlyStocked, activeQuery, sortKey, dir]);
 
-  if (error) return <ErrorState message={error} />;
-  if (!data) return <LoadingState label="Loading open market…" />;
+  const pageView = pageSlice(filtered, page);
+  const closingNoReply = data
+    ? requirements.filter((r) => !data.responses.has(r.id) && validityInfo(r.validityDate, today).days <= 3).length
+    : 0;
+  const filtersOn = Boolean(onlyStocked || activeQuery);
 
-  const openCount = data.requirements.filter((r) => r.status === "open").length;
-  const needsResponseCount = data.requirements.filter(
-    (r) => r.status === "open" && !data.responses.has(r.id),
-  ).length;
-  const respondedCount = data.requirements.filter((r) => data.responses.has(r.id)).length;
-  const inAuctionCount = data.requirements.filter((r) => data.activeAuctions.has(r.id)).length;
-  const closedCount = data.requirements.filter((r) => r.status !== "open").length;
-  const urgentNeedsResponseCount = data.requirements.filter(
-    (r) => r.status === "open" && !data.responses.has(r.id) && daysUntil(r.validityDate) <= 2,
-  ).length;
+  function clearFilters() {
+    search.setValue("");
+    set({ stocked: null, q: null });
+  }
+
+  const responding = respondingId && data ? (data.requirements.find((r) => r.id === respondingId) ?? null) : null;
+  const respondTarget = useSticky(responding);
+
+  function rowActions(r: Requirement): { visible: ReactNode; menu: MenuItem[] } {
+    const response = data?.responses.get(r.id);
+    const auction = data?.auctions.get(r.id);
+    const respondLabel = response ? "Update response" : "Respond";
+    const respondItem: MenuItem = {
+      key: "respond",
+      label: respondLabel,
+      icon: "edit",
+      disabled: !online,
+      hint: !online ? "You're offline." : response ? "Change your answer or rate. The customer sees the latest." : "Interested or not, with an indicative rate.",
+      onSelect: () => setRespondingId(r.id),
+    };
+    const auctionItem: MenuItem | null = auction
+      ? {
+          key: "auction",
+          label: auctionRunning(auction) ? "Open auction" : "View auction",
+          icon: "auction",
+          href: `/auctions?requirementId=${r.id}&auctionId=${auction.id}`,
+          hint: auctionRunning(auction) ? "Ask to join or place bids." : `The auction is ${statusLabel("auction", auction.status)}.`,
+        }
+      : null;
+    const menu: MenuItem[] = [];
+    let visible: ReactNode;
+    if (auction && auctionRunning(auction)) {
+      visible = (
+        <UILink
+          href={`/auctions?requirementId=${r.id}&auctionId=${auction.id}`}
+          className="inline-flex h-7 items-center whitespace-nowrap rounded-cell border border-border-control bg-surface px-[11px] text-xs font-medium text-ink-strong no-underline hover:bg-surface-hover"
+        >
+          Open auction
+        </UILink>
+      );
+      menu.push(respondItem);
+    } else {
+      visible = (
+        <Button size="sm" variant="secondary" onClick={() => setRespondingId(r.id)} disabled={!online} title={!online ? "You're offline." : undefined}>
+          {respondLabel}
+        </Button>
+      );
+      if (auctionItem) menu.push(auctionItem);
+    }
+    if (access.quotations) {
+      menu.push({
+        key: "quote",
+        label: "Create quotation",
+        icon: "quotation",
+        href: `/quotations?requirementId=${r.id}`,
+        disabled: !online,
+        hint: response?.quotationRequestedAt
+          ? "The customer asked you for one. Dates and rate unit come from the requirement."
+          : "A formal quotation tied to this requirement. Dates and rate unit come from it.",
+      });
+    }
+    menu.push({ key: "open", label: "Open requirement", icon: "requirement", href: `/requirements/${r.id}` });
+    return { visible, menu };
+  }
 
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader title="Open market" description={`${openCount} open requirements`} />
-
-      <AllocationBar
-        total={{ count: openCount + closedCount, label: "All requirements" }}
-        segments={[
-          {
-            key: "needs_response",
-            count: needsResponseCount,
-            label: "Needs response",
-            sub: "open, no reply from you yet",
-            tone: "attention",
-          },
-          {
-            key: "responded",
-            count: respondedCount,
-            label: "Responded",
-            sub: "you've replied",
-            tone: "available",
-          },
-          {
-            key: "in_auction",
-            count: inAuctionCount,
-            label: "In auction",
-            sub: "bidding is open",
-            tone: "on-rent",
-          },
-          {
-            key: "closed",
-            count: closedCount,
-            label: "Closed",
-            sub: "no longer open",
-            tone: "out-of-service",
-          },
-        ]}
-        active={filter === "all" ? null : filter}
-        onSelect={(key) => setFilter((key ?? "all") as Filter)}
+    <div className="flex min-w-0 flex-col">
+      <PageHeader
+        title="Open market"
+        description="Requirements posted by renters on FleetIP. Reply with an indicative rate; the customer may then ask you for a formal quotation."
       />
+      <PageBody>
+        <AttentionStrip
+          items={[
+            {
+              key: "closing",
+              count: closingNoReply,
+              text: `${closingNoReply === 1 ? "requirement stops" : "requirements stop"} taking responses within 3 days and you haven't replied`,
+              onClick: () => set({ view: null, sort: "validity", dir: "asc" }),
+            },
+          ]}
+        />
 
-      <AttentionStrip
-        items={[
-          {
-            key: "urgent-needs-response",
-            count: urgentNeedsResponseCount,
-            text: `requirement${urgentNeedsResponseCount === 1 ? "" : "s"} closing within 2 days, still no reply from you`,
-            onClick: () => setFilter("needs_response"),
-          },
-        ]}
-      />
+        <section aria-label="Open requirements" className="min-w-0 overflow-hidden rounded-panel border border-border-strong bg-surface">
+          <h2 className="sr-only">Open requirements</h2>
+          <Tabs
+            variant="card"
+            label="Requirement views"
+            idBase="market"
+            active={view}
+            onChange={(key) => set({ view: key === "needs_response" ? null : key })}
+            items={[
+              { key: "needs_response", label: "Needs response", count: data ? counts.needs_response : undefined },
+              { key: "responded", label: "Responded", count: data ? counts.responded : undefined },
+              { key: "in_auction", label: "In auction", count: data ? counts.in_auction : undefined },
+              { key: "all", label: "All open", count: data ? counts.all : undefined },
+            ]}
+          />
+          <TabPanel idBase="market" tabKey={view}>
+            <TableToolbar>
+              <SearchField search={search} label="Search requirements" placeholder="Reference, equipment, project or site" />
+              <Checkbox
+                label="Only equipment I stock"
+                checked={onlyStocked}
+                disabled={!access.machines}
+                description={access.machines ? undefined : "Needs the Equipment permission to read your fleet."}
+                onChange={(event) => set({ stocked: event.target.checked ? "1" : null })}
+              />
+              {filtersOn && (
+                <Button variant="tertiary" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              )}
+            </TableToolbar>
 
-      <label className="flex items-center gap-2 text-xs text-ink-muted">
-        <input type="checkbox" checked={onlyStocked} onChange={(e) => setOnlyStocked(e.target.checked)} />
-        Only equipment I stock
-      </label>
-
-      {filtered.length === 0 ? (
-        <EmptyState title="No requirements in this view" />
-      ) : (
-        <Table>
-          <Thead>
-            <Tr>
-              <Th>Requirement</Th>
-              <Th>Project &amp; location</Th>
-              <Th>Start &amp; duration</Th>
-              <Th>Validity</Th>
-              <Th>Status</Th>
-              <Th>Action</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {filtered.map((req) => {
-              const subcategory = data.subcategoriesById.get(req.productSubcategoryId);
-              const response = data.responses.get(req.id);
-              const auction = data.activeAuctions.get(req.id);
-              return (
-                <Tr key={req.id}>
-                  <Td>
-                    <div className="flex flex-col">
-                      <Link
-                        href={`/requirements/${req.id}`}
-                        className="text-xs font-medium text-accent-text"
-                      >
-                        {subcategory?.name ?? "Equipment"}
-                        {req.capacity ? ` · ${req.capacity}${req.capacityUnit ? ` ${req.capacityUnit}` : ""}` : ""}
-                      </Link>
-                      <span className="text-xs text-meta">Qty {req.quantity}</span>
-                    </div>
-                  </Td>
-                  <Td>
-                    <div className="flex flex-col">
-                      <span className="text-xs text-ink">{req.projectName ?? "—"}</span>
-                      <span className="text-xs text-meta">{req.projectLocation ?? "—"}</span>
-                    </div>
-                  </Td>
-                  <Td>
-                    <div className="flex flex-col font-mono text-xs">
-                      <span>{formatDate(req.requestedStartDate)}</span>
-                      <span className="text-meta">
-                        {req.expectedDurationValue
-                          ? `${req.expectedDurationValue} ${req.expectedDurationUnit}(s)`
-                          : "—"}
-                      </span>
-                    </div>
-                  </Td>
-                  <Td>
-                    <Badge tone={validityTone(req.validityDate)}>{formatDate(req.validityDate)}</Badge>
-                  </Td>
-                  <Td>
-                    {auction ? (
-                      <Badge tone="info">In auction</Badge>
-                    ) : (
-                      <Badge tone={req.status === "open" ? "success" : "neutral"}>{req.status}</Badge>
-                    )}
-                  </Td>
-                  <Td>
-                    {auction ? (
-                      <Link href={`/auctions?requirementId=${req.id}`} className="text-xs font-medium text-accent-text">
-                        Place bid
-                      </Link>
-                    ) : req.status !== "open" ? (
-                      <span className="text-xs text-meta">Closed</span>
-                    ) : response ? (
-                      <button
-                        type="button"
-                        onClick={() => setRespondingId(respondingId === req.id ? null : req.id)}
-                        className="text-xs font-medium text-accent-text"
-                      >
-                        Update response
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setRespondingId(respondingId === req.id ? null : req.id)}
-                        className="text-xs font-semibold text-accent-text"
-                      >
-                        Respond
-                      </button>
-                    )}
-                  </Td>
-                </Tr>
-              );
-            })}
-          </Tbody>
-        </Table>
-      )}
-
-      {(() => {
-        // A modal instead of a row appended after the whole table — with
-        // many requirements, "Respond" on an early row used to open a form
-        // anchored at the very bottom, forcing a scroll to reach it.
-        const req = respondingId ? data.requirements.find((r) => r.id === respondingId) : undefined;
-        const response = req ? data.responses.get(req.id) : undefined;
-        const subcategoryName = req
-          ? (data.subcategoriesById.get(req.productSubcategoryId)?.name ?? "requirement")
-          : "requirement";
-        // Only meaningful for a role that can actually see the org's fleet
-        // (equipment.manage) — omitted rather than shown as "0" for anyone
-        // else, same as the "only equipment I stock" filter above.
-        const machineCount = req && canListMachines ? (data.machineCountBySubcategory.get(req.productSubcategoryId) ?? 0) : null;
-        // Locked to the requirement's own unit when it has one — see
-        // QuotationResponseService.submitResponse; the server enforces this
-        // regardless, this just avoids showing a picker whose choice would
-        // be silently overridden.
-        const lockedUnit = req?.expectedDurationUnit ?? null;
-        return (
-          <Dialog
-            open={Boolean(respondingId)}
-            onClose={() => setRespondingId(null)}
-            title={`Respond to ${subcategoryName}`}
-          >
-            {req && (
-              <>
-                {response && (
-                  <p className="mb-3 text-sm text-meta">
-                    Current response: <StatusBadge status={response.status} map={RESPONSE_STATUS_MAP} />{" "}
-                    {response.indicativeRate
-                      ? `${response.indicativeRate} / ${response.indicativeRateUnit}`
-                      : ""}
-                  </p>
-                )}
-                {machineCount != null && machineCount < req.quantity && (
-                  <p className="mb-3 text-sm text-warning">
-                    You have {machineCount} matching machine{machineCount === 1 ? "" : "s"} registered —
-                    this requirement needs {req.quantity}.
-                  </p>
-                )}
-                <form onSubmit={(e) => void handleRespond(e, req.id)} className="flex flex-col gap-3 text-left">
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 text-sm text-ink-muted">
-                      <input type="radio" name="interested" value="yes" defaultChecked required />
-                      Interested
-                    </label>
-                    <label className="flex items-center gap-2 text-sm text-ink-muted">
-                      <input type="radio" name="interested" value="no" required />
-                      Not interested
-                    </label>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Input label="Rate" name="indicativeRate" type="number" step="0.01" />
-                    {lockedUnit ? (
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-xs font-medium text-ink-muted">Unit</span>
-                        <p className="flex h-[34px] items-center text-sm text-ink capitalize">{lockedUnit}</p>
-                        <input type="hidden" name="indicativeRateUnit" value={lockedUnit} />
-                      </div>
-                    ) : (
-                      <Select
-                        label="Unit"
-                        name="indicativeRateUnit"
-                        options={[
-                          { value: "shift", label: "Shift" },
-                          { value: "day", label: "Day" },
-                          { value: "week", label: "Week" },
-                          { value: "month", label: "Month" },
-                        ]}
-                      />
-                    )}
-                  </div>
-                  <Input label="Notes" name="notes" />
-                  <div className="flex justify-end gap-2 pt-1">
-                    <Button type="button" variant="secondary" onClick={() => setRespondingId(null)}>
-                      Cancel
+            {error ? (
+              <div className="p-4">
+                <ErrorState
+                  title="The open market didn't load"
+                  message={describeError(error).body}
+                  action={
+                    <Button variant="secondary" size="sm" icon="refresh" onClick={() => void reload()}>
+                      Try again
                     </Button>
-                    <Button type="submit">Submit</Button>
-                  </div>
-                </form>
-              </>
+                  }
+                />
+              </div>
+            ) : !loading && requirements.length === 0 ? (
+              <EmptyState
+                variant="page"
+                icon="requirement"
+                title="No open requirements right now"
+                description="Requirements appear here while they're open and before their validity date. Check back later."
+              />
+            ) : !loading && filtered.length === 0 ? (
+              <EmptyState
+                title={
+                  filtersOn
+                    ? "No requirements match these filters"
+                    : view === "needs_response"
+                      ? "You've replied to every open requirement"
+                      : view === "responded"
+                        ? "You haven't replied to any open requirement yet"
+                        : "No open requirement has an auction running"
+                }
+                description={filtersOn ? [activeQuery && `“${get("q")}”`, onlyStocked && "Only equipment I stock"].filter(Boolean).join(" · ") : undefined}
+                action={
+                  filtersOn ? (
+                    <Button variant="secondary" size="sm" onClick={clearFilters}>
+                      Clear filters
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <Table bare minWidth={1080} caption="Open requirements">
+                <Thead>
+                  <Tr>
+                    <Th className="w-[130px]" onSort={() => toggleSort("posted")} sortDirection={sortDirection("posted")}>
+                      Requirement
+                    </Th>
+                    <Th>Equipment</Th>
+                    <Th>Project and site</Th>
+                    <Th className="w-[140px]" onSort={() => toggleSort("start")} sortDirection={sortDirection("start")}>
+                      Needed from
+                    </Th>
+                    <Th className="w-[150px]" onSort={() => toggleSort("validity")} sortDirection={sortDirection("validity")}>
+                      Responses until
+                    </Th>
+                    <Th className="w-[170px]">Your reply</Th>
+                    <Th className="w-[200px]">
+                      <span className="sr-only">Actions</span>
+                    </Th>
+                  </Tr>
+                </Thead>
+                {loading ? (
+                  <TableSkeleton columns={7} rows={8} label="Loading the open market" />
+                ) : (
+                  <Tbody>
+                    {pageView.rows.map((r) => {
+                      const response = data?.responses.get(r.id);
+                      const auction = data?.auctions.get(r.id);
+                      const validity = validityInfo(r.validityDate, today);
+                      const actions = rowActions(r);
+                      return (
+                        <Tr key={r.id}>
+                          <Td className="whitespace-nowrap">
+                            <UILink
+                              href={`/requirements/${r.id}`}
+                              className="font-mono text-xs font-medium text-accent-text no-underline hover:text-accent-text-hover hover:underline"
+                            >
+                              {requirementRef(r.id)}
+                            </UILink>
+                          </Td>
+                          <Td>
+                            <CellStack
+                              title={equipmentLine(r, data ? subcategoryName(data.subcategories, r.productSubcategoryId) : null)}
+                              sub={quantityLine(r)}
+                            />
+                          </Td>
+                          <Td>
+                            <CellStack title={r.projectName ?? "Project not named"} sub={r.projectLocation ?? "Site not given"} />
+                          </Td>
+                          <Td>
+                            <CellStack
+                              mono
+                              title={formatDate(r.requestedStartDate)}
+                              sub={durationLabel(r.expectedDurationValue, r.expectedDurationUnit) ?? "Duration not given"}
+                            />
+                          </Td>
+                          <Td>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-mono text-xs font-medium text-ink-strong">{formatDate(r.validityDate)}</span>
+                              <span className={cx("text-[11px] leading-tight", validity.className)}>{validity.label}</span>
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="flex flex-col items-start gap-1">
+                              {response ? (
+                                <>
+                                  <Status domain="quotation_response" value={response.status} size="sm" />
+                                  {response.indicativeRate != null && response.indicativeRateUnit && (
+                                    <span className="font-mono text-[11px] text-meta">{formatRate(response.indicativeRate, response.indicativeRateUnit)}</span>
+                                  )}
+                                  {response.quotationRequestedAt && (
+                                    <Badge variant="label" tone="warning" title="Worked out from the customer's request — not a stored status">
+                                      Quotation asked for
+                                    </Badge>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-xs text-meta-light">No reply yet</span>
+                              )}
+                              {auction && (
+                                <span className="inline-flex items-center gap-1.5 text-[11px] text-meta">
+                                  Auction <Status domain="auction" value={auction.status} size="sm" />
+                                </span>
+                              )}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="flex items-center justify-end gap-2">
+                              {actions.visible}
+                              <Menu label={`More actions for ${requirementRef(r.id)}`} items={actions.menu} triggerSize="sm" width={300} />
+                            </div>
+                          </Td>
+                        </Tr>
+                      );
+                    })}
+                  </Tbody>
+                )}
+              </Table>
             )}
-          </Dialog>
-        );
-      })()}
+
+            {!error && !loading && filtered.length > 0 && (
+              <TableFooter>
+                <span className="text-xs text-meta">Sorted by {sortKey === "start" ? "start date" : sortKey === "posted" ? "posting date" : "validity date"}</span>
+                <Pagination page={pageView.page} pageCount={pageView.pageCount} onPageChange={setPage} total={pageView.total} pageSize={PAGE_SIZE} noun="requirements" />
+              </TableFooter>
+            )}
+          </TabPanel>
+        </section>
+      </PageBody>
+
+      {respondTarget && data && (
+        <RespondDialog
+          key={respondTarget.id}
+          open={responding !== null}
+          onClose={() => setRespondingId(null)}
+          organizationId={organizationId}
+          requirement={respondTarget}
+          subcategoryName={subcategoryName(data.subcategories, respondTarget.productSubcategoryId)}
+          existing={data.responses.get(respondTarget.id) ?? null}
+          machineCount={data.machineCounts ? (data.machineCounts.get(respondTarget.productSubcategoryId) ?? 0) : null}
+          onSaved={(saved) =>
+            setData((previous) =>
+              previous ? { ...previous, responses: new Map(previous.responses).set(saved.requirementId, saved) } : previous,
+            )
+          }
+        />
+      )}
     </div>
   );
 }

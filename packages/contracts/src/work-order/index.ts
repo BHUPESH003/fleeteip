@@ -12,6 +12,8 @@ import { responsiblePartySchema } from "../quotation/index.js";
 // the Work Order IS the formal commercial order (brief §10).
 export const workOrderStatusSchema = z.enum(["issued", "completed", "cancelled"]);
 export type WorkOrderStatus = z.infer<typeof workOrderStatusSchema>;
+/** WorkOrderStatus.x names each value once; `WorkOrderStatus` is also the type. */
+export const WorkOrderStatus = workOrderStatusSchema.enum;
 
 export const workOrderSchema = z.object({
   id: z.string().uuid(),

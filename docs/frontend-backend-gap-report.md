@@ -1265,6 +1265,55 @@ logs, "N companies notified", and quotation PDF/share.
 
 ---
 
+## Redesign Waves A–B review (2026-09-29)
+
+Found while reviewing the redesigned machines, rentals, maintenance, transport,
+logsheets, billing and work-order screens (docs/redesign-plan.md §5). Letters
+refer to the tickets in docs/redesign-plan.md §7. The UI works around every
+item and says so in words; none is faked.
+
+| Gap | Screen | Workaround today | Priority |
+|---|---|---|---|
+| Invoice list has no `balanceDue` / overdue (ticket d) | Billing, dashboards, rental Invoices tab | One `getInvoiceDetail` per unpaid invoice, 6 at a time | High |
+| No paid-at date on invoices | Billing "Paid this month" figure | Uses `updatedAt` of paid invoices, which is approximate | Medium |
+| No server-side filter/sort/paging (ticket l) | Every list | Filters in the browser on the full list | Medium |
+| No batch availability check (tickets b, l) | Machines list "Free between" filter | One `checkRentalAvailability` per machine, 6 at a time; maintenance overlap is checked in the browser | Medium |
+| 409 names neither the field nor the conflicting record (tickets b, m) | Register/Edit machine, Log maintenance | Machine 409 is mapped to asset code, the only unique constraint; the maintenance form finds the overlapping rental in the browser before submitting | Medium |
+| No maintenance get-by-id | Maintenance detail | Found through `?machineId=` or the org-wide list | Low |
+| Renter-side "my response" / auction per requirement is a 404 probe | Open market list and detail (Rental Company) | One `/response` and one `/auction` call per requirement; a 404 means none. Noisy in the console, not an error. A list field would remove N calls | Low |
+| Rental dates can't be changed (ticket j); actual dates can't be edited after a dispute | Rental detail | Explained in the Edit terms dialog and on the dispute card | Medium |
+| Optional rental-term and transport fields can be corrected but not cleared | Edit rental terms, transport plan | The field stays filled; the dialog says so | Low |
+| No per-rental activity log | Rental detail | Shows the created and last-changed dates | Low |
+| Workshop job can't be linked to a rental (ticket f) | Rental Workshop tab | Lists the machine's jobs that overlap the rental dates | Low |
+| No reminders or scheduler (ticket i) | Attention lists | Attention rows are derived when the page loads | Low |
+
+### Backend build (2026-09-29)
+
+Built after the Wave A–B UI pass, in this order:
+
+| Item | Status | What shipped |
+|---|---|---|
+| End a suspended user's sessions | Done | `setUserStatus(…, "suspended")` deletes every session row for the user; `getAuthenticatedSession` also refuses a suspended user |
+| Duplicate role name | Done | Unique violation on `roles_organization_id_name_unique` → 409 on create and rename |
+| Password reset | Done | Migration 0031 `password_reset_tokens`; `POST /auth/password-reset/request` (always 204) and `/confirm` (sets password, burns token, deletes all sessions); `/forgot-password` and `/reset-password` pages |
+| Invites list and revoke | Done | `GET /organizations/:id/invites`, `POST …/invites/:inviteId/revoke` (membership.manage); pending-invites panel in Settings → Members |
+| Organization profile edit | Done | `PATCH /organizations/:id` (organization.manage), name only — the table has no other tenant-editable fields |
+| Catalogue get-by-id and disable | Done (products) | Migration 0030 `products.disabled_at`; `GET /product-categories/:id`, `/product-subcategories/:id`, `/products/:id`; disable/enable for Platform Admin and `catalogue.manage`; disabled products leave the register-machine picker and can't get new machines |
+
+New gaps found while building:
+
+| Gap | Priority |
+|---|---|
+| Reset emails only go to the API log (`LogMailer`); links sit in logs. Needs a real provider before production | Critical |
+| Password-reset request does extra work for a known email, so response time can hint that an account exists; move the send to a queue | Low |
+| Categories and subcategories can't be disabled (needs cascade rules for children and requirements) | Low |
+| Tenant catalogue "Disable" menu item isn't wired to the new endpoint yet | Low |
+| Non-UUID `:id` path params still return 500 on most routes (catalogue now 404s) | Low |
+| The API still accepts quotation term and scope-item edits while `sent`/`negotiating`; the UI now offers term edits only on drafts | Decision |
+| Accepting alternate dates sets `end_date` to the proposed end date even when none was proposed, clearing the existing end date | Medium |
+
+---
+
 ## Template for new entries
 
 ```

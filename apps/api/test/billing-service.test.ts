@@ -233,10 +233,21 @@ function fakeInvoiceRepository(): InvoiceRepositoryPort {
       return record;
     },
     findById: async (id) => invoices.get(id),
-    listByRentalCompany: async (rentalCompanyOrganizationId) =>
-      [...invoices.values()].filter(
-        (i) => i.rental_company_organization_id === rentalCompanyOrganizationId,
-      ),
+    listByRentalCompany: async (rentalCompanyOrganizationId) => {
+      const today = new Date().toISOString().slice(0, 10);
+      return [...invoices.values()]
+        .filter((i) => i.rental_company_organization_id === rentalCompanyOrganizationId)
+        .map((i) => {
+          const invoicePayments = payments.get(i.id) ?? [];
+          return {
+            ...i,
+            amount_paid: invoicePayments.reduce((sum, p) => sum + p.amount, 0),
+            last_paid_date:
+              invoicePayments.map((p) => p.paid_date).sort().at(-1) ?? null,
+            past_due: i.due_date < today,
+          };
+        });
+    },
     listByRenter: async () => {
       throw new Error("not used in this test");
     },
@@ -432,5 +443,45 @@ describe("BillingService", () => {
     await service.updateInvoiceStatus("user-1", RC_ORG_ID, invoice.id, "issued");
     const detail = await service.getInvoiceDetail("user-1", RC_ORG_ID, invoice.id);
     expect(detail.invoice.status).toBe("overdue");
+  });
+
+  it("lists invoices with balanceDue and paidAt from their payments", async () => {
+    const service = buildService();
+    const invoice = await service.createInvoice("user-1", RC_ORG_ID, baseInput);
+    await service.updateInvoiceStatus("user-1", RC_ORG_ID, invoice.id, "issued");
+    await service.recordPayment("user-1", RC_ORG_ID, invoice.id, {
+      amount: 2000,
+      paidDate: "2026-03-18",
+    });
+    const [partial] = await service.listInvoices("user-1", RC_ORG_ID);
+    expect(partial).toMatchObject({ balanceDue: 3000, overdue: false, paidAt: null });
+
+    await service.recordPayment("user-1", RC_ORG_ID, invoice.id, {
+      amount: 3000,
+      paidDate: "2026-03-15",
+    });
+    const [paid] = await service.listInvoices("user-1", RC_ORG_ID);
+    expect(paid).toMatchObject({
+      status: "paid",
+      balanceDue: 0,
+      overdue: false,
+      paidAt: "2026-03-18",
+    });
+  });
+
+  it("flags an issued past-due invoice overdue in the list before the lazy flip", async () => {
+    const service = buildService();
+    const pastDue = { ...baseInput, dueDate: "2020-01-01" };
+    const issued = await service.createInvoice("user-1", RC_ORG_ID, pastDue);
+    await service.updateInvoiceStatus("user-1", RC_ORG_ID, issued.id, "issued");
+    const draft = await service.createInvoice("user-1", RC_ORG_ID, pastDue);
+
+    const list = await service.listInvoices("user-1", RC_ORG_ID);
+    expect(list.find((i) => i.id === issued.id)).toMatchObject({
+      status: "issued",
+      overdue: true,
+      balanceDue: 5000,
+    });
+    expect(list.find((i) => i.id === draft.id)).toMatchObject({ overdue: false });
   });
 });

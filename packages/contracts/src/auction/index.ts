@@ -2,11 +2,15 @@ import { z } from "zod";
 
 export const auctionStatusSchema = z.enum(["scheduled", "live", "closed", "cancelled"]);
 export type AuctionStatus = z.infer<typeof auctionStatusSchema>;
+/** AuctionStatus.x names each value once; `AuctionStatus` is also the type. */
+export const AuctionStatus = auctionStatusSchema.enum;
 
 // 'ascending' = highest bid wins (legacy "H1", equipment/base-price style).
 // 'descending' = lowest bid wins (legacy "L1", service/max-price style).
 export const biddingDirectionSchema = z.enum(["ascending", "descending"]);
 export type BiddingDirection = z.infer<typeof biddingDirectionSchema>;
+/** BiddingDirection.x names each value once; `BiddingDirection` is also the type. */
+export const BiddingDirection = biddingDirectionSchema.enum;
 
 export const auctionSchema = z.object({
   id: z.string().uuid(),
@@ -44,6 +48,8 @@ export type CreateAuctionRequest = z.infer<typeof createAuctionRequestSchema>;
 // docs/marketplace-core-loop-design.md §8.
 export const participantStatusSchema = z.enum(["pending", "approved", "rejected", "selected"]);
 export type ParticipantStatus = z.infer<typeof participantStatusSchema>;
+/** ParticipantStatus.x names each value once; `ParticipantStatus` is also the type. */
+export const ParticipantStatus = participantStatusSchema.enum;
 
 export const auctionParticipantSchema = z.object({
   id: z.string().uuid(),

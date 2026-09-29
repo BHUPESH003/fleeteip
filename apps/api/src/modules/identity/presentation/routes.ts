@@ -1,4 +1,9 @@
-import { loginRequestSchema, signupRequestSchema } from "@fleetip/contracts/identity";
+import {
+  loginRequestSchema,
+  passwordResetConfirmSchema,
+  passwordResetRequestSchema,
+  signupRequestSchema,
+} from "@fleetip/contracts/identity";
 import type { FastifyInstance } from "fastify";
 import { env } from "../../../infrastructure/config/env.js";
 import { container } from "../../../infrastructure/container.js";
@@ -33,6 +38,27 @@ export async function identityRoutes(fastify: FastifyInstance): Promise<void> {
       const result = await container.authService.login(body);
       setSessionCookie(reply, result.token, result.expiresAt);
       return { user: result.user };
+    },
+  );
+
+  // Public, no session. Always 204 — see PasswordResetService.requestReset.
+  fastify.post(
+    "/auth/password-reset/request",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const body = parseWithSchema(passwordResetRequestSchema, request.body);
+      await container.passwordResetService.requestReset(body);
+      reply.code(204);
+    },
+  );
+
+  fastify.post(
+    "/auth/password-reset/confirm",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const body = parseWithSchema(passwordResetConfirmSchema, request.body);
+      await container.passwordResetService.confirmReset(body);
+      reply.code(204);
     },
   );
 

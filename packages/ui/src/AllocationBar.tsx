@@ -22,7 +22,7 @@ const TONE_FG: Record<AllocationTone, string> = {
 const TONE_TOP_BORDER: Record<AllocationTone, string> = {
   "on-rent": "border-t-on-rent",
   available: "border-t-available",
-  attention: "border-t-attention-lane-edge",
+  attention: "border-t-lane-workshop-edge",
   "out-of-service": "border-t-border-stronger",
   neutral: "border-t-border-stronger",
 };
@@ -53,7 +53,7 @@ export function AllocationBar({ total, segments, active, onSelect, className }: 
   return (
     <div
       className={[
-        "flex overflow-hidden rounded-panel border border-border-strong bg-surface",
+        "flex flex-wrap overflow-hidden rounded-panel border border-border-strong bg-surface",
         className,
       ]
         .filter(Boolean)
@@ -65,7 +65,7 @@ export function AllocationBar({ total, segments, active, onSelect, className }: 
           onClick={() => onSelect?.(null)}
           disabled={!onSelect}
           className={[
-            "flex w-[150px] flex-none flex-col gap-1 border-r border-border-soft px-4 py-3 text-left",
+            "flex w-[150px] flex-none flex-col gap-1 border-r border-border-soft px-4 py-3 text-left max-[760px]:w-full max-[760px]:border-b max-[760px]:border-r-0",
             !active ? "bg-surface-sunk" : "bg-surface",
             onSelect ? "cursor-pointer" : "cursor-default",
           ].join(" ")}
@@ -85,9 +85,10 @@ export function AllocationBar({ total, segments, active, onSelect, className }: 
             key={segment.key}
             onClick={() => onSelect?.(isActive ? null : segment.key)}
             disabled={!onSelect}
+            aria-pressed={onSelect ? isActive : undefined}
             style={{ flexGrow: segment.grow ?? 1 }}
             className={[
-              "flex min-w-0 flex-1 flex-col gap-1 border-r border-t-[3px] border-border-soft px-4 py-3 text-left last:border-r-0",
+              "flex min-w-[140px] flex-1 flex-col gap-1 border-r border-t-[3px] border-border-soft px-4 py-3 text-left last:border-r-0 hover:bg-surface-row-hover disabled:hover:bg-surface",
               TONE_TOP_BORDER[segment.tone],
               isActive ? "bg-surface-sunk" : "bg-surface",
               onSelect ? "cursor-pointer" : "cursor-default",

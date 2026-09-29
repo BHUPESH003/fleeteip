@@ -1,4 +1,4 @@
-import type { ParticipantStatus } from "@fleetip/contracts/auction";
+import { ParticipantStatus, AuctionStatus } from "@fleetip/contracts/auction";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import { ConflictError, ValidationError } from "../../../../shared/errors.js";
@@ -60,7 +60,7 @@ export class AuctionRepository implements AuctionRepositoryPort {
         max_bids_per_participant: input.maxBidsPerParticipant ?? null,
         starts_at: input.startsAt,
         ends_at: input.endsAt,
-        status: "scheduled",
+        status: AuctionStatus.scheduled,
       })
       .returning(AUCTION_COLUMNS)
       .executeTakeFirstOrThrow();
@@ -158,19 +158,19 @@ export class AuctionRepository implements AuctionRepositoryPort {
     if (!auction) return undefined;
 
     const now = new Date();
-    if (auction.status === "scheduled" && now >= new Date(auction.starts_at)) {
+    if (auction.status === AuctionStatus.scheduled && now >= new Date(auction.starts_at)) {
       if (now >= new Date(auction.ends_at)) {
         return this.closeLocked(trx, toAuctionRecord(auction));
       }
       const promoted = await trx
         .updateTable("auctions")
-        .set({ status: "live", updated_at: now })
+        .set({ status: AuctionStatus.live, updated_at: now })
         .where("id", "=", id)
         .returning(AUCTION_COLUMNS)
         .executeTakeFirstOrThrow();
       return toAuctionRecord(promoted);
     }
-    if (auction.status === "live" && now >= new Date(auction.ends_at)) {
+    if (auction.status === AuctionStatus.live && now >= new Date(auction.ends_at)) {
       return this.closeLocked(trx, toAuctionRecord(auction));
     }
     return toAuctionRecord(auction);
@@ -210,7 +210,7 @@ export class AuctionRepository implements AuctionRepositoryPort {
       .execute();
     const closed = await trx
       .updateTable("auctions")
-      .set({ status: "closed", updated_at: new Date() })
+      .set({ status: AuctionStatus.closed, updated_at: new Date() })
       .where("id", "=", auction.id)
       .returning(AUCTION_COLUMNS)
       .executeTakeFirstOrThrow();
@@ -229,7 +229,7 @@ export class AuctionRepository implements AuctionRepositoryPort {
         .where("id", "=", id)
         .forUpdate()
         .executeTakeFirstOrThrow();
-      if (auction.status !== "live" && auction.status !== "scheduled") {
+      if (auction.status !== AuctionStatus.live && auction.status !== AuctionStatus.scheduled) {
         throw new ConflictError("Auction is not running");
       }
       return this.closeLocked(trx, toAuctionRecord(auction));
@@ -239,7 +239,7 @@ export class AuctionRepository implements AuctionRepositoryPort {
   async cancel(id: string) {
     const row = await this.db
       .updateTable("auctions")
-      .set({ status: "cancelled", updated_at: new Date() })
+      .set({ status: AuctionStatus.cancelled, updated_at: new Date() })
       .where("id", "=", id)
       .returning(AUCTION_COLUMNS)
       .executeTakeFirstOrThrow();
@@ -252,7 +252,7 @@ export class AuctionRepository implements AuctionRepositoryPort {
       .values({
         auction_id: auctionId,
         rental_company_organization_id: rentalCompanyOrganizationId,
-        status: "pending",
+        status: ParticipantStatus.pending,
       })
       .returning(["id", "auction_id", "rental_company_organization_id", "status", "created_at"])
       .executeTakeFirstOrThrow();
@@ -303,9 +303,9 @@ export class AuctionRepository implements AuctionRepositoryPort {
       if (!synced) {
         throw new ConflictError("Auction not found");
       }
-      if (synced.status !== "live") {
+      if (synced.status !== AuctionStatus.live) {
         throw new ConflictError(
-          synced.status === "scheduled"
+          synced.status === AuctionStatus.scheduled
             ? "Auction has not started yet"
             : `Auction is ${synced.status}`,
         );

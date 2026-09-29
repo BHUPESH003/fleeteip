@@ -4,10 +4,9 @@ import { ValidationError } from "./errors.js";
 export function parseWithSchema<T>(schema: ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data);
   if (!result.success) {
-    const message = result.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ");
-    throw new ValidationError(message);
+    const issues = result.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+    const message = issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ");
+    throw new ValidationError(message, issues);
   }
   return result.data;
 }

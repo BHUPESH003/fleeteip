@@ -1,7 +1,7 @@
-import type { WorkOrderStatus } from "@fleetip/contracts/work-order";
+import { WorkOrderStatus } from "@fleetip/contracts/work-order";
 
 const VALID_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
-  issued: ["completed", "cancelled"],
+  issued: [WorkOrderStatus.completed, WorkOrderStatus.cancelled],
   completed: [],
   cancelled: [],
 };

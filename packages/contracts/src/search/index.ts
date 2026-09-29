@@ -8,6 +8,8 @@ import { z } from "zod";
 // resource set is designed to grow later (one more branch, not a rewrite).
 export const searchResultTypeSchema = z.enum(["machine", "requirement", "quotation", "rental"]);
 export type SearchResultType = z.infer<typeof searchResultTypeSchema>;
+/** SearchResultType.x names each value once; `SearchResultType` is also the type. */
+export const SearchResultType = searchResultTypeSchema.enum;
 
 export const searchResultSchema = z.object({
   type: searchResultTypeSchema,

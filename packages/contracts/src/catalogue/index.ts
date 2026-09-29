@@ -35,6 +35,8 @@ export type ProductSubcategory = z.infer<typeof productSubcategorySchema>;
 // starter catalogue seeds generators and needs a unit that isn't Ton.
 export const capacityUnitSchema = z.enum(["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"]);
 export type CapacityUnit = z.infer<typeof capacityUnitSchema>;
+/** CapacityUnit.x names each value once; `CapacityUnit` is also the type. */
+export const CapacityUnit = capacityUnitSchema.enum;
 
 // Category-specific specs, grouped by real co-occurrence in legacy data
 // rather than as ~19 flat columns (see docs/equipment-domain-design.md §4).
@@ -94,6 +96,9 @@ export const productSchema = z.object({
   capacity: z.number().positive().nullable(),
   capacityUnit: capacityUnitSchema.nullable(),
   specifications: productSpecificationsSchema.nullable(),
+  // Soft disable: set = hidden from pickers and new machine registrations,
+  // but still resolvable by id so existing machines/rentals keep their name.
+  disabledAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });
 
@@ -107,6 +112,9 @@ export type ListProductSubcategoriesQuery = z.infer<typeof listProductSubcategor
 
 export const listProductsQuerySchema = z.object({
   subcategoryId: z.string().uuid().optional(),
+  // Disabled products are excluded by default (pickers); "true" includes
+  // them for name lookups and catalogue management.
+  includeDisabled: z.enum(["true", "false"]).optional(),
 });
 
 export type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;

@@ -102,6 +102,25 @@ export class MaintenanceService {
     return records.map(toMaintenance);
   }
 
+  async getMaintenanceRecord(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    maintenanceId: string,
+  ): Promise<MaintenanceContract> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "maintenance.manage",
+    );
+    const record = await this.maintenanceRepository.findById(maintenanceId);
+    if (!record) throw new NotFoundError("Maintenance record not found");
+    const machine = await this.machineRepository.findById(record.machine_id);
+    if (!machine || machine.organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Maintenance record not found in this organization");
+    }
+    return toMaintenance(record);
+  }
+
   async updateStatus(
     userId: string,
     rentalCompanyOrganizationId: string,

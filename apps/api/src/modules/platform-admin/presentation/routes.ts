@@ -128,4 +128,17 @@ export async function platformAdminRoutes(fastify: FastifyInstance): Promise<voi
       );
     },
   );
+
+  for (const action of ["disable", "enable"] as const) {
+    fastify.post<{ Params: { productId: string } }>(
+      `/admin/catalogue/products/:productId/${action}`,
+      async (request) => {
+        await getAuthenticatedStaffId(request);
+        return container.platformAdminService.catalogueService.setProductDisabledAsPlatformAdmin(
+          request.params.productId,
+          action === "disable",
+        );
+      },
+    );
+  }
 }

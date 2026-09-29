@@ -5,15 +5,17 @@ import type {
   OrganizationTypeCode,
   PermissionCode,
   RoleWithPermissions,
+  UpdateOrganizationRequest,
   UpdateRoleRequest,
 } from "@fleetip/contracts/organization";
-import { PERMISSION_ORGANIZATION_TYPES } from "@fleetip/contracts/organization";
+import { PERMISSION_ORGANIZATION_TYPES, MembershipStatus } from "@fleetip/contracts/organization";
 import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import type { RoleRecord, RoleRepositoryPort } from "../../permissions/domain/ports.js";
 import type {
   MembershipRepositoryPort,
   OrganizationMemberRow,
+  OrganizationProfileRepositoryPort,
   OrganizationRepositoryPort,
   OrganizationWithTypeRecord,
 } from "../domain/ports.js";
@@ -60,7 +62,8 @@ function toRoleWithPermissions(role: RoleRecord, permissions: PermissionCode[]):
  */
 export class OrganizationService {
   constructor(
-    private readonly organizationRepository: OrganizationRepositoryPort,
+    private readonly organizationRepository: OrganizationRepositoryPort &
+      OrganizationProfileRepositoryPort,
     private readonly membershipRepository: MembershipRepositoryPort,
     private readonly roleRepository: RoleRepositoryPort,
     private readonly permissionService: PermissionService,
@@ -71,6 +74,20 @@ export class OrganizationService {
     const record = await this.organizationRepository.findWithTypeById(organizationId);
     if (!record) throw new NotFoundError("Organization not found");
     return toOrganization(record);
+  }
+
+  // Only `name` — the request schema is .strict(), and the repository
+  // method can't write anything else. Type/code/status stay platform-owned.
+  async updateOrganization(
+    userId: string,
+    organizationId: string,
+    request: UpdateOrganizationRequest,
+  ): Promise<Organization> {
+    await this.permissionService.requirePermission(userId, organizationId, "organization.manage");
+    const existing = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!existing) throw new NotFoundError("Organization not found");
+    const updated = await this.organizationRepository.updateName(organizationId, request.name);
+    return toOrganization({ ...existing, name: updated.name });
   }
 
   async listMembers(userId: string, organizationId: string): Promise<OrganizationMember[]> {
@@ -102,7 +119,7 @@ export class OrganizationService {
       if (isLeavingOwner) {
         const remainingOwners = members.filter(
           (member) =>
-            member.id !== membershipId && member.role_id === ownerRole!.id && member.status === "active",
+            member.id !== membershipId && member.role_id === ownerRole!.id && member.status === MembershipStatus.active,
         );
         if (remainingOwners.length === 0) {
           throw new ConflictError("An organization must always have at least one owner");

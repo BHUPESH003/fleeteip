@@ -1,187 +1,323 @@
 "use client";
 
-import type { MaintenanceRecord, MaintenanceType } from "@fleetip/contracts/maintenance";
+import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
+import { MaintenanceStatus, MaintenanceType, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
+import type { Rental } from "@fleetip/contracts/rental";
 import {
   Button,
-  Card,
-  Dialog,
+  Checkbox,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
-  Input,
-  Select,
-  StatusBadge,
+  FormBanner,
+  Menu,
+  Panel,
+  Skeleton,
   Table,
   Tbody,
   Td,
   Th,
   Thead,
   Tr,
+  UILink,
+  cx,
+  useToast,
 } from "@fleetip/ui";
-import Link from "next/link";
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { formatDate } from "../../../lib/format";
-import { legalNextMaintenanceStatuses, MAINTENANCE_STATUS_MAP } from "./shared";
+import { useConnection } from "../../../lib/connection";
+import { describeError, OFFLINE_HINT } from "../../../lib/errors";
+import { useAction } from "../../../lib/form";
+import { formatDate, formatDateRange } from "../../../lib/format";
+import { Status } from "../../../lib/status";
+import { MaintenanceFormDialog } from "./MaintenanceFormDialog";
+import { MAINTENANCE_TYPE_LABEL, blocksAvailability } from "./shared";
+
+type Transition = { record: MaintenanceRecord; to: Exclude<MaintenanceStatus, typeof MaintenanceStatus.scheduled> };
 
 /**
- * There is no stored "blocks availability" boolean on MaintenanceRecord —
- * it's implicit service-side logic. RentalRepository.hasOverlappingMaintenance
- * (apps/api/src/modules/maintenance/infrastructure) blocks new rental
- * creation/activation for a machine whenever a 'scheduled' or 'in_progress'
- * maintenance record's date range overlaps the requested rental period.
- * This mirrors exactly that WHERE clause — a correct derivation of a real
- * rule, not a fabricated flag.
+ * One machine's workshop jobs with their status transitions (Scheduled →
+ * In progress → Completed, or Cancelled). Starting or completing a job can
+ * also move the machine's own status, since the two are stored separately —
+ * the confirmation offers it and says which writes happen.
  */
-export function blocksAvailability(status: MaintenanceRecord["status"]): boolean {
-  return status === "scheduled" || status === "in_progress";
-}
-
-const MAINTENANCE_TYPE_OPTIONS = [
-  { value: "scheduled", label: "Scheduled" },
-  { value: "breakdown", label: "Breakdown" },
-  { value: "inspection", label: "Inspection" },
-  { value: "other", label: "Other" },
-];
-
-/**
- * Shared by Machine detail's Maintenance tab and the standalone Maintenance
- * workspace's per-machine drill-down (apps/web/app/(app)/maintenance) — the
- * only real source is listMaintenanceForMachine (per-machine), there is no
- * org-wide maintenance list endpoint in this branch.
- */
-export function MaintenancePanel({ organizationId, machineId }: { organizationId: string; machineId: string }) {
-  const [records, setRecords] = useState<MaintenanceRecord[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
+export function MaintenancePanel({
+  organizationId,
+  machine,
+  rentals = [],
+  onMachineChanged,
+  title = "Workshop jobs",
+}: {
+  organizationId: string;
+  machine: Machine;
+  /** The machine's rentals, used to stop a new job overlapping a booking. */
+  rentals?: Rental[];
+  onMachineChanged?: () => void;
+  title?: string;
+}) {
+  const toast = useToast();
+  const { online } = useConnection();
+  const [records, setRecords] = useState<MaintenanceRecord[] | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [transition, setTransition] = useState<Transition | null>(null);
+  const [alsoMachine, setAlsoMachine] = useState(true);
+  const action = useAction();
 
   async function refresh() {
     try {
-      setRecords((await apiClient.listMaintenanceForMachine(organizationId, machineId)) as MaintenanceRecord[]);
+      const list = (await apiClient.listMaintenanceForMachine(organizationId, machine.id)) as MaintenanceRecord[];
+      setRecords([...list].sort((a, b) => b.startDate.localeCompare(a.startDate)));
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load maintenance records");
+      setError(err);
     }
   }
 
   useEffect(() => {
+    setRecords(null);
     void refresh();
-  }, [organizationId, machineId]);
+  }, [organizationId, machine.id]);
 
-  async function handleSchedule(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const endDate = form.get("endDate");
-    const startDate = String(form.get("startDate"));
-    if (endDate && String(endDate) < startDate) {
-      setError("End date cannot be before the start date");
-      return;
-    }
-    try {
-      await apiClient.createMaintenance(organizationId, {
-        machineId,
-        maintenanceType: String(form.get("maintenanceType")) as MaintenanceType,
-        startDate,
-        endDate: endDate ? String(endDate) : undefined,
-        notes: form.get("notes") ? String(form.get("notes")) : undefined,
-      });
-      formElement.reset();
-      setScheduleOpen(false);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to schedule maintenance");
-    }
+  useEffect(() => {
+    if (!transition) return;
+    action.clear();
+    setAlsoMachine(
+      transition.to === MaintenanceStatus.in_progress
+        ? machine.status === MachineStatus.active
+        : transition.to !== MaintenanceStatus.cancelled || machine.status === MachineStatus.under_maintenance,
+    );
+    // action.clear is a new function each render; listing it would re-run this on every render.
+  }, [transition, machine.status]);
+
+  // Which machine-status write, if any, goes with this job transition.
+  const machineWrite =
+    !transition || machine.status === MachineStatus.retired
+      ? null
+      : transition.to === MaintenanceStatus.in_progress && machine.status === MachineStatus.active
+        ? MachineStatus.under_maintenance
+        : (transition.to === MaintenanceStatus.completed || transition.to === MaintenanceStatus.cancelled) && machine.status === MachineStatus.under_maintenance
+          ? MachineStatus.active
+          : null;
+  const otherInProgress = (records ?? []).some((r) => r.status === MaintenanceStatus.in_progress && r.id !== transition?.record.id);
+
+  function confirmTransition() {
+    if (!transition) return;
+    const { record, to } = transition;
+    const writeMachine = machineWrite && alsoMachine ? machineWrite : null;
+    void action.run(
+      async () => {
+        await apiClient.updateMaintenanceStatus(organizationId, record.id, to);
+        if (!writeMachine) return false;
+        // Partial success: the job is already updated, so a failed machine write is a toast, not "Nothing was changed".
+        try {
+          await apiClient.updateMachineStatus(organizationId, machine.id, writeMachine);
+          return true;
+        } catch (err) {
+          toast.error({ title: `The job was updated, but ${machine.assetCode}'s status didn't change`, body: describeError(err).body });
+          return false;
+        }
+      },
+      {
+        failTitle: "Nothing was changed",
+        success: (machineMoved) => ({
+          title: `${MAINTENANCE_TYPE_LABEL[record.maintenanceType]} job ${to === MaintenanceStatus.in_progress ? "started" : to === MaintenanceStatus.completed ? "completed" : "cancelled"}`,
+          body: machineMoved
+            ? `${machine.assetCode} is now ${writeMachine === MachineStatus.active ? "Active" : "Under maintenance"}.`
+            : `${machine.assetCode}'s status wasn't changed.`,
+        }),
+        onDone: (machineMoved) => {
+          setTransition(null);
+          void refresh().then(() => {
+            if (machineMoved) onMachineChanged?.();
+          });
+        },
+      },
+    );
   }
 
-  async function handleStatus(maintenanceId: string, status: MaintenanceRecord["status"]) {
-    try {
-      await apiClient.updateMaintenanceStatus(organizationId, maintenanceId, status);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update maintenance record");
-    }
+  if (error && !records) {
+    return (
+      <ErrorState
+        title="Workshop jobs didn't load"
+        message={describeError(error).body}
+        action={
+          <Button variant="secondary" size="sm" onClick={() => void refresh()}>
+            Try again
+          </Button>
+        }
+      />
+    );
   }
+
+  const canWrite = online && machine.status !== MachineStatus.retired;
 
   return (
-    <div className="flex flex-col gap-3">
-      {error && <ErrorState message={error} />}
-      <div>
-        <Button onClick={() => setScheduleOpen(true)}>Schedule maintenance</Button>
-      </div>
-      <Card padding={records.length === 0 ? "md" : "none"}>
-        {records.length === 0 ? (
-          <EmptyState title="No maintenance records" description="Schedule one above." />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Type</Th>
-                <Th>Period</Th>
-                <Th>Status</Th>
-                <Th>Availability impact</Th>
-                <Th>Notes</Th>
-                <Th />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {records.map((record) => (
+    <Panel
+      title={title}
+      count={records?.length}
+      subtitle={machine.assetCode}
+      padding="none"
+      actions={
+        <Button
+          size="sm"
+          variant="secondary"
+          icon="plus"
+          onClick={() => setFormOpen(true)}
+          disabled={!canWrite}
+          title={
+            machine.status === MachineStatus.retired
+              ? "Retired machines can't get new workshop jobs."
+              : !online
+                ? OFFLINE_HINT
+                : undefined
+          }
+        >
+          Log maintenance
+        </Button>
+      }
+    >
+      {records === null ? (
+        <div className="flex flex-col gap-2 px-4 py-4">
+          <Skeleton className="h-3 w-2/3" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      ) : records.length === 0 ? (
+        <EmptyState
+          title="No workshop jobs recorded"
+          description="Plan a service, or log a breakdown or inspection that already happened."
+        />
+      ) : (
+        <Table bare minWidth={680} caption={`Workshop jobs on ${machine.assetCode}`}>
+          <Thead>
+            <Tr>
+              <Th className="w-[150px]">Reason</Th>
+              <Th className="w-[170px]">Dates</Th>
+              <Th>Notes</Th>
+              <Th className="w-[118px]">Status</Th>
+              <Th className="w-[150px]">
+                <span className="sr-only">Actions</span>
+              </Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {records.map((record) => {
+              const next = record.status === MaintenanceStatus.scheduled ? MaintenanceStatus.in_progress : record.status === MaintenanceStatus.in_progress ? MaintenanceStatus.completed : null;
+              return (
                 <Tr key={record.id}>
-                  <Td className="capitalize">{record.maintenanceType}</Td>
-                  <Td className="font-mono">
-                    {formatDate(record.startDate)} → {record.endDate ? formatDate(record.endDate) : "ongoing"}
-                  </Td>
                   <Td>
-                    <StatusBadge status={record.status} map={MAINTENANCE_STATUS_MAP} />
-                  </Td>
-                  <Td>
-                    {blocksAvailability(record.status) ? (
-                      <span className="text-xs font-medium text-warning" title="New rentals can't be created or activated for this machine during this window">
-                        Blocks new rentals
-                      </span>
-                    ) : (
-                      <span className="text-xs text-meta-light">—</span>
+                    <UILink
+                      href={`/maintenance/${record.id}?machineId=${machine.id}`}
+                      className={cx("text-sm font-medium no-underline hover:underline", record.maintenanceType === MaintenanceType.breakdown ? "text-destructive" : "text-ink-strong")}
+                    >
+                      {MAINTENANCE_TYPE_LABEL[record.maintenanceType]}
+                    </UILink>
+                    {blocksAvailability(record.status) && (
+                      <span className="mt-0.5 block text-[11px] text-attention">Blocks new rentals</span>
                     )}
                   </Td>
-                  <Td className="text-meta">{record.notes ?? "—"}</Td>
+                  <Td className={cx("font-mono text-xs", !record.endDate && record.status !== MaintenanceStatus.completed && "text-destructive")}>
+                    {formatDateRange(record.startDate, record.endDate, "no end date")}
+                  </Td>
+                  <Td className="text-ink-muted">
+                    <span className="clamp-2" title={record.notes ?? undefined}>
+                      {record.notes ?? <span className="italic text-disabled-text">No notes</span>}
+                    </span>
+                  </Td>
                   <Td>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {legalNextMaintenanceStatuses(record.status).map((next) => (
-                        <button
-                          key={next}
-                          onClick={() => void handleStatus(record.id, next)}
-                          className="text-xs font-medium text-accent-text"
-                        >
-                          Mark {next.replace("_", " ")}
-                        </button>
-                      ))}
-                      <Link
-                        href={`/maintenance/${record.id}?machineId=${machineId}`}
-                        className="text-xs font-medium text-accent-text"
-                      >
-                        Detail →
-                      </Link>
-                    </div>
+                    <Status domain="maintenance" value={record.status} size="sm" />
+                  </Td>
+                  <Td>
+                    {canWrite && next && (
+                      <span className="flex items-center justify-end gap-1.5">
+                        <Button size="sm" variant="secondary" onClick={() => setTransition({ record, to: next })}>
+                          {next === MaintenanceStatus.in_progress ? "Start job" : "Complete"}
+                        </Button>
+                        <Menu
+                          label={`More actions for the ${MAINTENANCE_TYPE_LABEL[record.maintenanceType].toLowerCase()} job`}
+                          triggerSize="sm"
+                          items={[
+                            {
+                              key: "cancel",
+                              label: "Cancel job",
+                              icon: "close",
+                              danger: true,
+                              hint: "Kept on record as Cancelled. It stops blocking new rentals.",
+                              onSelect: () => setTransition({ record, to: MaintenanceStatus.cancelled }),
+                            },
+                          ]}
+                        />
+                      </span>
+                    )}
                   </Td>
                 </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        )}
-      </Card>
+              );
+            })}
+          </Tbody>
+        </Table>
+      )}
 
-      <Dialog open={scheduleOpen} onClose={() => setScheduleOpen(false)} title="Schedule maintenance">
-        <form onSubmit={handleSchedule} className="flex flex-col gap-4 text-left">
-          <Select label="Type" name="maintenanceType" required options={MAINTENANCE_TYPE_OPTIONS} />
-          <Input label="Start date" name="startDate" type="date" required />
-          <Input label="End date (leave blank if ongoing)" name="endDate" type="date" />
-          <Input label="Notes" name="notes" />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setScheduleOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Schedule</Button>
-          </div>
-        </form>
-      </Dialog>
-    </div>
+      <MaintenanceFormDialog
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        organizationId={organizationId}
+        machine={machine}
+        rentals={rentals}
+        onSaved={() => void refresh()}
+      />
+
+      <ConfirmDialog
+        open={transition !== null}
+        onClose={() => setTransition(null)}
+        onConfirm={confirmTransition}
+        busy={action.busy}
+        busyLabel="Saving…"
+        icon={transition?.to === MaintenanceStatus.cancelled ? "close" : transition?.to === MaintenanceStatus.completed ? "check" : "maintenance"}
+        tone={transition?.to === MaintenanceStatus.cancelled ? "danger" : transition?.to === MaintenanceStatus.completed ? "success" : "warning"}
+        confirmVariant={transition?.to === MaintenanceStatus.cancelled ? "danger" : "primary"}
+        title={
+          transition
+            ? `${transition.to === MaintenanceStatus.in_progress ? "Start" : transition.to === MaintenanceStatus.completed ? "Complete" : "Cancel"} the ${MAINTENANCE_TYPE_LABEL[transition.record.maintenanceType].toLowerCase()} job?`
+            : ""
+        }
+        description={transition ? `${machine.assetCode} · ${formatDate(transition.record.startDate)}` : undefined}
+        consequences={
+          transition
+            ? [
+                transition.to === MaintenanceStatus.in_progress
+                  ? "Marks the job In progress."
+                  : transition.to === MaintenanceStatus.completed
+                    ? "Marks the job Completed. Its dates aren't changed — they can't be edited after creation."
+                    : "Marks the job Cancelled. It stays on record and stops blocking new rentals.",
+                ...(machineWrite
+                  ? [
+                      alsoMachine
+                        ? `Also sets ${machine.assetCode} to ${machineWrite === MachineStatus.active ? "Active" : "Under maintenance"} — a second write.`
+                        : `${machine.assetCode} stays ${machine.status === MachineStatus.active ? "Active" : "Under maintenance"}.`,
+                    ]
+                  : []),
+              ]
+            : []
+        }
+        cancelLabel={transition?.to === MaintenanceStatus.cancelled ? "Keep job" : "Not yet"}
+        confirmLabel={transition?.to === MaintenanceStatus.in_progress ? "Start job" : transition?.to === MaintenanceStatus.completed ? "Complete job" : "Cancel job"}
+      >
+        {action.banner && <FormBanner title={action.banner.title}>{action.banner.body}</FormBanner>}
+        {machineWrite && (
+          <Checkbox
+            label={machineWrite === MachineStatus.active ? `Set ${machine.assetCode} back to Active` : `Set ${machine.assetCode} to Under maintenance`}
+            description={
+              machineWrite === MachineStatus.active
+                ? otherInProgress
+                  ? "Another job on this machine is still in progress — leave this unticked if the machine is still in the workshop."
+                  : "The machine can be quoted and rented again."
+                : "It won't show as available for new quotations or rentals while the job runs."
+            }
+            checked={alsoMachine}
+            onChange={(e) => setAlsoMachine(e.target.checked)}
+          />
+        )}
+      </ConfirmDialog>
+    </Panel>
   );
 }

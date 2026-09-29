@@ -3,6 +3,7 @@ import type {
   InviteRepositoryPort,
   MembershipRecord,
   MembershipRepositoryPort,
+  OrganizationInviteListRow,
   OrganizationInviteRecord,
   OrganizationRepositoryPort,
 } from "../src/modules/organizations/domain/ports.js";
@@ -22,6 +23,17 @@ const OWNER_USER_ID = "user-owner";
 const OWNER_ROLE_ID = "role-owner";
 const MEMBER_ROLE_ID = "role-member";
 const WEB_ORIGIN = "https://app.fleetip.example";
+
+function toListRow(invite: OrganizationInviteRecord): OrganizationInviteListRow {
+  return {
+    id: invite.id,
+    organization_id: invite.organization_id,
+    role_name: invite.role_id === OWNER_ROLE_ID ? "owner" : "member",
+    status: invite.status,
+    expires_at: invite.expires_at,
+    created_at: invite.created_at,
+  };
+}
 
 function fakeInviteRepository(invites: OrganizationInviteRecord[]): InviteRepositoryPort {
   return {
@@ -54,6 +66,22 @@ function fakeInviteRepository(invites: OrganizationInviteRecord[]): InviteReposi
         status: invite.status,
         expires_at: invite.expires_at,
       };
+    },
+    listByOrganization: async (organizationId, limit) =>
+      invites
+        .filter((i) => i.organization_id === organizationId)
+        .map(toListRow)
+        .reverse()
+        .slice(0, limit),
+    findByIdInOrganization: async (id, organizationId) => {
+      const invite = invites.find((i) => i.id === id && i.organization_id === organizationId);
+      return invite ? toListRow(invite) : undefined;
+    },
+    markRevoked: async (id) => {
+      const invite = invites.find((i) => i.id === id && i.status === "pending");
+      if (!invite) return undefined;
+      invite.status = "revoked";
+      return invite;
     },
     markAccepted: async (id, acceptedByUserId) => {
       const invite = invites.find((i) => i.id === id);
@@ -187,6 +215,9 @@ function fakeSessionRepository(): SessionRepositoryPort {
       throw new Error("not used in this test");
     },
     deleteByTokenHash: async () => {
+      throw new Error("not used in this test");
+    },
+    deleteByUserId: async () => {
       throw new Error("not used in this test");
     },
   };
@@ -357,5 +388,83 @@ describe("InviteService.accept", () => {
     await expect(
       inviteService.accept(token, { existingUserId: OWNER_USER_ID }),
     ).rejects.toThrow(ConflictError);
+  });
+});
+
+function otherOrgInvite(): OrganizationInviteRecord {
+  return {
+    id: "invite-other-org",
+    organization_id: "org-someone-else",
+    role_id: "role-other-org",
+    token_hash: "hash-other-org",
+    invited_by_user_id: "user-someone-else",
+    status: "pending",
+    expires_at: new Date(Date.now() + 60_000),
+    accepted_by_user_id: null,
+    created_at: new Date(),
+  };
+}
+
+describe("InviteService.listInvites", () => {
+  it("lists only this organization's invites, newest first, without the token", async () => {
+    const { inviteService, invites } = buildService({ invites: [otherOrgInvite()] });
+    await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
+    await inviteService.createInvite(OWNER_USER_ID, ORG_ID, OWNER_ROLE_ID);
+    invites[1]!.expires_at = new Date(Date.now() - 1000);
+
+    const list = await inviteService.listInvites(OWNER_USER_ID, ORG_ID);
+
+    expect(list.map((i) => i.roleName)).toEqual(["owner", "member"]);
+    expect(list.every((i) => i.organizationId === ORG_ID)).toBe(true);
+    expect(list[1]!.expired).toBe(true);
+    expect(list[0]!.expired).toBe(false);
+    expect(JSON.stringify(list)).not.toMatch(/token/i);
+  });
+
+  it("rejects a caller without membership.manage", async () => {
+    const { inviteService } = buildService({ activeMembers: new Set() });
+    await expect(inviteService.listInvites(OWNER_USER_ID, ORG_ID)).rejects.toThrow(ForbiddenError);
+  });
+});
+
+describe("InviteService.revokeInvite", () => {
+  it("revokes a pending invite, after which its link can't be accepted", async () => {
+    const { inviteService } = buildService();
+    const { invite, token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
+
+    const revoked = await inviteService.revokeInvite(OWNER_USER_ID, ORG_ID, invite.id);
+
+    expect(revoked.status).toBe("revoked");
+    await expect(
+      inviteService.accept(token, { existingUserId: "user-existing" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("rejects revoking an invite that isn't pending", async () => {
+    const { inviteService } = buildService();
+    const { invite, token } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
+    await inviteService.accept(token, { existingUserId: "user-existing" });
+
+    await expect(inviteService.revokeInvite(OWNER_USER_ID, ORG_ID, invite.id)).rejects.toThrow(
+      ConflictError,
+    );
+  });
+
+  it("treats another organization's invite as not found, leaving it untouched", async () => {
+    const foreign = otherOrgInvite();
+    const { inviteService } = buildService({ invites: [foreign] });
+    await expect(inviteService.revokeInvite(OWNER_USER_ID, ORG_ID, foreign.id)).rejects.toThrow(
+      NotFoundError,
+    );
+    expect(foreign.status).toBe("pending");
+  });
+
+  it("rejects a caller without membership.manage", async () => {
+    const { inviteService, invites } = buildService();
+    const { invite } = await inviteService.createInvite(OWNER_USER_ID, ORG_ID, MEMBER_ROLE_ID);
+    const { inviteService: outsider } = buildService({ invites, activeMembers: new Set() });
+    await expect(outsider.revokeInvite(OWNER_USER_ID, ORG_ID, invite.id)).rejects.toThrow(
+      ForbiddenError,
+    );
   });
 });

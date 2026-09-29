@@ -1,12 +1,12 @@
-import type { CommercialQuotationStatus } from "@fleetip/contracts/quotation";
+import { CommercialQuotationStatus } from "@fleetip/contracts/quotation";
 
 const VALID_TRANSITIONS: Record<CommercialQuotationStatus, CommercialQuotationStatus[]> = {
-  draft: ["sent", "withdrawn"],
+  draft: [CommercialQuotationStatus.sent, CommercialQuotationStatus.withdrawn],
   // A straight accept-as-sent -> awarded is legal — negotiation (via
   // QuotationOffer) is optional, not mandatory. See
   // docs/marketplace-core-loop-design.md §6.
-  sent: ["negotiating", "awarded", "rejected", "expired", "withdrawn"],
-  negotiating: ["awarded", "rejected", "expired"],
+  sent: [CommercialQuotationStatus.negotiating, CommercialQuotationStatus.awarded, CommercialQuotationStatus.rejected, CommercialQuotationStatus.expired, CommercialQuotationStatus.withdrawn],
+  negotiating: [CommercialQuotationStatus.awarded, CommercialQuotationStatus.rejected, CommercialQuotationStatus.expired],
   awarded: [],
   rejected: [],
   expired: [],

@@ -1,4 +1,5 @@
 import type { MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import { NotFoundError } from "../../../shared/errors.js";
 import type { MachineRepositoryPort } from "../../equipment/domain/ports.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
@@ -37,7 +38,7 @@ export class UtilizationService {
     rentalId: string,
   ): Promise<RentalUtilization> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    const isRenter = organization?.organization_type_code === "renter";
+    const isRenter = organization?.organization_type_code === OrganizationTypeCode.renter;
     await this.permissionService.requirePermission(
       userId,
       organizationId,

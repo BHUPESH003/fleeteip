@@ -16,9 +16,10 @@ import type {
   MachineRepositoryPort,
 } from "../src/modules/equipment/domain/ports.js";
 import { EquipmentService } from "../src/modules/equipment/application/equipment-service.js";
-import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/errors.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../src/shared/errors.js";
 
 const OWNER_ROLE_ID = "role-owner";
+const DISABLED_PRODUCT_ID = "product-disabled";
 const PRODUCT_ID = "product-1";
 
 // Every test grants the role/permission unconditionally — PermissionService's
@@ -88,7 +89,12 @@ function fakeProductRepository(): ProductRepositoryPort {
   };
   return {
     listAll: async () => [product],
-    findById: async (id) => (id === PRODUCT_ID ? product : undefined),
+    findById: async (id) =>
+      id === PRODUCT_ID
+        ? product
+        : id === DISABLED_PRODUCT_ID
+          ? { ...product, id, disabled_at: new Date() }
+          : undefined,
     create: async () => {
       throw new Error("not used in this test");
     },
@@ -215,6 +221,13 @@ describe("EquipmentService", () => {
     await expect(
       service.createMachine("user-1", "org-1", { ...baseInput, productId: "unknown-product" }),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  it("rejects creating a machine against a disabled product", async () => {
+    const service = buildService();
+    await expect(
+      service.createMachine("user-1", "org-1", { ...baseInput, productId: DISABLED_PRODUCT_ID }),
+    ).rejects.toThrow(ValidationError);
   });
 
   it("rejects a duplicate asset code within the same organization", async () => {

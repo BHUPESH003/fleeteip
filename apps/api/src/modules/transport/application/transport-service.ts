@@ -1,9 +1,10 @@
 import type {
   CreateTransportRequest,
-  TransportLeg,
   TransportRecord as TransportContract,
   UpdateTransportRequest,
 } from "@fleetip/contracts/transport";
+import { TransportLeg, TransportStatus } from "@fleetip/contracts/transport";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import { ConflictError, NotFoundError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
@@ -93,7 +94,7 @@ export class TransportService {
     rentalId: string,
   ): Promise<TransportContract[]> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "renter") {
+    if (organization?.organization_type_code === OrganizationTypeCode.renter) {
       await this.permissionService.requirePermission(userId, organizationId, "transport.respond");
       const rental = await this.rentalRepository.findById(rentalId);
       if (!rental || rental.renter_organization_id !== organizationId) {
@@ -139,7 +140,7 @@ export class TransportService {
       throw new NotFoundError("Transport record not found");
     }
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "renter") {
+    if (organization?.organization_type_code === OrganizationTypeCode.renter) {
       await this.permissionService.requirePermission(userId, organizationId, "transport.respond");
       const rental = await this.rentalRepository.findById(record.rental_id);
       if (!rental || rental.renter_organization_id !== organizationId) {
@@ -180,16 +181,16 @@ export class TransportService {
     const record = await this.transportRepository.update(existing.id, updates);
     if (
       rental.renter_organization_id &&
-      (updates.status === "dispatched" || updates.status === "delivered")
+      (updates.status === TransportStatus.dispatched || updates.status === TransportStatus.delivered)
     ) {
       const rentalCompany = await this.organizationRepository.findById(
         rentalCompanyOrganizationId,
       );
       await this.notify({
         recipientOrganizationId: rental.renter_organization_id,
-        type: updates.status === "dispatched" ? "transport.dispatched" : "transport.delivered",
-        title: updates.status === "dispatched" ? "Transport dispatched" : "Transport delivered",
-        message: `${rentalCompany?.name ?? "The Rental Company"} marked ${leg === "mobilization" ? "mobilization" : "demobilization"} for your rental as ${updates.status}.`,
+        type: updates.status === TransportStatus.dispatched ? "transport.dispatched" : "transport.delivered",
+        title: updates.status === TransportStatus.dispatched ? "Transport dispatched" : "Transport delivered",
+        message: `${rentalCompany?.name ?? "The Rental Company"} marked ${leg === TransportLeg.mobilization ? "mobilization" : "demobilization"} for your rental as ${updates.status}.`,
         relatedResourceType: "transport",
         relatedResourceId: record.id,
       });

@@ -1,8 +1,8 @@
-import type { MaintenanceStatus } from "@fleetip/contracts/maintenance";
+import { MaintenanceStatus } from "@fleetip/contracts/maintenance";
 
 const VALID_TRANSITIONS: Record<MaintenanceStatus, MaintenanceStatus[]> = {
-  scheduled: ["in_progress", "cancelled"],
-  in_progress: ["completed", "cancelled"],
+  scheduled: [MaintenanceStatus.in_progress, MaintenanceStatus.cancelled],
+  in_progress: [MaintenanceStatus.completed, MaintenanceStatus.cancelled],
   completed: [],
   cancelled: [],
 };

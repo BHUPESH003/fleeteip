@@ -1,3 +1,4 @@
+import { TransportStatus } from "@fleetip/contracts/transport";
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import { ConflictError } from "../../../shared/errors.js";
@@ -52,7 +53,7 @@ export class TransportRepository implements TransportRepositoryPort {
           pickup_location: input.pickupLocation ?? null,
           destination: input.destination ?? null,
           planned_date: input.plannedDate ?? null,
-          status: "planned",
+          status: TransportStatus.planned,
           transport_details: input.transportDetails ?? null,
           charges: input.charges ?? null,
           notes: input.notes ?? null,

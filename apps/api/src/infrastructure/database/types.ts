@@ -104,6 +104,15 @@ export interface SessionsTable {
   created_at: CreatedAt;
 }
 
+export interface PasswordResetTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  created_at: CreatedAt;
+}
+
 export interface Database {
   organization_types: OrganizationTypesTable;
   organizations: OrganizationsTable;
@@ -113,6 +122,7 @@ export interface Database {
   role_permissions: RolePermissionsTable;
   memberships: MembershipsTable;
   sessions: SessionsTable;
+  password_reset_tokens: PasswordResetTokensTable;
   product_categories: ProductCategoriesTable;
   product_subcategories: ProductSubcategoriesTable;
   products: ProductsTable;
@@ -170,6 +180,8 @@ export interface ProductsTable {
   capacity: number | null;
   capacity_unit: string | null;
   specifications: unknown | null;
+  // 0030: soft disable — hidden from pickers, never deleted.
+  disabled_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: CreatedAt;
 }
 

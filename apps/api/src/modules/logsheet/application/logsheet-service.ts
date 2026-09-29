@@ -1,5 +1,7 @@
 import type { Logsheet, SubmitLogsheetRequest } from "@fleetip/contracts/logsheet";
 import { isFutureIsoDate } from "@fleetip/contracts/shared";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
+import { RentalStatus } from "@fleetip/contracts/rental";
 import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
 import type { OrganizationRepositoryPort } from "../../organizations/domain/ports.js";
@@ -54,7 +56,7 @@ export class LogsheetService {
     // then mark Active once the machine is on site") — before that there's
     // nothing to log yet, and once off_rent/completed the engagement is
     // closed.
-    if (rental.status !== "active") {
+    if (rental.status !== RentalStatus.active) {
       throw new ConflictError(
         "Logsheets can only be submitted while the rental is active (the machine is on site)",
       );
@@ -95,7 +97,7 @@ export class LogsheetService {
     rentalId: string,
   ): Promise<Logsheet[]> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "renter") {
+    if (organization?.organization_type_code === OrganizationTypeCode.renter) {
       await this.permissionService.requirePermission(userId, organizationId, "logsheet.respond");
       const rental = await this.rentalRepository.findById(rentalId);
       if (!rental || rental.renter_organization_id !== organizationId) {
@@ -123,7 +125,7 @@ export class LogsheetService {
       throw new NotFoundError("Logsheet not found");
     }
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "renter") {
+    if (organization?.organization_type_code === OrganizationTypeCode.renter) {
       await this.permissionService.requirePermission(userId, organizationId, "logsheet.respond");
       const rental = await this.rentalRepository.findById(record.rental_id);
       if (!rental || rental.renter_organization_id !== organizationId) {

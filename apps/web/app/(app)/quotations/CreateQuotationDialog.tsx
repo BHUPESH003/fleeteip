@@ -1,566 +1,1016 @@
 "use client";
 
 import type { AuctionDetail } from "@fleetip/contracts/auction";
-import type { ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
-import type { Machine } from "@fleetip/contracts/equipment";
+import type { Product } from "@fleetip/contracts/catalogue";
+import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
-import type { ResponsibleParty } from "@fleetip/contracts/quotation";
+import type {
+  CommercialQuotation,
+  CreateCommercialQuotationRequest,
+  QuotationResponse,
+  ResponsibleParty,
+} from "@fleetip/contracts/quotation";
 import type { OperatorScope, RateUnit } from "@fleetip/contracts/rental";
 import type { Requirement } from "@fleetip/contracts/rfq";
-import { Button, Dialog, EmptyState, Input, LoadingState, Select } from "@fleetip/ui";
-import { type FormEvent, useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  DescriptionList,
+  Dialog,
+  FormBanner,
+  FormSection,
+  Icon,
+  Input,
+  LoadingState,
+  RadioGroup,
+  SearchSelect,
+  Select,
+  Textarea,
+  UILink,
+  cx,
+  useToast,
+} from "@fleetip/ui";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../../../lib/api-client";
-import { addDuration, todayIsoDate } from "../../../lib/format";
-
-const RATE_UNIT_OPTIONS = [
-  { value: "shift", label: "Per shift" },
-  { value: "day", label: "Per day" },
-  { value: "week", label: "Per week" },
-  { value: "month", label: "Per month" },
-];
-
-const RESPONSIBLE_PARTY_OPTIONS = [
-  { value: "", label: "Not specified" },
-  { value: "client", label: "Client scope" },
-  { value: "company", label: "Company scope" },
-];
-
-const OPERATOR_SCOPE_OPTIONS = [
-  { value: "", label: "Not specified" },
-  { value: "with_operator", label: "With operator" },
-  { value: "without_operator", label: "Without operator" },
-];
+import { useConnection } from "../../../lib/connection";
+import { describeError, OFFLINE_HINT, parseValidationIssues } from "../../../lib/errors";
+import { addDuration, formatDate, formatRateUnit, plural, todayIsoDate } from "../../../lib/format";
+import { useSession } from "../../../lib/session-context";
+import { statusLabel } from "../../../lib/status";
+import { optional } from "../../../lib/use-load";
+import { productName } from "../machines/shared";
+import { auctionRef } from "../auctions/shared";
+import {
+  CREW_LABEL,
+  DURATION_UNIT_OPTIONS,
+  RATE_UNIT_OPTIONS,
+  SHIFT_PATTERN_LABEL,
+  durationLabel,
+  equipmentLine,
+  loadSubcategoryIndex,
+  requirementRef,
+} from "../requirements/shared";
+import { OPERATOR_OPTIONS, RESPONSIBLE_PARTY_OPTIONS } from "./shared";
 
 export interface CreateQuotationDialogProps {
   open: boolean;
   onClose: () => void;
   organizationId: string;
-  requirementIdParam: string | null;
-  sourceAuctionIdParam: string | null;
+  /** Quote against this requirement (?requirementId=, or a Requested row): customer, dates and rate unit come from it. */
+  requirementId: string | null;
+  /** Formalize an auction win (?sourceAuctionId=): the rate starts at your last bid. */
+  sourceAuctionId: string | null;
+  /** Machines preselected (?machineId= / ?machineIds=, from Machine detail or the machines list). */
+  initialMachineIds: string[];
   onCreated: () => void;
 }
 
-function RequirementContext({
-  requirement,
-  subcategoryName,
-  renterName,
-}: {
-  requirement: Requirement;
-  subcategoryName: string | null;
-  renterName: string;
-}) {
-  const reference = `RFQ-${requirement.id.slice(0, 8).toUpperCase()}`;
-  const duration =
-    requirement.expectedDurationValue && requirement.expectedDurationUnit
-      ? `${requirement.expectedDurationValue} ${requirement.expectedDurationUnit}(s)`
-      : "—";
+type TextKey =
+  | "clientName"
+  | "clientContactPerson"
+  | "clientPhone"
+  | "clientEmail"
+  | "paymentTerms"
+  | "shiftStructure"
+  | "sundayCondition"
+  | "fuelNorms"
+  | "dehireTerms"
+  | "gstTerms"
+  | "commercialNotes"
+  | "companyTerms";
+type NumberKey =
+  | "rate"
+  | "mobilizationCharge"
+  | "demobilizationCharge"
+  | "overtimeRate"
+  | "workingHours"
+  | "workingDaysPerWeek"
+  | "minimumRentalPeriodValue"
+  | "noticePeriodDays";
+type ChoiceKey = "renterOrganizationId" | "rateUnit" | "minimumRentalPeriodUnit" | "operatorScope" | "fuelScope" | "accommodationScope";
+type DateKey = "startDate" | "endDate" | "validityDate";
+type Key = TextKey | NumberKey | ChoiceKey | DateKey | "machines";
 
-  return (
-    <div className="rounded-panel border border-info/25 bg-info-bg p-4">
-      <p className="mb-3 text-sm font-medium text-info">
-        Quoting against requirement {reference} — this quotation stays tied to it.
-      </p>
-      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-        {[
-          ["Renter", renterName],
-          ["Equipment", subcategoryName ?? "—"],
-          ["Quantity", String(requirement.quantity)],
-          [
-            "Capacity",
-            requirement.capacity
-              ? `${requirement.capacity} ${requirement.capacityUnit ?? ""}`
-              : "—",
-          ],
-          ["Project", requirement.projectName ?? "—"],
-          ["Location", requirement.projectLocation ?? "—"],
-          ["Requested start", requirement.requestedStartDate],
-          ["Duration needed", duration],
-          ["Requirement valid until", requirement.validityDate],
-        ].map(([label, value]) => (
-          <div key={label}>
-            <dt className="text-xs text-info/80">{label}</dt>
-            <dd className="text-info">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {requirement.notes && <p className="mt-3 text-sm text-info">Notes: {requirement.notes}</p>}
-    </div>
-  );
+const FIELD_ORDER: Key[] = [
+  "machines",
+  "renterOrganizationId",
+  "clientName",
+  "clientContactPerson",
+  "clientPhone",
+  "clientEmail",
+  "startDate",
+  "endDate",
+  "rate",
+  "rateUnit",
+  "validityDate",
+  "mobilizationCharge",
+  "demobilizationCharge",
+  "overtimeRate",
+  "gstTerms",
+  "paymentTerms",
+  "minimumRentalPeriodValue",
+  "minimumRentalPeriodUnit",
+  "noticePeriodDays",
+  "operatorScope",
+  "workingHours",
+  "workingDaysPerWeek",
+  "shiftStructure",
+  "sundayCondition",
+  "fuelScope",
+  "fuelNorms",
+  "accommodationScope",
+  "dehireTerms",
+  "commercialNotes",
+  "companyTerms",
+];
+
+const MAX_LENGTH: Partial<Record<TextKey, number>> = {
+  clientName: 200,
+  clientContactPerson: 200,
+  clientPhone: 50,
+  paymentTerms: 1000,
+  shiftStructure: 500,
+  sundayCondition: 500,
+  fuelNorms: 500,
+  dehireTerms: 1000,
+  gstTerms: 500,
+  commercialNotes: 2000,
+  companyTerms: 2000,
+};
+
+/** API field path → form field. */
+const PATH_TO_FIELD: Record<string, Key> = {
+  renterOrganizationId: "renterOrganizationId",
+  "clientSnapshot.name": "clientName",
+  "clientSnapshot.contactPerson": "clientContactPerson",
+  "clientSnapshot.phone": "clientPhone",
+  "clientSnapshot.email": "clientEmail",
+  ...Object.fromEntries(FIELD_ORDER.filter((k) => !k.startsWith("client") && k !== "machines").map((k) => [k, k])),
+};
+
+type Values = Record<Exclude<Key, "machines">, string>;
+
+function blank(): Values {
+  const out = {} as Values;
+  for (const key of FIELD_ORDER) if (key !== "machines") out[key] = "";
+  return out;
 }
 
+interface MachineResult {
+  machineId: string;
+  assetCode: string;
+  outcome: "created" | "failed" | "skipped";
+  quotation?: CommercialQuotation;
+  reason?: string;
+}
+
+const text = (raw: string) => (raw.trim() ? raw.trim() : undefined);
+const num = (raw: string) => (raw.trim() === "" ? undefined : Number(raw));
+
+/**
+ * New commercial quotation(s). One quotation per selected machine — the
+ * data model has no multi-machine quotation (commercial_quotations has no
+ * unique constraint on requirementId alone), so N machines means N calls
+ * with the same customer, dates and terms, and a result per machine: a
+ * created reference or the reason it failed. Never reports success for a
+ * machine that failed.
+ */
 export function CreateQuotationDialog({
   open,
   onClose,
   organizationId,
-  requirementIdParam,
-  sourceAuctionIdParam,
+  requirementId,
+  sourceAuctionId,
+  initialMachineIds,
   onCreated,
 }: CreateQuotationDialogProps) {
-  const isFromRequirement = Boolean(requirementIdParam);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [renterOrganizations, setRenterOrganizations] = useState<Organization[]>([]);
+  const { hasPermission } = useSession();
+  const toast = useToast();
+  const router = useRouter();
+  const { online } = useConnection();
+  const canListMachines = hasPermission("equipment.manage");
+  const isFromRequirement = Boolean(requirementId);
+
+  const [machines, setMachines] = useState<Machine[] | null>(null);
+  const [machinesFailed, setMachinesFailed] = useState(false);
+  const [products, setProducts] = useState<Map<string, Product>>(new Map());
+  const [renters, setRenters] = useState<Organization[] | null>(null);
+  const [rentersFailed, setRentersFailed] = useState(false);
   const [requirement, setRequirement] = useState<Requirement | null>(null);
-  // This rental company's own "interested" response to the requirement, if
-  // any — recorded on the created quotation as quotationResponseId so the
-  // Renter's requirement page can link back to it, and so this response
-  // drops off the Quotations page's "Requested" filter once formalized.
+  const [requirementEquipment, setRequirementEquipment] = useState<string | null>(null);
+  // This company's own "interested" response to the requirement, if any —
+  // recorded on the created quotation as quotationResponseId so the
+  // Renter's requirement page links back to it, and so the response drops
+  // off the Quotations page's "Requested" tab once formalized.
   const [responseId, setResponseId] = useState<string | null>(null);
-  const [subcategoryName, setSubcategoryName] = useState<string | null>(null);
-  // Two separate sources, resolved independently by two separate effects —
-  // response rate wins when both exist (it's the more specific, already-
-  // stated figure for this exact requirement).
+  // Two sources, resolved by two effects — the response rate wins when both
+  // exist (it's the more specific figure already stated for this requirement).
   const [responseRate, setResponseRate] = useState<number | null>(null);
   const [auctionBidRate, setAuctionBidRate] = useState<number | null>(null);
-  const prefilledRate = responseRate ?? auctionBidRate;
-  const [customerMode, setCustomerMode] = useState<"external" | "renter">(
-    isFromRequirement ? "renter" : "external",
-  );
-  const [loadingContext, setLoadingContext] = useState(isFromRequirement);
-  const [loadingAuctionPrefill, setLoadingAuctionPrefill] = useState(Boolean(sourceAuctionIdParam));
-  const [error, setError] = useState<string | null>(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingAuctionPrefill, setLoadingAuctionPrefill] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
 
+  const [mode, setMode] = useState<"external" | "renter">("external");
+  const [values, setValues] = useState<Values>(blank);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [machineFilter, setMachineFilter] = useState("");
+  const [touched, setTouched] = useState<Partial<Record<Key, boolean>>>({});
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [serverErrors, setServerErrors] = useState<Partial<Record<Key, string>>>({});
+  const [formError, setFormError] = useState<{ title: string; body: string } | null>(null);
+  const [results, setResults] = useState<MachineResult[] | null>(null);
+
+  const initialKey = initialMachineIds.join(",");
+
+  // Reset and load the pickers every time the dialog opens.
   useEffect(() => {
     if (!open) return;
-    void apiClient.listMachines(organizationId).then((list) => setMachines(list as Machine[]));
-    void apiClient
-      .listRenterOrganizations(organizationId)
-      .then((list) => setRenterOrganizations(list as Organization[]));
-  }, [open, organizationId]);
+    setValues(blank());
+    setSelected(new Set(initialMachineIds));
+    setMachineFilter("");
+    setMode("external");
+    setTouched({});
+    setTried(false);
+    setServerErrors({});
+    setFormError(null);
+    setResults(null);
+    setProgress(null);
+    let cancelled = false;
+    void (async () => {
+      const [machineList, productList, renterList] = await Promise.all([
+        optional(canListMachines, () => apiClient.listMachines(organizationId) as Promise<Machine[]>, null as Machine[] | null),
+        optional(true, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
+        optional(true, () => apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>, null as Organization[] | null),
+      ]);
+      if (cancelled) return;
+      setMachinesFailed(canListMachines && machineList === null);
+      setMachines(machineList ?? []);
+      setProducts(new Map(productList.map((p) => [p.id, p])));
+      setRentersFailed(renterList === null);
+      setRenters(renterList ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, organizationId, canListMachines, initialKey]);
 
   useEffect(() => {
-    if (!open || !requirementIdParam) return;
-    // This dialog stays mounted (only `open` toggles) — a notification for
-    // a *different* requirement arriving after this effect already settled
-    // to false once needs to flip it back to true, not just rely on the
-    // initializer above, which only ran at first mount.
+    if (!open || !requirementId) {
+      setRequirement(null);
+      return;
+    }
+    // This dialog stays mounted (only `open` toggles) — a notification for a
+    // *different* requirement arriving after this effect already settled
+    // must flip these back, not rely on a mount-time initializer.
     setLoadingContext(true);
+    setContextError(null);
     setResponseId(null);
     setResponseRate(null);
+    let cancelled = false;
     void (async () => {
       try {
-        const req = (await apiClient.getRequirementForDiscovery(
-          organizationId,
-          requirementIdParam,
-        )) as Requirement;
+        const req = (await apiClient.getRequirementForDiscovery(organizationId, requirementId)) as Requirement;
+        const index = await loadSubcategoryIndex();
+        if (cancelled) return;
         setRequirement(req);
-        const categories = (await apiClient.listProductCategories()) as ProductCategory[];
-        const subcategoryLists = await Promise.all(
-          categories.map((c) => apiClient.listProductSubcategories(c.id)),
-        );
-        const match = (subcategoryLists.flat() as ProductSubcategory[]).find(
-          (s) => s.id === req.productSubcategoryId,
-        );
-        setSubcategoryName(match?.name ?? null);
+        setRequirementEquipment(equipmentLine(req, index.get(req.productSubcategoryId)?.subcategory.name));
         // Best-effort — creating a quotation without ever having submitted
         // an "interested" response first (e.g. straight from Open Market)
         // is valid; there's just nothing to link back to in that case.
         try {
-          const response = (await apiClient.getMyResponse(organizationId, requirementIdParam)) as {
-            id: string;
-            indicativeRate: number | null;
-          };
+          const response = (await apiClient.getMyResponse(organizationId, requirementId)) as QuotationResponse;
+          if (cancelled) return;
           setResponseId(response.id);
           if (response.indicativeRate != null) setResponseRate(response.indicativeRate);
         } catch {
           // No response on file for this requirement — fine.
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load the requirement");
+        if (!cancelled) setContextError(describeError(err, "The requirement didn't load").body);
       } finally {
-        setLoadingContext(false);
+        if (!cancelled) setLoadingContext(false);
       }
     })();
-  }, [open, organizationId, requirementIdParam]);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, organizationId, requirementId]);
 
   useEffect(() => {
-    if (!open || !sourceAuctionIdParam) return;
+    if (!open || !sourceAuctionId) {
+      setAuctionBidRate(null);
+      return;
+    }
     // Same reasoning as loadingContext above — this dialog stays mounted.
     setLoadingAuctionPrefill(true);
+    let cancelled = false;
     void (async () => {
       try {
-        const detail = (await apiClient.getAuctionDetail(
-          organizationId,
-          sourceAuctionIdParam,
-        )) as AuctionDetail;
+        const detail = (await apiClient.getAuctionDetail(organizationId, sourceAuctionId)) as AuctionDetail;
+        // A participant's detail only carries its own participant row.
         const ownParticipantId = detail.participants[0]?.id;
         const ownBids = detail.bids.filter((bid) => bid.participantId === ownParticipantId);
         const lastBid = ownBids[ownBids.length - 1];
-        if (lastBid) setAuctionBidRate(lastBid.amount);
+        if (!cancelled && lastBid) setAuctionBidRate(lastBid.amount);
       } catch {
         // Best-effort pre-fill only — the form still works without it.
       } finally {
-        setLoadingAuctionPrefill(false);
+        if (!cancelled) setLoadingAuctionPrefill(false);
       }
     })();
-  }, [open, organizationId, sourceAuctionIdParam]);
-
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const endDate = form.get("endDate");
-    const startDate = String(form.get("startDate"));
-    const validityDate = String(form.get("validityDate"));
-    if (endDate && String(endDate) < startDate) {
-      setError("End date cannot be before the start date");
-      return;
-    }
-    if (validityDate > startDate) {
-      setError("Valid until date cannot be after the start date");
-      return;
-    }
-    const machineIds = form.getAll("machineId").map(String);
-    if (machineIds.length === 0) {
-      setError("Select at least one machine");
-      return;
-    }
-    const commonFields = {
-      requirementId: requirementIdParam ?? undefined,
-      quotationResponseId: responseId ?? undefined,
-      sourceAuctionId: sourceAuctionIdParam ?? undefined,
-      ...(customerMode === "renter"
-        ? { renterOrganizationId: String(form.get("renterOrganizationId")) }
-        : { clientSnapshot: { name: String(form.get("clientName")) } }),
-      startDate,
-      endDate: endDate ? String(endDate) : undefined,
-      rate: Number(form.get("rate")),
-      rateUnit: (lockedRateUnit ?? String(form.get("rateUnit"))) as RateUnit,
-      validityDate,
-      mobilizationCharge: form.get("mobilizationCharge")
-        ? Number(form.get("mobilizationCharge"))
-        : undefined,
-      demobilizationCharge: form.get("demobilizationCharge")
-        ? Number(form.get("demobilizationCharge"))
-        : undefined,
-      overtimeRate: form.get("overtimeRate") ? Number(form.get("overtimeRate")) : undefined,
-      fuelScope: form.get("fuelScope")
-        ? (String(form.get("fuelScope")) as ResponsibleParty)
-        : undefined,
-      accommodationScope: form.get("accommodationScope")
-        ? (String(form.get("accommodationScope")) as ResponsibleParty)
-        : undefined,
-      operatorScope: form.get("operatorScope")
-        ? (String(form.get("operatorScope")) as OperatorScope)
-        : undefined,
-      workingHours: form.get("workingHours") ? Number(form.get("workingHours")) : undefined,
-      workingDaysPerWeek: form.get("workingDaysPerWeek")
-        ? Number(form.get("workingDaysPerWeek"))
-        : undefined,
-      minimumRentalPeriodValue: form.get("minimumRentalPeriodValue")
-        ? Number(form.get("minimumRentalPeriodValue"))
-        : undefined,
-      minimumRentalPeriodUnit: form.get("minimumRentalPeriodUnit")
-        ? (String(form.get("minimumRentalPeriodUnit")) as RateUnit)
-        : undefined,
-      noticePeriodDays: form.get("noticePeriodDays")
-        ? Number(form.get("noticePeriodDays"))
-        : undefined,
-      gstTerms: form.get("gstTerms") ? String(form.get("gstTerms")) : undefined,
-      paymentTerms: form.get("paymentTerms") ? String(form.get("paymentTerms")) : undefined,
-      shiftStructure: form.get("shiftStructure") ? String(form.get("shiftStructure")) : undefined,
-      sundayCondition: form.get("sundayCondition")
-        ? String(form.get("sundayCondition"))
-        : undefined,
-      fuelNorms: form.get("fuelNorms") ? String(form.get("fuelNorms")) : undefined,
-      dehireTerms: form.get("dehireTerms") ? String(form.get("dehireTerms")) : undefined,
-      commercialNotes: form.get("commercialNotes")
-        ? String(form.get("commercialNotes"))
-        : undefined,
-      companyTerms: form.get("companyTerms") ? String(form.get("companyTerms")) : undefined,
+    return () => {
+      cancelled = true;
     };
+  }, [open, organizationId, sourceAuctionId]);
 
-    // A requirement can ask for more than one machine (quantity > 1) — one
-    // quotation per machine is what the data model already supports
-    // (commercial_quotations has no unique constraint on requirementId
-    // alone), the dialog just used to only ever let you pick one. Same
-    // terms across all selected machines: the Renter asked for N of the
-    // same equipment type, not N different deals.
-    const failures: string[] = [];
-    for (const machineId of machineIds) {
-      try {
-        await apiClient.createQuotation(organizationId, { ...commonFields, machineId });
-      } catch (err) {
-        const assetCode = activeMachines.find((m) => m.id === machineId)?.assetCode ?? machineId;
-        failures.push(`${assetCode}: ${err instanceof Error ? err.message : "failed"}`);
-      }
-    }
-    onCreated();
-    if (failures.length === 0) {
-      formElement.reset();
-      onClose();
-    } else {
-      setError(
-        `Created ${machineIds.length - failures.length} of ${machineIds.length} quotations. Failed — ${failures.join("; ")}`,
-      );
-    }
-  }
+  // Prefill from the requirement: validity, a starting point for the site
+  // conditions (Requirement has no numeric working-hours field to map).
+  useEffect(() => {
+    if (!requirement) return;
+    const shiftSummary = [
+      requirement.shiftPattern ? SHIFT_PATTERN_LABEL[requirement.shiftPattern] : null,
+      requirement.crewRequirement ? CREW_LABEL[requirement.crewRequirement] : null,
+      requirement.shiftRequirement,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    setValues((current) => ({
+      ...current,
+      validityDate: current.validityDate || requirement.validityDate,
+      commercialNotes: current.commercialNotes || shiftSummary,
+    }));
+  }, [requirement]);
 
-  // Locked to the requirement's own unit when it has one — see
-  // CommercialQuotationService.createQuotation, which enforces this
-  // server-side regardless; this just avoids showing a picker whose choice
-  // would be silently overridden.
+  const prefilledRate = responseRate ?? auctionBidRate;
+  useEffect(() => {
+    if (prefilledRate == null) return;
+    setValues((current) => (current.rate ? current : { ...current, rate: String(prefilledRate) }));
+  }, [prefilledRate]);
+
+  // Locked to the requirement's own unit and dates when it has them —
+  // CommercialQuotationService.createQuotation enforces this server-side
+  // regardless; this avoids showing pickers whose choice would be overridden.
   const lockedRateUnit = requirement?.expectedDurationUnit ?? null;
-  // Same reasoning, for dates — the requirement's own requestedStartDate and
-  // computed duration, not whatever the Rental Company would otherwise pick.
   const lockedStartDate = requirement?.requestedStartDate ?? null;
   const lockedEndDate =
     lockedStartDate && requirement?.expectedDurationValue && requirement.expectedDurationUnit
-      ? addDuration(
-          lockedStartDate,
-          requirement.expectedDurationValue,
-          requirement.expectedDurationUnit,
-        )
+      ? addDuration(lockedStartDate, requirement.expectedDurationValue, requirement.expectedDurationUnit)
       : null;
-  // A one-line summary of the requirement's shift info — a reasonable
-  // starting point for the free-text commercialNotes field, not a real
-  // mapping (Requirement has no numeric workingHours field to prefill).
-  const shiftSummary = requirement
-    ? [requirement.shiftPattern, requirement.crewRequirement, requirement.shiftRequirement]
-        .filter(Boolean)
-        .join(" · ")
-    : "";
-  const activeMachines = machines.filter((m) => m.status === "active");
-  const renterName = (id: string) =>
-    renterOrganizations.find((o) => o.id === id)?.name ?? `Renter ${id.slice(0, 8)}…`;
+  const customerMode: "external" | "renter" = isFromRequirement ? "renter" : mode;
+  const renterId = isFromRequirement ? (requirement?.renterOrganizationId ?? "") : values.renterOrganizationId;
+  const startDate = lockedStartDate ?? values.startDate;
+  const endDate = lockedEndDate ?? values.endDate;
+  const rateUnit = lockedRateUnit ?? values.rateUnit;
+  const today = todayIsoDate();
+
+  const machineList = useMemo(() => machines ?? [], [machines]);
+  // Only Active machines can be quoted (retired ones are refused by the API; under-maintenance ones aren't offered).
+  const activeMachines = useMemo(() => machineList.filter((m) => m.status === MachineStatus.active), [machineList]);
+  const unquotable = machineList.filter((m) => selected.has(m.id) && m.status !== MachineStatus.active);
+  const missing = machines === null ? [] : initialMachineIds.filter((id) => !machineList.some((m) => m.id === id));
+  const selectedActive = activeMachines.filter((m) => selected.has(m.id));
+  const matchesRequirement = (m: Machine) => Boolean(requirement && products.get(m.productId)?.productSubcategoryId === requirement.productSubcategoryId);
+  const visibleMachines = useMemo(() => {
+    const q = machineFilter.trim().toLowerCase();
+    return activeMachines
+      .filter((m) => !q || `${m.assetCode} ${m.registrationNumber} ${productName(products.get(m.productId)) ?? ""}`.toLowerCase().includes(q))
+      .sort((a, b) => Number(matchesRequirement(b)) - Number(matchesRequirement(a)) || a.assetCode.localeCompare(b.assetCode));
+  }, [activeMachines, machineFilter, products, requirement]);
+
+  // ------------------------------------------------------------------ validation (createCommercialQuotationRequestSchema)
+  const errors: Partial<Record<Key, string>> = {};
+  const warnings: Partial<Record<Key, string>> = {};
+  if (selectedActive.length === 0) errors.machines = "Choose at least one Active machine to quote.";
+  if (customerMode === "renter" && !renterId) errors.renterOrganizationId = "Choose the FleetIP customer this is for.";
+  if (customerMode === "external") {
+    if (!values.clientName.trim()) errors.clientName = "Enter the customer's name as it should appear on the quotation.";
+    if (values.clientEmail.trim() && !/^\S+@\S+\.\S+$/.test(values.clientEmail.trim())) errors.clientEmail = "Enter a valid email address, or leave it empty.";
+  }
+  for (const [key, max] of Object.entries(MAX_LENGTH) as [TextKey, number][]) {
+    if (values[key].trim().length > max) errors[key] = `This is up to ${max.toLocaleString("en-IN")} characters.`;
+  }
+  if (lockedStartDate && lockedStartDate < today)
+    errors.startDate = `The requirement's start date (${formatDate(lockedStartDate)}) has passed, so it can't be quoted as it stands. Ask the customer to move it.`;
+  else if (!startDate) errors.startDate = "Pick the day the rental would start.";
+  else if (startDate < today) errors.startDate = `The start date can't be in the past. The earliest is today, ${formatDate(today)}.`;
+  if (endDate && startDate && endDate < startDate) errors.endDate = "The end date can't be before the start date.";
+  if (!values.rate.trim()) errors.rate = "Enter the rate you're quoting.";
+  else if (!(Number(values.rate) > 0)) errors.rate = "Enter a rate above ₹0.";
+  if (!rateUnit) errors.rateUnit = "Choose what the rate is per.";
+  if (!values.validityDate) errors.validityDate = "Pick the last day the customer can accept.";
+  else if (values.validityDate < today) errors.validityDate = `The validity date can't be in the past. The earliest is today, ${formatDate(today)}.`;
+  else if (startDate && values.validityDate > startDate) errors.validityDate = "Validity date can't be after the start date.";
+  for (const key of ["mobilizationCharge", "demobilizationCharge", "overtimeRate"] as const) {
+    if (values[key].trim() && !(Number(values[key]) >= 0)) errors[key] = "Enter 0 or more, or leave it empty.";
+  }
+  if (values.workingHours.trim() && !(Number(values.workingHours) > 0)) errors.workingHours = "Enter hours per shift above 0, e.g. 10.";
+  if (values.workingDaysPerWeek.trim()) {
+    const d = Number(values.workingDaysPerWeek);
+    if (!Number.isInteger(d) || d < 1 || d > 7) errors.workingDaysPerWeek = "Enter whole days from 1 to 7.";
+  }
+  if (values.minimumRentalPeriodValue.trim()) {
+    const p = Number(values.minimumRentalPeriodValue);
+    if (!Number.isInteger(p) || p < 1) errors.minimumRentalPeriodValue = "Enter a whole number above 0, e.g. 1.";
+    else if (!values.minimumRentalPeriodUnit) warnings.minimumRentalPeriodUnit = "Choose days, weeks, months or shifts, or the minimum period can't be read.";
+  }
+  if (values.noticePeriodDays.trim() && !(Number.isInteger(Number(values.noticePeriodDays)) && Number(values.noticePeriodDays) >= 0))
+    errors.noticePeriodDays = "Enter whole days, e.g. 15.";
+
+  function fieldError(key: Key) {
+    return ((tried || touched[key]) && errors[key]) || serverErrors[key] || undefined;
+  }
+
+  function bind(key: Exclude<Key, "machines">) {
+    return {
+      value: values[key],
+      onChange: (event: { target: { value: string } }) => {
+        setValues((current) => ({ ...current, [key]: event.target.value }));
+        if (serverErrors[key]) setServerErrors((current) => ({ ...current, [key]: undefined }));
+      },
+      onBlur: () => setTouched((current) => ({ ...current, [key]: true })),
+      error: fieldError(key),
+      warning: tried || touched[key] ? warnings[key] : undefined,
+    };
+  }
+
+  function toggleMachine(id: string, checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    setTouched((t) => ({ ...t, machines: true }));
+  }
+
+  function buildInput(machineId: string): CreateCommercialQuotationRequest {
+    return {
+      requirementId: requirementId ?? undefined,
+      quotationResponseId: responseId ?? undefined,
+      sourceAuctionId: sourceAuctionId ?? undefined,
+      ...(customerMode === "renter"
+        ? { renterOrganizationId: renterId }
+        : {
+            clientSnapshot: {
+              name: values.clientName.trim(),
+              contactPerson: text(values.clientContactPerson),
+              phone: text(values.clientPhone),
+              email: text(values.clientEmail),
+            },
+          }),
+      machineId,
+      startDate,
+      endDate: endDate || undefined,
+      rate: Number(values.rate),
+      rateUnit: rateUnit as RateUnit,
+      validityDate: values.validityDate,
+      mobilizationCharge: num(values.mobilizationCharge),
+      demobilizationCharge: num(values.demobilizationCharge),
+      overtimeRate: num(values.overtimeRate),
+      fuelScope: (values.fuelScope || undefined) as ResponsibleParty | undefined,
+      accommodationScope: (values.accommodationScope || undefined) as ResponsibleParty | undefined,
+      operatorScope: (values.operatorScope || undefined) as OperatorScope | undefined,
+      workingHours: num(values.workingHours),
+      workingDaysPerWeek: num(values.workingDaysPerWeek),
+      minimumRentalPeriodValue: num(values.minimumRentalPeriodValue),
+      minimumRentalPeriodUnit: (values.minimumRentalPeriodUnit || undefined) as RateUnit | undefined,
+      noticePeriodDays: num(values.noticePeriodDays),
+      gstTerms: text(values.gstTerms),
+      paymentTerms: text(values.paymentTerms),
+      shiftStructure: text(values.shiftStructure),
+      sundayCondition: text(values.sundayCondition),
+      fuelNorms: text(values.fuelNorms),
+      dehireTerms: text(values.dehireTerms),
+      commercialNotes: text(values.commercialNotes),
+      companyTerms: text(values.companyTerms),
+    };
+  }
+
+  const customerName =
+    customerMode === "renter" ? (renters?.find((r) => r.id === renterId)?.name ?? "the customer") : values.clientName.trim() || "the customer";
+
+  // Not on useForm on purpose: one create call per machine, and the result
+  // must say which machines were quoted and which weren't (partial success).
+  // useForm can only report one failure for the whole save.
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setTried(true);
+    setFormError(null);
+    const firstInvalid = FIELD_ORDER.find((key) => errors[key]);
+    if (firstInvalid) {
+      document
+        .querySelector<HTMLElement>(`[data-field="${firstInvalid}"] input:not([disabled]), [data-field="${firstInvalid}"] select, [data-field="${firstInvalid}"] textarea`)
+        ?.focus();
+      return;
+    }
+    setBusy(true);
+    const targets = selectedActive;
+    const out: MachineResult[] = [];
+    let stopReason: string | null = null;
+    let fieldProblem = false;
+    setProgress({ done: 0, total: targets.length });
+    for (const machine of targets) {
+      if (stopReason) {
+        out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "skipped", reason: stopReason });
+        continue;
+      }
+      try {
+        const quotation = (await apiClient.createQuotation(organizationId, buildInput(machine.id))) as CommercialQuotation;
+        out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "created", quotation });
+      } catch (err) {
+        const { fieldErrors, formError: unpathed } = parseValidationIssues(err);
+        const mapped: Partial<Record<Key, string>> = {};
+        for (const [path, message] of Object.entries(fieldErrors)) {
+          const field = PATH_TO_FIELD[path];
+          if (field) mapped[field] = message;
+        }
+        if (Object.keys(mapped).length) {
+          // A problem with the shared terms, not this machine — every
+          // remaining machine would fail the same way, so stop here.
+          setServerErrors(mapped);
+          fieldProblem = true;
+          stopReason = "Not tried — the terms need fixing first.";
+          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: Object.values(mapped).join(" ") });
+        } else if (describeError(err).network) {
+          stopReason = "Not tried — the connection dropped.";
+          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: describeError(err).body });
+        } else {
+          out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "failed", reason: unpathed ?? describeError(err, "Not created").body });
+        }
+      }
+      setProgress({ done: out.length, total: targets.length });
+    }
+    setBusy(false);
+    setProgress(null);
+
+    const created = out.filter((r) => r.outcome === "created");
+    if (created.length > 0) onCreated();
+    // Created machines leave the selection, so going back and trying again never duplicates them.
+    setSelected(new Set(out.filter((r) => r.outcome !== "created").map((r) => r.machineId)));
+
+    const single = out.length === 1 ? out[0] : undefined;
+    if (single) {
+      if (single.outcome === "created" && single.quotation) {
+        const quotation = single.quotation;
+        toast.success({
+          title: `Quotation ${quotation.referenceNumber} created`,
+          body: `Saved as a draft for ${customerName} on ${single.assetCode}. Send it from its page when it's ready.`,
+          action: { label: "Open", onClick: () => router.push(`/quotations/${quotation.id}`) },
+        });
+        onClose();
+        return;
+      }
+      // One machine, one failure: keep the form (input kept) and say why —
+      // on the fields when the API named them, otherwise in a banner.
+      if (!fieldProblem) setFormError({ title: `No quotation was created for ${single.assetCode}`, body: single.reason ?? "" });
+      return;
+    }
+    if (created.length === 0 && fieldProblem) {
+      setFormError({ title: "No quotations were created", body: "The terms need a fix before any machine can be quoted. See the highlighted fields." });
+      return;
+    }
+    if (created.length > 0) {
+      toast.success({
+        title: `${plural(created.length, "quotation")} created`,
+        body: `Drafts for ${customerName}: ${created.map((r) => r.quotation?.referenceNumber).join(", ")}.${created.length < out.length ? " Some machines weren't quoted — see the list." : ""}`,
+      });
+    }
+    setResults(out);
+  }
+
+  // ------------------------------------------------------------------ render
+  const loading = machines === null || loadingContext || loadingAuctionPrefill;
+  const noMachines = machines !== null && !machinesFailed && activeMachines.length === 0;
+  const failedCount = results?.filter((r) => r.outcome !== "created").length ?? 0;
+  const resultsTitle = failedCount === 0 ? "Quotations created" : failedCount === results?.length ? "No quotations were created" : "Some machines weren't quoted";
+
+  const footer = results ? (
+    <>
+      {failedCount > 0 && (
+        <Button variant="secondary" onClick={() => setResults(null)}>
+          Back to the form ({plural(failedCount, "machine")} left)
+        </Button>
+      )}
+      <Button onClick={onClose}>Done</Button>
+    </>
+  ) : (
+    <>
+      <Button variant="tertiary" onClick={onClose} disabled={busy}>
+        Cancel
+      </Button>
+      <Button
+        type="submit"
+        busy={busy}
+        busyLabel={progress && progress.total > 1 ? `Creating ${progress.done + 1} of ${progress.total}…` : "Creating…"}
+        disabled={!online || loading || noMachines || machinesFailed || !canListMachines || Boolean(contextError)}
+        title={!online ? OFFLINE_HINT : undefined}
+      >
+        {selectedActive.length > 1 ? `Create ${selectedActive.length} quotations` : "Create quotation"}
+      </Button>
+    </>
+  );
 
   return (
-    <Dialog open={open} onClose={onClose} title="Create a quotation">
-      {error && <p className="mb-3 text-sm text-danger">{error}</p>}
-      {loadingContext || loadingAuctionPrefill ? (
-        <LoadingState label="Loading requirement…" />
-      ) : activeMachines.length === 0 ? (
-        <EmptyState
-          title="No available machines"
-          description="Register a machine and mark it active before quoting."
-        />
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={results ? resultsTitle : isFromRequirement ? `Quote for ${requirementId ? requirementRef(requirementId) : "a requirement"}` : "New quotation"}
+      description={
+        results
+          ? "One quotation per machine. Each is a draft until you send it."
+          : "Formal terms for a customer. Saved as a draft — the customer sees it only after you send it."
+      }
+      icon="quotation"
+      tone="info"
+      size="lg"
+      dismissible={!busy}
+      onSubmit={results ? undefined : handleSubmit}
+      footer={footer}
+    >
+      {results ? (
+        <ResultsList results={results} />
       ) : (
-        <form
-          key={requirement?.id ?? "no-requirement"}
-          onSubmit={handleCreate}
-          className="flex flex-col gap-4 text-left"
-        >
-          {requirement && (
-            <RequirementContext
-              requirement={requirement}
-              subcategoryName={subcategoryName}
-              renterName={renterName(requirement.renterOrganizationId)}
-            />
+        <>
+          {formError && (
+            <FormBanner tone="error" title={formError.title}>
+              {formError.body}
+            </FormBanner>
           )}
+          {contextError && (
+            <FormBanner tone="error" title="The requirement didn't load">
+              {contextError} Close this form and open it again from the requirement.
+            </FormBanner>
+          )}
+          {!canListMachines ? (
+            <FormBanner tone="warning" title="Your role can't choose machines">
+              Quoting needs the Equipment permission to list your fleet. Ask an organization admin to add it to your role.
+            </FormBanner>
+          ) : machinesFailed ? (
+            <FormBanner tone="error" title="Your machines didn't load">
+              Close this form and try again in a moment.
+            </FormBanner>
+          ) : null}
 
-          <div className="flex flex-col gap-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-meta">Customer</p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-ink-muted">
-                  Machine
-                  {requirement && requirement.quantity > 1
-                    ? ` — needs ${requirement.quantity}`
-                    : ""}
-                </span>
-                <div className="flex max-h-[136px] flex-col gap-1 overflow-y-auto rounded-control border border-border-strong px-2.5 py-2">
-                  {activeMachines.map((m) => (
-                    <label key={m.id} className="flex items-center gap-2 text-sm text-ink">
-                      <input type="checkbox" name="machineId" value={m.id} />
-                      {m.assetCode}
-                    </label>
-                  ))}
-                </div>
-                {requirement && requirement.quantity > 1 && (
-                  <span className="text-[11px] text-meta">
-                    Select more than one to quote several machines in one go — one quotation is
-                    created per machine selected, all with the same terms below.
+          {loading && canListMachines && !machinesFailed ? (
+            <LoadingState label={loadingContext ? "Loading the requirement…" : loadingAuctionPrefill ? "Loading your last bid…" : "Loading machines…"} />
+          ) : noMachines ? (
+            <FormBanner tone="info" title="No machine can be quoted right now">
+              Only Active machines can be quoted. Register a machine, or bring one back from the workshop, first.
+            </FormBanner>
+          ) : canListMachines && !machinesFailed ? (
+            <>
+              {requirement && (
+                <Alert tone="info" icon="requirement" title={`Quoting against ${requirementRef(requirement.id)} — this quotation stays tied to it`}>
+                  <DescriptionList
+                    layout="inline"
+                    className="mt-1.5"
+                    items={[
+                      { label: "Customer", value: renters?.find((r) => r.id === requirement.renterOrganizationId)?.name ?? "FleetIP customer" },
+                      { label: "Equipment", value: requirementEquipment },
+                      { label: "Quantity", value: String(requirement.quantity), mono: true },
+                      { label: "Project", value: requirement.projectName },
+                      { label: "Site", value: requirement.projectLocation },
+                      { label: "Needed from", value: formatDate(requirement.requestedStartDate), mono: true },
+                      { label: "Duration", value: durationLabel(requirement.expectedDurationValue, requirement.expectedDurationUnit) },
+                      { label: "Responses until", value: formatDate(requirement.validityDate), mono: true },
+                    ]}
+                  />
+                  {requirement.notes && <p className="m-0 mt-1.5 text-xs text-ink-body">Notes: {requirement.notes}</p>}
+                </Alert>
+              )}
+              {sourceAuctionId && (
+                <Alert tone="neutral" icon="auction">
+                  Formalizing your win in auction {auctionRef(sourceAuctionId)}.{" "}
+                  {auctionBidRate != null ? "The rate starts at your last bid." : "Your last bid couldn't be read, so enter the rate."}
+                </Alert>
+              )}
+
+              <FormSection
+                title="Machines"
+                description={
+                  requirement && requirement.quantity > 1
+                    ? `The customer needs ${requirement.quantity}. Select more than one to quote several machines in one go — one quotation is created per machine, all with the same terms below.`
+                    : "One quotation is created per machine selected, all with the same terms below."
+                }
+              >
+                <div data-field="machines" className="flex flex-col gap-2">
+                  <Input
+                    size="sm"
+                    type="search"
+                    aria-label="Filter machines"
+                    placeholder="Filter by asset code, registration or model"
+                    prefix={<Icon name="search" size={13} />}
+                    value={machineFilter}
+                    onChange={(event) => setMachineFilter(event.target.value)}
+                  />
+                  <div
+                    role="group"
+                    aria-label="Machines to quote"
+                    aria-describedby="quote-machines-msg"
+                    className={cx(
+                      "flex max-h-[220px] flex-col overflow-y-auto rounded-control border bg-surface",
+                      fieldError("machines") ? "border-[1.5px] border-danger-edge" : "border-border-control",
+                    )}
+                  >
+                    {visibleMachines.length === 0 ? (
+                      <p className="m-0 px-3 py-2.5 text-xs text-meta">No Active machine matches “{machineFilter}”.</p>
+                    ) : (
+                      visibleMachines.map((machine) => (
+                        <Checkbox
+                          key={machine.id}
+                          className="border-b border-border px-3 py-2 last:border-0"
+                          checked={selected.has(machine.id)}
+                          onChange={(event) => toggleMachine(machine.id, event.target.checked)}
+                          label={<span className="font-mono text-xs font-medium">{machine.assetCode}</span>}
+                          description={[
+                            productName(products.get(machine.productId)),
+                            machine.registrationNumber,
+                            matchesRequirement(machine) ? "matches the requirement's equipment type" : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        />
+                      ))
+                    )}
+                  </div>
+                  <span id="quote-machines-msg" className={cx("text-[11px] leading-[1.4]", fieldError("machines") ? "text-destructive" : "text-meta-light")}>
+                    {fieldError("machines") ?? `${plural(selectedActive.length, "machine")} selected. Only Active machines are listed.`}
                   </span>
+                  {unquotable.length > 0 && (
+                    <FormBanner tone="warning" title={`${plural(unquotable.length, "preselected machine")} can't be quoted`}>
+                      Only Active machines can be quoted:{" "}
+                      {unquotable.map((m) => `${m.assetCode} (${statusLabel("machine", m.status)})`).join(", ")}. They won&apos;t get a quotation.
+                    </FormBanner>
+                  )}
+                  {missing.length > 0 && (
+                    <FormBanner tone="warning" title={`${plural(missing.length, "preselected machine")} not found`}>
+                      It isn&apos;t in your organization&apos;s fleet any more, so it was left out.
+                    </FormBanner>
+                  )}
+                </div>
+              </FormSection>
+
+              <FormSection title="Customer" className="border-t border-border pt-4">
+                {isFromRequirement ? (
+                  <Input
+                    label="Customer"
+                    value={requirement ? (renters?.find((r) => r.id === requirement.renterOrganizationId)?.name ?? "The requirement's renter") : ""}
+                    readOnly
+                    disabled
+                    suffix={<Icon name="lock" size={12} />}
+                    hint="Locked to the renter who posted the requirement."
+                  />
+                ) : (
+                  <>
+                    <RadioGroup
+                      label="Who is it for"
+                      required
+                      name="quotation-customer-mode"
+                      value={mode}
+                      onChange={(value) => setMode(value as "external" | "renter")}
+                      options={[
+                        { value: "external", label: "Not on FleetIP", description: "Enter their details; they're kept as entered. Nobody is notified." },
+                        { value: "renter", label: "A FleetIP customer", description: "They're notified when you send it, and accept or counter in FleetIP." },
+                      ]}
+                    />
+                    {mode === "external" ? (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div data-field="clientName">
+                          <Input label="Customer name" required maxLength={220} {...bind("clientName")} />
+                        </div>
+                        <div data-field="clientContactPerson">
+                          <Input label="Contact person" maxLength={220} {...bind("clientContactPerson")} />
+                        </div>
+                        <div data-field="clientPhone">
+                          <Input label="Phone" type="tel" maxLength={60} {...bind("clientPhone")} />
+                        </div>
+                        <div data-field="clientEmail">
+                          <Input label="Email" type="email" {...bind("clientEmail")} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div data-field="renterOrganizationId">
+                        <SearchSelect
+                          label="FleetIP customer"
+                          required
+                          options={(renters ?? []).map((r) => ({ value: r.id, label: r.name, description: r.code }))}
+                          loading={renters === null}
+                          value={values.renterOrganizationId}
+                          onChange={(value) => setValues((v) => ({ ...v, renterOrganizationId: value }))}
+                          onBlur={() => setTouched((t) => ({ ...t, renterOrganizationId: true }))}
+                          placeholder="Search renter organizations"
+                          emptyText={rentersFailed ? "Customers didn't load." : "No renter organization matches."}
+                          error={fieldError("renterOrganizationId")}
+                          hint={rentersFailed ? "FleetIP customers didn't load. Close the form and open it again to retry." : undefined}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
-              </div>
-              {!isFromRequirement && (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-ink-muted">Customer type</span>
-                  <div className="flex gap-4 text-sm text-ink-muted">
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="radio"
-                        checked={customerMode === "external"}
-                        onChange={() => setCustomerMode("external")}
+              </FormSection>
+
+              <FormSection title="Dates and rate" className="border-t border-border pt-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div data-field="startDate">
+                    {lockedStartDate ? (
+                      <Input
+                        label="Start date"
+                        mono
+                        value={formatDate(lockedStartDate)}
+                        readOnly
+                        disabled
+                        suffix={<Icon name="lock" size={12} />}
+                        error={fieldError("startDate") ?? (lockedStartDate < today ? errors.startDate : undefined)}
+                        hint="The requirement's start date. Propose other dates after sending, if needed."
                       />
-                      External client
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="radio"
-                        checked={customerMode === "renter"}
-                        onChange={() => setCustomerMode("renter")}
+                    ) : (
+                      <Input label="Start date" required type="date" mono min={today} {...bind("startDate")} hint="Today or later." />
+                    )}
+                  </div>
+                  <div data-field="endDate">
+                    {lockedEndDate ? (
+                      <Input
+                        label="End date"
+                        mono
+                        value={formatDate(lockedEndDate)}
+                        readOnly
+                        disabled
+                        suffix={<Icon name="lock" size={12} />}
+                        hint="Worked out from the requirement's duration."
                       />
-                      FleetIP Renter
-                    </label>
+                    ) : (
+                      <Input label="End date" type="date" mono min={startDate || today} {...bind("endDate")} hint="Leave empty for an open-ended rental." />
+                    )}
+                  </div>
+                  <div data-field="rate">
+                    <Input
+                      label="Rate"
+                      required
+                      prefix="₹"
+                      mono
+                      inputMode="decimal"
+                      {...bind("rate")}
+                      hint={
+                        responseRate != null
+                          ? "Starts at the indicative rate you gave in your response."
+                          : auctionBidRate != null
+                            ? "Starts at your last bid in the auction."
+                            : undefined
+                      }
+                    />
+                  </div>
+                  <div data-field="rateUnit">
+                    {lockedRateUnit ? (
+                      <Input
+                        label="Rate is"
+                        value={formatRateUnit(lockedRateUnit).replace(/^per/, "Per")}
+                        readOnly
+                        disabled
+                        suffix={<Icon name="lock" size={12} />}
+                        hint="Set by the requirement, so every quotation compares like for like."
+                      />
+                    ) : (
+                      <Select label="Rate is" required placeholder="Choose a unit" options={RATE_UNIT_OPTIONS} {...bind("rateUnit")} />
+                    )}
+                  </div>
+                  <div data-field="validityDate">
+                    <Input
+                      label="Valid until"
+                      required
+                      type="date"
+                      mono
+                      min={today}
+                      max={startDate || undefined}
+                      {...bind("validityDate")}
+                      hint="Last day the customer can accept. On or before the start date; it lapses after."
+                    />
                   </div>
                 </div>
-              )}
-            </div>
-            {isFromRequirement && requirement ? (
-              <div>
-                <span className="mb-1 block text-xs font-medium text-ink-muted">
-                  Renter organization
-                </span>
-                <p className="rounded-control border border-border bg-surface-sunk px-2.5 py-2 text-sm text-ink-muted">
-                  {renterName(requirement.renterOrganizationId)} (locked to this requirement)
-                </p>
-                <input
-                  type="hidden"
-                  name="renterOrganizationId"
-                  value={requirement.renterOrganizationId}
-                />
-              </div>
-            ) : customerMode === "external" ? (
-              <Input label="Client name" name="clientName" required />
-            ) : (
-              <Select
-                label="Renter organization"
-                name="renterOrganizationId"
-                required
-                options={[
-                  { value: "", label: "Select a renter" },
-                  ...renterOrganizations.map((o) => ({ value: o.id, label: o.name })),
-                ]}
-              />
-            )}
-          </div>
+              </FormSection>
 
-          <div className="flex flex-col gap-1 border-t border-border pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-meta">
-              Schedule &amp; rate
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {lockedStartDate ? (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-ink-muted">Start date</span>
-                  <p className="flex h-[34px] items-center text-sm text-ink">{lockedStartDate}</p>
-                  <input type="hidden" name="startDate" value={lockedStartDate} />
+              <FormSection title="Charges and commercial terms" className="border-t border-border pt-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div data-field="mobilizationCharge">
+                    <Input label="Mobilization charge" prefix="₹" mono inputMode="decimal" {...bind("mobilizationCharge")} />
+                  </div>
+                  <div data-field="demobilizationCharge">
+                    <Input label="Demobilization charge" prefix="₹" mono inputMode="decimal" {...bind("demobilizationCharge")} />
+                  </div>
+                  <div data-field="overtimeRate">
+                    <Input label="Overtime rate" prefix="₹" suffix="per h" mono inputMode="decimal" {...bind("overtimeRate")} />
+                  </div>
+                  <div data-field="minimumRentalPeriodValue">
+                    <Input label="Minimum rental period" mono inputMode="numeric" {...bind("minimumRentalPeriodValue")} />
+                  </div>
+                  <div data-field="minimumRentalPeriodUnit">
+                    <Select label="Period unit" placeholder="Not specified" options={DURATION_UNIT_OPTIONS} {...bind("minimumRentalPeriodUnit")} />
+                  </div>
+                  <div data-field="noticePeriodDays">
+                    <Input label="Notice period" suffix="days" mono inputMode="numeric" {...bind("noticePeriodDays")} />
+                  </div>
                 </div>
-              ) : (
-                <Input
-                  label="Start date"
-                  name="startDate"
-                  type="date"
-                  min={todayIsoDate()}
-                  required
-                />
-              )}
-              {lockedEndDate ? (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-ink-muted">End date</span>
-                  <p className="flex h-[34px] items-center text-sm text-ink">{lockedEndDate}</p>
-                  <input type="hidden" name="endDate" value={lockedEndDate} />
+                <div data-field="gstTerms">
+                  <Input label="GST terms" placeholder="e.g. GST extra @ 18%" {...bind("gstTerms")} />
                 </div>
-              ) : (
-                <Input label="End date (leave blank if open-ended)" name="endDate" type="date" />
-              )}
-              <Input
-                label="Rate"
-                name="rate"
-                type="number"
-                step="0.01"
-                required
-                defaultValue={prefilledRate ?? undefined}
-              />
-              {lockedRateUnit ? (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-ink-muted">Rate unit</span>
-                  <p className="flex h-[34px] items-center text-sm text-ink capitalize">
-                    {lockedRateUnit}
-                  </p>
-                  <input type="hidden" name="rateUnit" value={lockedRateUnit} />
+                <div data-field="paymentTerms">
+                  <Textarea label="Payment terms" rows={2} {...bind("paymentTerms")} />
                 </div>
-              ) : (
-                <Select label="Rate unit" name="rateUnit" required options={RATE_UNIT_OPTIONS} />
-              )}
-              <Input
-                label="Valid until"
-                name="validityDate"
-                type="date"
-                min={todayIsoDate()}
-                required
-                defaultValue={requirement?.validityDate}
-              />
-            </div>
-          </div>
+              </FormSection>
 
-          <div className="flex flex-col gap-1 border-t border-border pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-meta">
-              Working terms &amp; responsibilities
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Input
-                label="Mobilization charge"
-                name="mobilizationCharge"
-                type="number"
-                step="0.01"
-                min={0}
-              />
-              <Input
-                label="Demobilization charge"
-                name="demobilizationCharge"
-                type="number"
-                step="0.01"
-                min={0}
-              />
-              <Input label="Overtime rate" name="overtimeRate" type="number" step="0.01" min={0} />
-              <Input label="Working hours / shift" name="workingHours" type="number" step="0.5" />
-              <Input
-                label="Working days / week"
-                name="workingDaysPerWeek"
-                type="number"
-                min={1}
-                max={7}
-              />
-              <Select label="Operator" name="operatorScope" options={OPERATOR_SCOPE_OPTIONS} />
-              <Select label="Fuel scope" name="fuelScope" options={RESPONSIBLE_PARTY_OPTIONS} />
-              <Select
-                label="Accommodation scope"
-                name="accommodationScope"
-                options={RESPONSIBLE_PARTY_OPTIONS}
-              />
-              <Input
-                label="Minimum rental period"
-                name="minimumRentalPeriodValue"
-                type="number"
-                min={1}
-              />
-              <Select
-                label="Period unit"
-                name="minimumRentalPeriodUnit"
-                options={RATE_UNIT_OPTIONS}
-              />
-              <Input label="Notice period (days)" name="noticePeriodDays" type="number" min={0} />
-            </div>
-            <Input label="GST terms" name="gstTerms" placeholder="e.g. GST extra @ 18%" />
-            <Input label="Payment terms" name="paymentTerms" />
-            <Input label="Shift structure" name="shiftStructure" />
-            <Input label="Sunday condition" name="sundayCondition" />
-            <Input label="Fuel norms" name="fuelNorms" />
-            <Input label="De-hire terms" name="dehireTerms" />
-          </div>
+              <FormSection title="Operating terms" className="border-t border-border pt-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div data-field="operatorScope">
+                    <Select label="Operator" placeholder="Not specified" options={OPERATOR_OPTIONS} {...bind("operatorScope")} />
+                  </div>
+                  <div data-field="workingHours">
+                    <Input label="Working hours" suffix="per shift" mono inputMode="decimal" {...bind("workingHours")} />
+                  </div>
+                  <div data-field="workingDaysPerWeek">
+                    <Input label="Working days" suffix="per week" mono inputMode="numeric" {...bind("workingDaysPerWeek")} />
+                  </div>
+                  <div data-field="fuelScope">
+                    <Select label="Fuel" placeholder="Not specified" options={RESPONSIBLE_PARTY_OPTIONS} {...bind("fuelScope")} />
+                  </div>
+                  <div data-field="accommodationScope">
+                    <Select label="Accommodation" placeholder="Not specified" options={RESPONSIBLE_PARTY_OPTIONS} {...bind("accommodationScope")} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div data-field="shiftStructure">
+                    <Input label="Shift structure" placeholder="e.g. 1 shift × 10 h, 08:00–18:00" {...bind("shiftStructure")} />
+                  </div>
+                  <div data-field="sundayCondition">
+                    <Input label="Sunday condition" {...bind("sundayCondition")} />
+                  </div>
+                  <div data-field="fuelNorms">
+                    <Input label="Fuel norms" {...bind("fuelNorms")} />
+                  </div>
+                  <div data-field="dehireTerms">
+                    <Input label="Dehire terms" {...bind("dehireTerms")} />
+                  </div>
+                </div>
+              </FormSection>
 
-          <div className="flex flex-col gap-1 border-t border-border pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-meta">
-              Terms &amp; conditions
-            </p>
-            <Input
-              label="Special / site conditions"
-              name="commercialNotes"
-              defaultValue={shiftSummary || undefined}
-            />
-            <Input label="Company-specific T&Cs" name="companyTerms" />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="secondary" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit">Create quotation</Button>
-          </div>
-        </form>
+              <FormSection title="Conditions" className="border-t border-border pt-4">
+                <div data-field="commercialNotes">
+                  <Textarea
+                    label="Special and site conditions"
+                    rows={2}
+                    {...bind("commercialNotes")}
+                    hint={requirement ? "Starts with the requirement's shift and crew details." : undefined}
+                  />
+                </div>
+                <div data-field="companyTerms">
+                  <Textarea label="Company terms and conditions" rows={2} {...bind("companyTerms")} />
+                </div>
+              </FormSection>
+            </>
+          ) : null}
+        </>
       )}
     </Dialog>
+  );
+}
+
+function ResultsList({ results }: { results: MachineResult[] }) {
+  const created = results.filter((r) => r.outcome === "created").length;
+  return (
+    <>
+      <p className="m-0 text-sm text-ink-body" role="status">
+        {created} of {plural(results.length, "machine")} quoted.
+        {created < results.length ? " The rest have no quotation — nothing was created for them." : ""}
+      </p>
+      <ul className="m-0 flex list-none flex-col rounded-control border border-border-strong p-0">
+        {results.map((r) => (
+          <li key={r.machineId} className="flex items-start gap-3 border-b border-border px-3 py-2.5 last:border-0">
+            <Icon
+              name={r.outcome === "created" ? "success" : r.outcome === "failed" ? "error" : "warning"}
+              size={16}
+              label={r.outcome === "created" ? "Created" : r.outcome === "failed" ? "Failed" : "Not tried"}
+              className={cx("mt-px", r.outcome === "created" ? "text-available" : r.outcome === "failed" ? "text-sev-error" : "text-sev-warning")}
+            />
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="font-mono text-xs font-semibold text-ink">{r.assetCode}</span>
+              {r.outcome === "created" && r.quotation ? (
+                <span className="text-xs text-ink-body">
+                  Created{" "}
+                  <UILink href={`/quotations/${r.quotation.id}`} className="font-mono font-medium text-accent-text hover:underline">
+                    {r.quotation.referenceNumber}
+                  </UILink>{" "}
+                  as a draft.
+                </span>
+              ) : (
+                <span className="text-xs text-destructive">{r.reason}</span>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }

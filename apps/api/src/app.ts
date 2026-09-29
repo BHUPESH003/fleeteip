@@ -25,7 +25,7 @@ import { organizationRoutes } from "./modules/organizations/presentation/routes.
 import { inviteRoutes } from "./modules/organizations/presentation/invite-routes.js";
 import { searchRoutes } from "./modules/search/presentation/routes.js";
 import { transportRoutes } from "./modules/transport/presentation/routes.js";
-import { AppError } from "./shared/errors.js";
+import { AppError, ConflictError, ValidationError } from "./shared/errors.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -43,7 +43,19 @@ export async function buildApp() {
 
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     if (error instanceof AppError) {
-      reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
+      const detail =
+        error instanceof ValidationError && error.issues.length
+          ? { issues: error.issues }
+          : error instanceof ConflictError && error.field
+            ? { field: error.field }
+            : {};
+      reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, ...detail } });
+      return;
+    }
+    // SQLSTATE 22P02 = invalid_text_representation: a malformed id in the URL
+    // (e.g. /machines/abc against a uuid column). No such record, so 404.
+    if ((error as { code?: unknown }).code === "22P02") {
+      reply.code(404).send({ error: { code: "not_found", message: "Not found" } });
       return;
     }
     // Fastify's own errors (malformed JSON, validation, payload-too-large, ...)

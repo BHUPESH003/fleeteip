@@ -2,6 +2,7 @@ import {
   createInviteRequestSchema,
   createRoleRequestSchema,
   updateMemberRoleRequestSchema,
+  updateOrganizationRequestSchema,
   updateRoleRequestSchema,
 } from "@fleetip/contracts/organization";
 import type { FastifyInstance } from "fastify";
@@ -20,6 +21,19 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
       return container.organizationService.getOrganization(userId, request.params.organizationId);
+    },
+  );
+
+  fastify.patch<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(updateOrganizationRequestSchema, request.body);
+      return container.organizationService.updateOrganization(
+        userId,
+        request.params.organizationId,
+        body,
+      );
     },
   );
 
@@ -57,6 +71,26 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
       );
       reply.code(201);
       return result;
+    },
+  );
+
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/invites",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.inviteService.listInvites(userId, request.params.organizationId);
+    },
+  );
+
+  fastify.post<{ Params: { organizationId: string; inviteId: string } }>(
+    "/organizations/:organizationId/invites/:inviteId/revoke",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.inviteService.revokeInvite(
+        userId,
+        request.params.organizationId,
+        request.params.inviteId,
+      );
     },
   );
 

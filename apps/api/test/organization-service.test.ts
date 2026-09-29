@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { OrganizationTypeCode } from "@fleetip/contracts/organization";
+import { updateOrganizationRequestSchema } from "@fleetip/contracts/organization";
 import type {
   ActiveMembershipRecord,
   MembershipRecord,
   MembershipRepositoryPort,
   OrganizationMemberRow,
+  OrganizationProfileRepositoryPort,
   OrganizationRepositoryPort,
 } from "../src/modules/organizations/domain/ports.js";
 import type { RoleRecord, RoleRepositoryPort } from "../src/modules/permissions/domain/ports.js";
@@ -63,10 +65,25 @@ function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "ren
   );
 }
 
+// Records every updateName call so the profile-edit tests can assert
+// exactly what reached the repository.
+const nameUpdates: { id: string; name: string }[] = [];
+
 function fakeOrganizationTypeRepository(
   organizationTypeCode: OrganizationTypeCode,
-): OrganizationRepositoryPort {
+): OrganizationRepositoryPort & OrganizationProfileRepositoryPort {
   return {
+    updateName: async (id, name) => {
+      nameUpdates.push({ id, name });
+      return {
+        id,
+        organization_type_id: `type-${organizationTypeCode}`,
+        name,
+        code: "APEX",
+        status: "active",
+        created_at: new Date(),
+      };
+    },
     findTypeByCode: async () => {
       throw new Error("not used in this test");
     },
@@ -333,5 +350,40 @@ describe("OrganizationService", () => {
     await expect(
       service.updateMemberRole(OWNER_USER_ID, RC_ORG_ID, "membership-1", "role-does-not-exist"),
     ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe("OrganizationService.updateOrganization", () => {
+  it("renames the organization for a caller with organization.manage", async () => {
+    nameUpdates.length = 0;
+    const service = buildService();
+    const updated = await service.updateOrganization(OWNER_USER_ID, RC_ORG_ID, { name: "Apex Rentals" });
+    expect(updated.name).toBe("Apex Rentals");
+    // Code/type are untouched — they come from the existing record.
+    expect(updated.code).toBe("APEX");
+    expect(updated.organizationTypeCode).toBe("rental_company");
+    expect(nameUpdates).toEqual([{ id: RC_ORG_ID, name: "Apex Rentals" }]);
+  });
+
+  it("rejects a caller without organization.manage, writing nothing", async () => {
+    nameUpdates.length = 0;
+    const service = buildService();
+    await expect(
+      service.updateOrganization("user-outsider", RC_ORG_ID, { name: "Hijacked" }),
+    ).rejects.toThrow(ForbiddenError);
+    expect(nameUpdates).toEqual([]);
+  });
+
+  it("request schema accepts only name — type, code, status and id are refused", () => {
+    expect(updateOrganizationRequestSchema.parse({ name: "  Apex  " })).toEqual({ name: "Apex" });
+    for (const extra of [
+      { code: "HACK" },
+      { organizationTypeCode: "renter" },
+      { status: "active" },
+      { id: "org-other" },
+    ]) {
+      expect(updateOrganizationRequestSchema.safeParse({ name: "Apex", ...extra }).success).toBe(false);
+    }
+    expect(updateOrganizationRequestSchema.safeParse({ name: "   " }).success).toBe(false);
   });
 });

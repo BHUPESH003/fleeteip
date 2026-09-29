@@ -54,9 +54,14 @@ function toProduct(record: ProductRecord): Product {
     capacity: record.capacity,
     capacityUnit: record.capacity_unit as CapacityUnit | null,
     specifications: record.specifications as ProductSpecifications | null,
+    disabledAt: record.disabled_at ? new Date(record.disabled_at).toISOString() : null,
     createdAt: new Date(record.created_at).toISOString(),
   };
 }
+
+// A malformed id can't exist; checking here keeps it a 404 instead of a
+// Postgres uuid cast error (500) on the public get-by-id routes.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class CatalogueService {
   constructor(
@@ -79,9 +84,29 @@ export class CatalogueService {
     return records.map(toProductSubcategory);
   }
 
-  async listProducts(subcategoryId?: string): Promise<Product[]> {
-    const records = await this.productRepository.listAll(subcategoryId);
+  async listProducts(subcategoryId?: string, includeDisabled = false): Promise<Product[]> {
+    const records = await this.productRepository.listAll(subcategoryId, includeDisabled);
     return records.map(toProduct);
+  }
+
+  // Get-by-id returns disabled products too — existing machines/rentals
+  // must keep resolving their product.
+  async getCategory(categoryId: string): Promise<ProductCategory> {
+    const record = UUID.test(categoryId) ? await this.productCategoryRepository.findById(categoryId) : undefined;
+    if (!record) throw new NotFoundError("Product category not found");
+    return toProductCategory(record);
+  }
+
+  async getSubcategory(subcategoryId: string): Promise<ProductSubcategory> {
+    const record = UUID.test(subcategoryId) ? await this.productSubcategoryRepository.findById(subcategoryId) : undefined;
+    if (!record) throw new NotFoundError("Product subcategory not found");
+    return toProductSubcategory(record);
+  }
+
+  async getProduct(productId: string): Promise<Product> {
+    const record = UUID.test(productId) ? await this.productRepository.findById(productId) : undefined;
+    if (!record) throw new NotFoundError("Product not found");
+    return toProduct(record);
   }
 
   // --- Writes: gated by catalogue.manage. organizationId identifies the
@@ -115,7 +140,7 @@ export class CatalogueService {
   private async doCreateCategory(input: CreateProductCategoryRequest): Promise<ProductCategory> {
     const codeExists = await this.productCategoryRepository.codeExists(input.code);
     if (codeExists) {
-      throw new ConflictError("A product category with this code already exists");
+      throw new ConflictError("A product category with this code already exists", "code");
     }
     const record = await this.productCategoryRepository.create(input);
     return toProductCategory(record);
@@ -173,7 +198,7 @@ export class CatalogueService {
       input.code,
     );
     if (codeExists) {
-      throw new ConflictError("A subcategory with this code already exists in this category");
+      throw new ConflictError("A subcategory with this code already exists in this category", "code");
     }
     const record = await this.productSubcategoryRepository.create(input);
     return toProductSubcategory(record);
@@ -249,6 +274,33 @@ export class CatalogueService {
     const existing = await this.productRepository.findById(productId);
     if (!existing) throw new NotFoundError("Product not found");
     const record = await this.productRepository.update(productId, input);
+    return toProduct(record);
+  }
+
+  // --- Soft disable (0030). Never deletes: machines reference products. ---
+
+  async setProductDisabled(
+    userId: string,
+    organizationId: string,
+    productId: string,
+    disabled: boolean,
+  ): Promise<Product> {
+    await this.permissionService.requirePermission(userId, organizationId, "catalogue.manage");
+    return this.doSetProductDisabled(productId, disabled);
+  }
+
+  async setProductDisabledAsPlatformAdmin(productId: string, disabled: boolean): Promise<Product> {
+    return this.doSetProductDisabled(productId, disabled);
+  }
+
+  private async doSetProductDisabled(productId: string, disabled: boolean): Promise<Product> {
+    const existing = await this.productRepository.findById(productId);
+    if (!existing) throw new NotFoundError("Product not found");
+    // Re-disabling keeps the original timestamp.
+    if (disabled === Boolean(existing.disabled_at)) return toProduct(existing);
+    const record = await this.productRepository.update(productId, {
+      disabledAt: disabled ? new Date() : null,
+    });
     return toProduct(record);
   }
 }

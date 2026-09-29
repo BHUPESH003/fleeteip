@@ -1,4 +1,4 @@
-import type { WorkOrderStatus } from "@fleetip/contracts/work-order";
+import { WorkOrderStatus } from "@fleetip/contracts/work-order";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import type {
@@ -123,7 +123,7 @@ export class WorkOrderRepository implements WorkOrderRepositoryPort {
         notice_period_days: input.noticePeriodDays ?? null,
         commercial_notes: input.commercialNotes ?? null,
         company_terms: input.companyTerms ?? null,
-        status: "issued",
+        status: WorkOrderStatus.issued,
       })
       .returning(WORK_ORDER_COLUMNS)
       .executeTakeFirstOrThrow();

@@ -40,6 +40,13 @@ export interface OrganizationRepositoryPort {
   updateStatus(id: string, status: "active" | "suspended"): Promise<OrganizationRecord>;
 }
 
+// Kept off OrganizationRepositoryPort on purpose: that port is faked in
+// ~25 test files that never edit a profile. Only OrganizationService needs
+// it; OrganizationRepository implements both.
+export interface OrganizationProfileRepositoryPort {
+  updateName(id: string, name: string): Promise<OrganizationRecord>;
+}
+
 export interface MembershipRecord {
   id: string;
   user_id: string;
@@ -110,6 +117,16 @@ export interface OrganizationInviteWithContextRow {
   expires_at: Date | string;
 }
 
+// Admin list row — role name joined in, token_hash deliberately not selected.
+export interface OrganizationInviteListRow {
+  id: string;
+  organization_id: string;
+  role_name: string;
+  status: string;
+  expires_at: Date | string;
+  created_at: Date | string;
+}
+
 export interface InviteRepositoryPort {
   create(input: {
     organizationId: string;
@@ -123,6 +140,15 @@ export interface InviteRepositoryPort {
     tokenHash: string,
   ): Promise<OrganizationInviteWithContextRow | undefined>;
   markAccepted(id: string, acceptedByUserId: string): Promise<OrganizationInviteRecord>;
+  // Always scoped by organizationId — an invite id alone never resolves
+  // across tenants.
+  listByOrganization(organizationId: string, limit: number): Promise<OrganizationInviteListRow[]>;
+  findByIdInOrganization(
+    id: string,
+    organizationId: string,
+  ): Promise<OrganizationInviteListRow | undefined>;
+  // Conditional on status still being "pending" — undefined if it no longer is.
+  markRevoked(id: string): Promise<OrganizationInviteRecord | undefined>;
 }
 
 export interface MembershipRepositoryPort {

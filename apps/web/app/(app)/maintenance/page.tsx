@@ -1,370 +1,689 @@
 "use client";
 
-import type { Machine } from "@fleetip/contracts/equipment";
-import type { MaintenanceRecord, MaintenanceStatus, MaintenanceType } from "@fleetip/contracts/maintenance";
+import type { Product } from "@fleetip/contracts/catalogue";
+import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
+import { MaintenanceStatus, MaintenanceType, maintenanceStatusSchema, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
 import type { Rental } from "@fleetip/contracts/rental";
 import {
   Alert,
-  Card,
+  AttentionStrip,
+  Button,
+  CellStack,
   EmptyState,
   ErrorState,
-  Input,
-  LoadingState,
+  Icon,
+  KeyFigures,
+  KeyFiguresSkeleton,
+  Menu,
+  PageBody,
   PageHeader,
+  Pagination,
   Select,
+  Table,
+  TableSkeleton,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+  UILink,
+  cx,
+  type KeyFigure,
 } from "@fleetip/ui";
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ForbiddenPage } from "../../../components/PageStates";
 import { apiClient } from "../../../lib/api-client";
-import { formatCurrencyINR, formatDateRange } from "../../../lib/format";
+import { useConnection } from "../../../lib/connection";
+import { describeError, errorStatus, OFFLINE_HINT } from "../../../lib/errors";
+import { addDays, daysBetween, formatDateRange, formatNumber, formatShortDate, plural, todayIsoDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
-import { blocksAvailability, MaintenancePanel } from "../machines/panels";
-import { legalNextMaintenanceStatuses, MAINTENANCE_STATUS_MAP } from "../machines/shared";
+import { Status, statusLabel, statusOptions } from "../../../lib/status";
+import { optional, useLoad } from "../../../lib/use-load";
+import { MaintenanceFormDialog } from "../machines/MaintenanceFormDialog";
+import { MaintenancePanel } from "../machines/panels";
+import { MAINTENANCE_TYPE_LABEL, MAINTENANCE_TYPE_OPTIONS, blocksAvailability, productName } from "../machines/shared";
+import {
+  DrillDownBar,
+  ListCard,
+  ListSearch,
+  NoMatches,
+  PAGE_SIZE,
+  PickRecordDialog,
+  RefCell,
+  compareText,
+  matches,
+  paginate,
+  quoted,
+  sortRows,
+  useListView,
+} from "./list-kit";
+import {
+  MaintenanceTransitionDialog,
+  canCancelMaintenance,
+  nextMaintenanceStep,
+  type MaintenanceTarget,
+  type MaintenanceTransition,
+} from "./MaintenanceTransitionDialog";
 
-const TYPE_OPTIONS: { value: MaintenanceType | ""; label: string }[] = [
-  { value: "", label: "All types" },
-  { value: "scheduled", label: "Scheduled" },
-  { value: "breakdown", label: "Breakdown" },
-  { value: "inspection", label: "Inspection" },
-  { value: "other", label: "Other" },
-];
-
-interface Column {
-  status: MaintenanceStatus;
-  label: string;
-  toneClass: string;
-  washClass: string;
-  edgeClass: string;
+interface MaintenanceData {
+  records: MaintenanceRecord[];
+  /** null when the role can't view machines (Equipment permission). */
+  machines: Machine[] | null;
+  products: Map<string, Product>;
+  /** null when the role can't view rentals. */
+  rentals: Rental[] | null;
 }
 
-const COLUMNS: Column[] = [
-  { status: "scheduled", label: "Scheduled", toneClass: "text-attention", washClass: "bg-accent-wash/40", edgeClass: "border-t-attention-lane-edge" },
-  { status: "in_progress", label: "In progress", toneClass: "text-destructive", washClass: "bg-destructive-bg/50", edgeClass: "border-t-destructive-lane-edge" },
-  { status: "completed", label: "Completed", toneClass: "text-available", washClass: "bg-available-bg/40", edgeClass: "border-t-available" },
-  { status: "cancelled", label: "Cancelled", toneClass: "text-out-of-service", washClass: "bg-out-of-service-bg/40", edgeClass: "border-t-border-stronger" },
-];
+async function loadMaintenance(orgId: string, access: { machines: boolean; rentals: boolean }): Promise<MaintenanceData> {
+  // Machines, products and rentals are enrichment: a role with only
+  // maintenance.manage still gets a working list (see docs/decisions.md,
+  // "ancillary permissions blocking whole pages").
+  const [records, machines, products, rentals] = await Promise.all([
+    apiClient.listMaintenanceRecords(orgId) as Promise<MaintenanceRecord[]>,
+    optional(access.machines, () => apiClient.listMachines(orgId) as Promise<Machine[]>, null as Machine[] | null),
+    optional(true, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
+    optional(access.rentals, () => apiClient.listRentals(orgId) as Promise<Rental[]>, null as Rental[] | null),
+  ]);
+  return { records, machines, products: new Map(products.map((p) => [p.id, p])), rentals };
+}
 
-const CARDS_PER_COLUMN = 6;
+/** Derived views offered in the status filter next to the stored statuses. */
+type DerivedView = "no_end" | "late_start" | "soon";
+const DERIVED_VIEWS: Record<DerivedView, string> = {
+  no_end: "In progress · no end date",
+  late_start: "Scheduled · start date passed",
+  soon: "Scheduled · starts within 7 days",
+};
+const STORED = maintenanceStatusSchema.options;
 
-/**
- * Standalone Maintenance workspace — a workshop board, not a list.
- * Columns are the four real `maintenanceStatus` values.
- * `GET .../maintenance-records` serves a real org-wide list (confirmed
- * against the actual Fastify route + MaintenanceService.listByOrganization
- * before building this), gated by maintenance.manage — the board below is
- * the primary, real view. The per-machine picker underneath stays too:
- * it's still where a new maintenance record is scheduled (createMaintenance
- * is per-machine only, and moving a card here would need two separate
- * writes — see the Rule callout below).
- */
+function inDerivedView(record: MaintenanceRecord, view: DerivedView, today: string): boolean {
+  if (view === "no_end") return record.status === MaintenanceStatus.in_progress && !record.endDate;
+  if (view === "late_start") return record.status === MaintenanceStatus.scheduled && record.startDate < today;
+  return record.status === MaintenanceStatus.scheduled && record.startDate >= today && record.startDate <= addDays(today, 7);
+}
+
+type SortKey = "machine" | "dates" | "status";
+const SORTS: Record<SortKey, "asc" | "desc"> = { machine: "asc", dates: "desc", status: "asc" };
+const STATUS_ORDER: Record<MaintenanceRecord["status"], number> = { in_progress: 0, scheduled: 1, completed: 2, cancelled: 3 };
+
+const COLUMNS = 7;
+
+/** "starts in 3 days" / "in the workshop 5 days" — the line under a job's dates. */
+function timing(record: MaintenanceRecord, today: string): { text: string; late: boolean } {
+  if (record.status === MaintenanceStatus.scheduled) {
+    const days = daysBetween(today, record.startDate);
+    if (days > 0) return { text: `starts in ${plural(days, "day")}`, late: false };
+    if (days === 0) return { text: "starts today", late: false };
+    return { text: `${plural(-days, "day")} past its start`, late: true };
+  }
+  if (record.status === MaintenanceStatus.in_progress) {
+    if (record.endDate && record.endDate < today) {
+      return { text: `${plural(daysBetween(record.endDate, today), "day")} past expected return`, late: true };
+    }
+    return { text: `in the workshop ${plural(Math.max(1, daysBetween(record.startDate, today) + 1), "day")}`, late: false };
+  }
+  if (record.status === MaintenanceStatus.completed) {
+    return { text: record.endDate ? `took ${plural(daysBetween(record.startDate, record.endDate) + 1, "day")}` : "completed", late: false };
+  }
+  return { text: "cancelled", late: false };
+}
+
 export default function MaintenancePage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
+  // Maintenance is the Rental Company's own fleet record — there is no
+  // Renter-facing maintenance permission (docs/decisions.md).
   const canView = hasPermission("maintenance.manage");
-  // Machine names/rates are enrichment, not the point of this page
-  // (maintenance.manage is) — a role without equipment.manage still gets a
-  // fully working board, just without asset codes/rates resolved (already
-  // handled: `machine?.assetCode ?? "—"`).
-  const canListMachines = hasPermission("equipment.manage");
-  const canListRentals = hasPermission("rental.manage");
+  const access = { machines: hasPermission("equipment.manage"), rentals: hasPermission("rental.manage") };
+  const { online } = useConnection();
+  const today = todayIsoDate();
 
-  const [records, setRecords] = useState<MaintenanceRecord[] | null>(null);
-  const [machines, setMachines] = useState<Machine[] | null>(null);
-  const [rentals, setRentals] = useState<Rental[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<MaintenanceType | "">("");
-  const [expanded, setExpanded] = useState<Set<MaintenanceStatus>>(new Set());
+  const { data, error, loading, reload } = useLoad(
+    () => loadMaintenance(organizationId!, access),
+    [organizationId, access.machines, access.rentals],
+    Boolean(organizationId) && canView,
+  );
+  const view = useListView<SortKey>("maintenance", SORTS, "dates");
+  const { get, set } = view;
 
-  async function load() {
-    if (!organizationId || !canView) return;
-    try {
-      const [recordList, machineList, rentalList] = await Promise.all([
-        apiClient.listMaintenanceRecords(organizationId) as Promise<MaintenanceRecord[]>,
-        canListMachines ? (apiClient.listMachines(organizationId) as Promise<Machine[]>) : Promise.resolve([]),
-        canListRentals ? (apiClient.listRentals(organizationId) as Promise<Rental[]>) : Promise.resolve([]),
-      ]);
-      setRecords(recordList);
-      setMachines(machineList);
-      setRentals(rentalList);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load maintenance records");
-    }
-  }
+  const [transition, setTransition] = useState<MaintenanceTransition | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [formMachine, setFormMachine] = useState<Machine | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
 
+  const statusParam = get("status");
+  const typeParam = get("type");
+  const machineParam = get("machine");
+
+  // MaintenancePanel keeps its own copy of the machine's jobs; refresh the
+  // fleet list when the user leaves the drill-down so it isn't stale.
+  const previousMachine = useRef(machineParam);
   useEffect(() => {
-    void load();
-  }, [organizationId, canView, canListMachines, canListRentals]);
+    if (previousMachine.current && !machineParam) void reload();
+    previousMachine.current = machineParam;
+  }, [machineParam, reload]);
 
-  const machinesById = useMemo(() => new Map((machines ?? []).map((m) => [m.id, m])), [machines]);
+  const machinesById = useMemo(() => new Map((data?.machines ?? []).map((m) => [m.id, m])), [data?.machines]);
+  const drillMachine = machineParam ? (machinesById.get(machineParam) ?? null) : null;
 
-  const filteredRecords = useMemo(() => {
-    if (!records) return [];
-    const q = search.trim().toLowerCase();
-    return records.filter((record) => {
-      if (typeFilter && record.maintenanceType !== typeFilter) return false;
-      if (!q) return true;
-      const machine = machinesById.get(record.machineId);
-      const haystack = [machine?.assetCode, record.notes].filter(Boolean).join(" ").toLowerCase();
-      return haystack.includes(q);
+  const records = useMemo(() => data?.records ?? [], [data?.records]);
+  const filtered = useMemo(() => {
+    return records.filter((r) => {
+      if (machineParam && r.machineId !== machineParam) return false;
+      if (statusParam) {
+        if ((STORED as readonly string[]).includes(statusParam)) {
+          if (r.status !== statusParam) return false;
+        } else if (statusParam in DERIVED_VIEWS) {
+          if (!inDerivedView(r, statusParam as DerivedView, today)) return false;
+        }
+      }
+      if (typeParam && r.maintenanceType !== typeParam) return false;
+      if (view.query) {
+        const machine = machinesById.get(r.machineId);
+        const product = machine ? productName(data?.products.get(machine.productId)) : null;
+        if (
+          !matches(view.query, [
+            machine?.assetCode,
+            machine?.registrationNumber,
+            product,
+            MAINTENANCE_TYPE_LABEL[r.maintenanceType],
+            r.notes,
+            statusLabel("maintenance", r.status),
+          ])
+        ) {
+          return false;
+        }
+      }
+      return true;
     });
-  }, [records, machinesById, search, typeFilter]);
+  }, [records, machineParam, statusParam, typeParam, view.query, machinesById, data?.products, today]);
 
-  async function handleStatusChange(record: MaintenanceRecord, next: MaintenanceStatus) {
-    if (!organizationId) return;
-    try {
-      await apiClient.updateMaintenanceStatus(organizationId, record.id, next);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update maintenance record");
-    }
-  }
+  const sorted = useMemo(() => {
+    const compare =
+      view.sortKey === "machine"
+        ? (a: MaintenanceRecord, b: MaintenanceRecord) =>
+            compareText(machinesById.get(a.machineId)?.assetCode, machinesById.get(b.machineId)?.assetCode) ||
+            b.startDate.localeCompare(a.startDate)
+        : view.sortKey === "status"
+          ? (a: MaintenanceRecord, b: MaintenanceRecord) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.startDate.localeCompare(b.startDate)
+          : (a: MaintenanceRecord, b: MaintenanceRecord) => a.startDate.localeCompare(b.startDate) || a.createdAt.localeCompare(b.createdAt);
+    return sortRows(
+      filtered,
+      compare,
+      view.sortDir,
+      view.sortKey === "machine" ? (r) => !machinesById.get(r.machineId)?.assetCode : undefined,
+    );
+  }, [filtered, view.sortKey, view.sortDir, machinesById]);
+  const page = paginate(sorted, view.page);
 
-  if (!organizationId) return <LoadingState label="Loading…" />;
-
-  if (!canView) {
+  if (currentMembership && !canView) {
     return (
-      <div className="flex flex-col gap-4">
-        <PageHeader title="Maintenance" />
-        <EmptyState
-          title="You don't have permission to view maintenance"
-          description="Maintenance is managed by the rental company that owns the fleet."
-        />
-      </div>
+      <ForbiddenPage
+        what="maintenance"
+        permissionHint="Workshop records need the Maintenance permission. They're kept by the rental company that owns the fleet."
+      />
     );
   }
-
-  if (error) return <ErrorState message={error} />;
-  if (!records || !machines) return <LoadingState label="Loading maintenance…" />;
-
-  const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
-  const inProgressMachineIds = new Set(filteredRecords.filter((r) => r.status === "in_progress").map((r) => r.machineId));
-  const offFleetToday = inProgressMachineIds.size;
-  // "Rate not earning" — each in-progress-maintenance machine's most recent
-  // known rate (from its rental history), summed. A real derivation from
-  // data already on hand, not a fabricated aggregate — 0/omitted entirely
-  // when the caller lacks rental.manage (canListRentals false, rentals []).
-  const dailyRateNotEarning = [...inProgressMachineIds].reduce((sum, machineId) => {
-    const lastRental = [...rentals]
-      .filter((r) => r.machineId === machineId && r.rateUnit === "day")
-      .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
-    return sum + (lastRental?.rate ?? 0);
-  }, 0);
-
-  function columnRecords(status: MaintenanceStatus) {
-    return filteredRecords.filter((r) => r.status === status).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  if (error && errorStatus(error) === 403) {
+    return <ForbiddenPage what="maintenance" permissionHint="Workshop records need the Maintenance permission." />;
   }
 
+  const machinesKnown = data?.machines != null;
+  const loggable = (data?.machines ?? []).filter((m) => m.status !== MachineStatus.retired).sort((a, b) => compareText(a.assetCode, b.assetCode));
+  const rentalsFor = (machineId: string) => (data?.rentals ?? []).filter((r) => r.machineId === machineId);
+
+  function openForm(machine: Machine) {
+    setFormMachine(machine);
+    setFormOpen(true);
+  }
+
+  // Header primary: Log maintenance → pick a machine → MaintenanceFormDialog.
+  const logDisabledReason = !online
+    ? OFFLINE_HINT
+    : !machinesKnown && data
+      ? "Picking a machine needs the Equipment permission."
+      : data && loggable.length === 0
+        ? "There's no machine to log against — every machine is retired or none is registered."
+        : undefined;
+  const primary = drillMachine ? null : (
+    <Button icon="plus" onClick={() => setPicking(true)} disabled={!data || Boolean(logDisabledReason)} title={logDisabledReason}>
+      Log maintenance
+    </Button>
+  );
+
+  const filtersActive = Boolean(statusParam || typeParam || view.queryLabel);
+  const filterParts = [
+    statusParam ? (DERIVED_VIEWS[statusParam as DerivedView] ?? statusLabel("maintenance", statusParam)) : null,
+    typeParam ? (MAINTENANCE_TYPE_LABEL[typeParam as keyof typeof MAINTENANCE_TYPE_LABEL] ?? typeParam) : null,
+    view.queryLabel ? quoted(view.queryLabel) : null,
+  ].filter((p): p is string => Boolean(p));
+
+  // ------------------------------------------------------------ figures (fleet-wide)
+  const inProgress = records.filter((r) => r.status === MaintenanceStatus.in_progress);
+  const noEnd = inProgress.filter((r) => !r.endDate);
+  const lateStart = records.filter((r) => inDerivedView(r, "late_start", today));
+  const scheduledAhead = records
+    .filter((r) => r.status === MaintenanceStatus.scheduled && r.startDate >= today)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const soon = scheduledAhead.filter((r) => r.startDate <= addDays(today, 7));
+  const next = scheduledAhead[0];
+  const underMaintenance = (data?.machines ?? []).filter((m) => m.status === MachineStatus.under_maintenance);
+  const idleInWorkshop = underMaintenance.filter((m) => !inProgress.some((r) => r.machineId === m.id));
+  const monthAgo = addDays(today, -30);
+  const completedRecently = records.filter((r) => r.status === MaintenanceStatus.completed && (r.endDate ?? r.updatedAt.slice(0, 10)) >= monthAgo);
+  const assetOf = (id: string) => machinesById.get(id)?.assetCode ?? "a machine";
+
+  const figures: KeyFigure[] = [
+    {
+      key: "workshop",
+      label: "In the workshop",
+      value: formatNumber(inProgress.length, 0),
+      unit: inProgress.length === 1 ? "job" : "jobs",
+      context: inProgress.length
+        ? `${plural(new Set(inProgress.map((r) => r.machineId)).size, "machine")} · ${noEnd.length ? `${noEnd.length} with no end date` : "all have an expected return date"}`
+        : "No job is in progress",
+    },
+    {
+      key: "scheduled",
+      label: "Starting within 7 days",
+      value: formatNumber(soon.length, 0),
+      unit: soon.length === 1 ? "job" : "jobs",
+      context: next
+        ? `Next: ${assetOf(next.machineId)} on ${formatShortDate(next.startDate)}${scheduledAhead.length > soon.length ? ` · ${scheduledAhead.length - soon.length} later` : ""}`
+        : "Nothing is scheduled ahead",
+    },
+    machinesKnown
+      ? {
+          key: "machines",
+          label: "Machines under maintenance",
+          value: formatNumber(underMaintenance.length, 0),
+          unit: underMaintenance.length === 1 ? "machine" : "machines",
+          context: idleInWorkshop.length
+            ? `${idleInWorkshop.map((m) => m.assetCode).slice(0, 3).join(", ")}${idleInWorkshop.length > 3 ? " and more" : ""} ${idleInWorkshop.length === 1 ? "has" : "have"} no job in progress`
+            : "Stored machine status — off the rentable fleet",
+        }
+      : {
+          key: "machines",
+          label: "Machines under maintenance",
+          value: "—",
+          context: "Needs the Equipment permission",
+          tone: "muted",
+        },
+    {
+      key: "completed",
+      label: "Completed · last 30 days",
+      value: formatNumber(completedRecently.length, 0),
+      unit: completedRecently.length === 1 ? "job" : "jobs",
+      context: `By end date, since ${formatShortDate(monthAgo)}`,
+    },
+  ];
+
+  const machineOptions = [...(data?.machines ?? [])]
+    .filter((m) => m.status !== MachineStatus.retired || records.some((r) => r.machineId === m.id))
+    .sort((a, b) => compareText(a.assetCode, b.assetCode))
+    .map((m) => ({ value: m.id, label: m.assetCode }));
+
+  const drillFallback = Boolean(machineParam && data && !drillMachine);
+
   return (
-    <div className="flex min-w-0 flex-col gap-3.5">
+    <div className="flex min-w-0 flex-col">
       <PageHeader
         title="Maintenance"
-        description={
-          offFleetToday > 0
-            ? `${offFleetToday} ${offFleetToday === 1 ? "machine" : "machines"} off the fleet today${
-                dailyRateNotEarning > 0 ? ` · ${formatCurrencyINR(dailyRateNotEarning)} of daily rate not earning` : ""
-              }`
-            : "Scheduled service and breakdowns across the fleet."
-        }
+        description="Workshop jobs across the fleet — services, breakdowns and inspections, planned or already done."
+        actions={primary}
       />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          placeholder="Machine, issue…"
-          className="w-64"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <Select
-          className="w-40"
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value as MaintenanceType | "")}
-          options={TYPE_OPTIONS}
-        />
-        {(search || typeFilter) && (
-          <button
-            type="button"
-            className="text-xs font-medium text-accent-text"
-            onClick={() => {
-              setSearch("");
-              setTypeFilter("");
-            }}
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
-
-      {filteredRecords.length === 0 ? (
-        <EmptyState
-          title="No maintenance records"
-          description={
-            records.length === 0
-              ? "No maintenance has been scheduled yet across the fleet."
-              : "No records match this filter."
-          }
-        />
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {COLUMNS.map((column) => {
-            const columnItems = columnRecords(column.status);
-            const isExpanded = expanded.has(column.status);
-            const visible = isExpanded ? columnItems : columnItems.slice(0, CARDS_PER_COLUMN);
-            const hiddenCount = columnItems.length - visible.length;
-            return (
-              <div
-                key={column.status}
-                className={["flex flex-col gap-2.5 rounded-panel border border-border-strong border-t-[3px] p-3", column.washClass, column.edgeClass].join(" ")}
+      <PageBody>
+        {drillMachine && data && organizationId ? (
+          <>
+            <DrillDownBar icon="machine" exitLabel="All machines" onExit={() => set({ machine: null })}>
+              <span className="flex flex-wrap items-center gap-2">
+                <UILink href={`/machines/${drillMachine.id}?tab=workshop`} className="font-mono text-sm font-semibold text-ink no-underline hover:underline">
+                  {drillMachine.assetCode}
+                </UILink>
+                <Status domain="machine" value={drillMachine.status} size="sm" />
+              </span>
+              <span className="text-xs text-meta">
+                {[productName(data.products.get(drillMachine.productId)), drillMachine.registrationNumber].filter(Boolean).join(" · ")}
+                {" · "}Only this machine&apos;s workshop jobs are shown.
+              </span>
+            </DrillDownBar>
+            <MaintenancePanel
+              organizationId={organizationId}
+              machine={drillMachine}
+              rentals={rentalsFor(drillMachine.id)}
+              onMachineChanged={() => void reload()}
+              title={`Workshop jobs on ${drillMachine.assetCode}`}
+            />
+          </>
+        ) : (
+          <>
+            {drillFallback && (
+              <Alert
+                tone={machinesKnown ? "warning" : "info"}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => set({ machine: null })}>
+                    All machines
+                  </Button>
+                }
               >
-                <div className="flex items-baseline gap-2">
-                  <span className={["text-[11px] font-semibold uppercase tracking-wide", column.toneClass].join(" ")}>
-                    {column.label}
-                  </span>
-                  <span className={["font-mono text-[13px] font-semibold", column.toneClass].join(" ")}>{columnItems.length}</span>
-                  <span className="ml-auto font-mono text-[10px] text-meta">{column.status}</span>
-                </div>
+                {machinesKnown
+                  ? "That machine isn't in your fleet. It may belong to another organization, or the link is wrong. Showing any jobs recorded against it."
+                  : "Showing one machine's jobs. Its asset code and status need the Equipment permission, so only a job's own status can change from here."}
+              </Alert>
+            )}
 
-                {columnItems.length === 0 ? (
-                  <p className="rounded-cell border border-dashed border-border-strong bg-surface/60 px-3 py-4 text-center text-xs text-meta">
-                    Nothing here
-                  </p>
+            {data && !machineParam && (
+              <AttentionStrip
+                items={[
+                  {
+                    key: "no_end",
+                    count: noEnd.length,
+                    text: `${noEnd.length === 1 ? "job" : "jobs"} in progress with no expected return date`,
+                    onClick: () => set({ status: "no_end", type: null }),
+                  },
+                  {
+                    key: "late_start",
+                    count: lateStart.length,
+                    text: `${lateStart.length === 1 ? "job" : "jobs"} still Scheduled after the start date`,
+                    onClick: () => set({ status: "late_start", type: null }),
+                  },
+                ]}
+              />
+            )}
+
+            {!machineParam && (data ? <KeyFigures items={figures} label="Workshop figures" /> : <KeyFiguresSkeleton count={4} />)}
+
+            {error ? (
+              <ErrorState
+                title="Workshop jobs didn't load"
+                message={describeError(error).body}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => void reload()}>
+                    Try again
+                  </Button>
+                }
+              />
+            ) : data && records.length === 0 ? (
+              <section className="rounded-panel border border-border-strong bg-surface">
+                <EmptyState
+                  variant="page"
+                  icon="maintenance"
+                  title="No workshop jobs yet"
+                  description="Plan a service, or log a breakdown or inspection that already happened. Jobs on every machine in the fleet appear here."
+                  action={primary}
+                />
+              </section>
+            ) : (
+              <ListCard
+                label="Workshop jobs"
+                toolbar={
+                  <>
+                    <ListSearch search={view.search} label="Search workshop jobs" placeholder="Asset code, reason, notes…" />
+                    <Select
+                      aria-label="Status"
+                      className="w-full min-[760px]:w-[220px]"
+                      placeholder="All statuses"
+                      value={statusParam}
+                      onChange={(e) => set({ status: e.target.value || null })}
+                      options={[
+                        ...statusOptions("maintenance"),
+                        ...(Object.keys(DERIVED_VIEWS) as DerivedView[]).map((key) => ({ value: key, label: DERIVED_VIEWS[key] })),
+                      ]}
+                    />
+                    <Select
+                      aria-label="Reason"
+                      className="w-full min-[760px]:w-[180px]"
+                      placeholder="All reasons"
+                      value={typeParam}
+                      onChange={(e) => set({ type: e.target.value || null })}
+                      options={MAINTENANCE_TYPE_OPTIONS}
+                    />
+                    {machinesKnown && (
+                      <Select
+                        aria-label="Machine"
+                        className="w-full min-[760px]:w-[180px]"
+                        placeholder="All machines"
+                        value={machineParam}
+                        onChange={(e) => set({ machine: e.target.value || null })}
+                        options={machineOptions}
+                      />
+                    )}
+                    {filtersActive && (
+                      <Button variant="tertiary" size="sm" onClick={() => set({ status: null, type: null, q: null })}>
+                        Clear filters
+                      </Button>
+                    )}
+                  </>
+                }
+                footer={
+                  data && sorted.length > 0 ? (
+                    <Pagination page={page.page} pageCount={page.pageCount} onPageChange={view.setPage} total={sorted.length} pageSize={PAGE_SIZE} noun="jobs" />
+                  ) : undefined
+                }
+              >
+                {data && sorted.length === 0 ? (
+                  <NoMatches noun="workshop jobs" parts={filterParts} onClear={() => set({ status: null, type: null, q: null })} />
                 ) : (
-                  <div className="flex flex-col gap-2">
-                    {visible.map((record) => {
-                      const machine = machinesById.get(record.machineId);
-                      const nextStatuses = legalNextMaintenanceStatuses(record.status);
-                      return (
-                        <div
-                          key={record.id}
-                          className={["flex flex-col gap-2 rounded-control border border-border-soft bg-surface p-3", statusEdgeClass(record.status)].join(" ")}
-                          style={{ borderLeftWidth: 3 }}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Link
-                              href={`/maintenance/${record.id}?machineId=${record.machineId}`}
-                              className="font-mono text-xs font-semibold text-ink hover:text-accent-text"
-                            >
-                              {machine?.assetCode ?? "—"}
-                            </Link>
-                            <span className="ml-auto text-[10px] font-medium uppercase tracking-wide text-meta">
-                              {record.maintenanceType}
-                            </span>
-                          </div>
-                          {machine && (
-                            <span className="text-[13px] font-medium text-ink-strong">{machineLabel(machine)}</span>
-                          )}
-                          {record.notes && <p className="truncate text-xs text-ink-muted">{record.notes}</p>}
-                          <div className="flex items-center gap-2 border-t border-border pt-2">
-                            <span className="font-mono text-[11px] text-meta">{formatDateRange(record.startDate, record.endDate)}</span>
-                            {blocksAvailability(record.status) && (
-                              <span
-                                className="ml-auto text-[11px] font-medium text-attention"
-                                title="New rentals can't be created or activated for this machine during this window"
-                              >
-                                Blocks new rentals
-                              </span>
-                            )}
-                          </div>
-                          {nextStatuses.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 border-t border-border pt-2">
-                              {nextStatuses.map((next) => (
-                                <button
-                                  key={next}
-                                  type="button"
-                                  onClick={() => void handleStatusChange(record, next)}
-                                  className="rounded-xs border border-border-strong bg-surface-sunk px-2 py-1 text-[11px] font-medium text-ink-strong hover:bg-surface-hover"
-                                >
-                                  Move to {MAINTENANCE_STATUS_MAP[next]?.label ?? next}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <Table bare minWidth={1020} caption="Workshop jobs across the fleet">
+                    <Thead>
+                      <Tr>
+                        <Th className="w-[170px]" {...view.sortProps("machine")}>
+                          Machine
+                        </Th>
+                        <Th className="w-[150px]">Reason</Th>
+                        <Th className="w-[210px]" {...view.sortProps("dates")}>
+                          Dates
+                        </Th>
+                        <Th>Notes</Th>
+                        <Th className="w-[120px]" {...view.sortProps("status")}>
+                          Status
+                        </Th>
+                        <Th className="w-[110px]">Blocks new rentals</Th>
+                        <Th className="w-[170px]">
+                          <span className="sr-only">Actions</span>
+                        </Th>
+                      </Tr>
+                    </Thead>
+                    {!data ? (
+                      <TableSkeleton columns={COLUMNS} rows={8} label="Loading workshop jobs" />
+                    ) : (
+                      <Tbody>
+                        {page.rows.map((record) => (
+                          <JobRow
+                            key={record.id}
+                            record={record}
+                            machine={machinesById.get(record.machineId) ?? null}
+                            machinesKnown={machinesKnown}
+                            product={(() => {
+                              const machine = machinesById.get(record.machineId);
+                              return machine ? productName(data.products.get(machine.productId)) : null;
+                            })()}
+                            today={today}
+                            online={online}
+                            onTransition={(to) => setTransition({ record, to })}
+                          />
+                        ))}
+                      </Tbody>
+                    )}
+                  </Table>
                 )}
+              </ListCard>
+            )}
+          </>
+        )}
+      </PageBody>
 
-                {hiddenCount > 0 && (
-                  <button
-                    type="button"
-                    className="text-left text-xs font-medium text-accent-text"
-                    onClick={() =>
-                      setExpanded((prev) => {
-                        const next = new Set(prev);
-                        next.add(column.status);
-                        return next;
-                      })
-                    }
-                  >
-                    {hiddenCount} more {column.label.toLowerCase()}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+      {organizationId && (
+        <MaintenanceTransitionDialog
+          organizationId={organizationId}
+          transition={transition}
+          machine={transition ? (machinesById.get(transition.record.machineId) ?? null) : null}
+          otherInProgress={
+            transition
+              ? records.some((r) => r.machineId === transition.record.machineId && r.status === MaintenanceStatus.in_progress && r.id !== transition.record.id)
+              : false
+          }
+          onClose={() => setTransition(null)}
+          onDone={() => void reload()}
+        />
       )}
 
-      <Alert tone="info">
-        <span className="font-semibold">Rule:</span> the buttons above only change this maintenance
-        record&apos;s own status (<code className="rounded-xs bg-surface-sunk px-1 py-0.5 font-mono text-[11px]">maintenanceStatus</code>). They do{" "}
-        <span className="font-semibold">not</span> write the machine&apos;s own{" "}
-        <code className="rounded-xs bg-surface-sunk px-1 py-0.5 font-mono text-[11px]">status</code> field — that&apos;s a
-        separate action on the Machines page (&ldquo;Mark under maintenance&rdquo; / &ldquo;Mark
-        active&rdquo;), so the two can drift if only one is updated.
-      </Alert>
-
-      <Card>
-        <h2 className="mb-3 text-sm font-semibold text-ink">Schedule a machine&apos;s maintenance</h2>
-        <p className="mb-3 text-xs text-meta">
-          Creating and status-updates write per machine — there is no batch/board write endpoint.
-          Pick a machine to schedule a new record or manage its existing ones in detail.
-        </p>
-        <Select
-          className="max-w-sm"
-          value={selectedMachineId}
-          onChange={(e) => setSelectedMachineId(e.target.value)}
-          options={[
-            { value: "", label: "Select a machine…" },
-            ...machines.map((m) => ({ value: m.id, label: m.assetCode })),
-          ]}
+      <PickRecordDialog
+        open={picking}
+        onClose={() => setPicking(false)}
+        title="Log maintenance"
+        description="Pick the machine first. Next you'll say what the job is and when — planned, or already done."
+        icon="maintenance"
+        label="Machine"
+        placeholder="Search by asset code or registration"
+        options={loggable.map((m) => ({
+          value: m.id,
+          label: m.assetCode,
+          description: [productName(data?.products.get(m.productId)), m.registrationNumber, m.status === MachineStatus.under_maintenance ? "Under maintenance" : null]
+            .filter(Boolean)
+            .join(" · "),
+          keywords: m.registrationNumber,
+        }))}
+        emptyText="There's no machine to log against. Retired machines can't get new workshop jobs."
+        hint="Retired machines aren't listed."
+        requiredMessage="Choose the machine the job is for."
+        confirmLabel="Continue"
+        onPick={(id) => {
+          const machine = machinesById.get(id);
+          setPicking(false);
+          if (machine) openForm(machine);
+        }}
+      />
+      {organizationId && formMachine && (
+        <MaintenanceFormDialog
+          open={formOpen}
+          onClose={() => setFormOpen(false)}
+          organizationId={organizationId}
+          machine={formMachine}
+          rentals={rentalsFor(formMachine.id)}
+          onSaved={() => void reload()}
         />
-      </Card>
-
-      {selectedMachine && (
-        <div className="flex flex-col gap-3">
-          <Alert tone="info">
-            Showing maintenance for{" "}
-            <Link
-              href={`/machines/${selectedMachine.id}?tab=maintenance`}
-              className="font-medium underline"
-            >
-              {selectedMachine.assetCode}
-            </Link>{" "}
-            — open the full machine for rentals, logsheets and identity.
-          </Alert>
-          <MaintenancePanel organizationId={organizationId} machineId={selectedMachine.id} />
-        </div>
+      )}
+      {loading && !data && (
+        <span role="status" className="sr-only">
+          Loading workshop jobs…
+        </span>
       )}
     </div>
   );
 }
 
-function machineLabel(machine: Machine): string {
-  return machine.registrationNumber ? `${machine.assetCode} · ${machine.registrationNumber}` : machine.assetCode;
-}
+function JobRow({
+  record,
+  machine,
+  machinesKnown,
+  product,
+  today,
+  online,
+  onTransition,
+}: {
+  record: MaintenanceRecord;
+  machine: Machine | null;
+  machinesKnown: boolean;
+  product: string | null;
+  today: string;
+  online: boolean;
+  onTransition: (to: MaintenanceTarget) => void;
+}) {
+  const typeLabel = MAINTENANCE_TYPE_LABEL[record.maintenanceType];
+  const detailHref = `/maintenance/${record.id}?machineId=${record.machineId}`;
+  const step = nextMaintenanceStep(record);
+  const noEndDate = !record.endDate && blocksAvailability(record.status);
+  const when = timing(record, today);
+  // Like MaintenancePanel: no workshop writes on a retired machine.
+  const writable = machine?.status !== MachineStatus.retired;
+  const asset = machine?.assetCode ?? "this machine";
 
-function statusEdgeClass(status: MaintenanceStatus): string {
-  switch (status) {
-    case "scheduled":
-      return "border-l-attention-lane-edge";
-    case "in_progress":
-      return "border-l-destructive-lane-edge";
-    case "completed":
-      return "border-l-available";
-    case "cancelled":
-      return "border-l-border-stronger";
-  }
+  return (
+    <Tr>
+      <Td>
+        {machine ? (
+          <RefCell href={`/machines/${machine.id}`} label={machine.assetCode} sub={product ?? machine.registrationNumber} />
+        ) : (
+          <RefCell
+            label={`Machine ${record.machineId.slice(0, 8)}`}
+            sub={machinesKnown ? "Not in your fleet list" : "Asset code needs the Equipment permission"}
+            className="text-meta"
+          />
+        )}
+      </Td>
+      <Td>
+        <UILink
+          href={detailHref}
+          className={cx(
+            "whitespace-nowrap text-sm font-medium no-underline hover:underline",
+            record.maintenanceType === MaintenanceType.breakdown ? "text-destructive" : "text-ink-strong",
+          )}
+        >
+          {typeLabel}
+        </UILink>
+      </Td>
+      <Td>
+        <CellStack
+          mono
+          title={formatDateRange(record.startDate, record.endDate, "no end date")}
+          titleClassName={noEndDate ? "text-destructive" : undefined}
+          sub={<span className={when.late ? "font-medium text-attention" : undefined}>{when.text}</span>}
+        />
+      </Td>
+      <Td className="text-ink-muted">
+        <span className="clamp-2" title={record.notes ?? undefined}>
+          {record.notes ?? <span className="italic text-disabled-text">Not specified</span>}
+        </span>
+      </Td>
+      <Td>
+        <Status domain="maintenance" value={record.status} size="sm" />
+      </Td>
+      <Td>
+        {blocksAvailability(record.status) ? (
+          <span
+            className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-attention"
+            title="While a job is Scheduled or In progress, no new rental can overlap its dates."
+          >
+            <Icon name="lock" size={12} />
+            Yes
+          </span>
+        ) : (
+          <span className="text-xs text-meta-light">No</span>
+        )}
+      </Td>
+      <Td align="right">
+        {step && writable && (
+          <span className="flex items-center justify-end gap-1.5">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!online}
+              title={online ? undefined : OFFLINE_HINT}
+              onClick={() => onTransition(step)}
+            >
+              {step === MaintenanceStatus.in_progress ? "Start job" : "Complete job"}
+            </Button>
+            <Menu
+              label={`More actions for the ${typeLabel.toLowerCase()} job on ${asset}`}
+              triggerSize="sm"
+              items={[
+                { key: "open", label: "Open job", icon: "external", href: detailHref, hint: "Every detail of the job." },
+                {
+                  key: "cancel",
+                  label: "Cancel job",
+                  icon: "close",
+                  danger: true,
+                  separatorBefore: true,
+                  disabled: !online || !canCancelMaintenance(record),
+                  hint: online ? "Kept on record as Cancelled. It stops blocking new rentals." : OFFLINE_HINT,
+                  onSelect: () => onTransition(MaintenanceStatus.cancelled),
+                },
+              ]}
+            />
+          </span>
+        )}
+      </Td>
+    </Tr>
+  );
 }

@@ -1,9 +1,10 @@
 import type {
   CreateRequirementRequest,
   Requirement,
-  RequirementStatus,
   UpdateRequirementRequest,
 } from "@fleetip/contracts/rfq";
+import { RequirementStatus } from "@fleetip/contracts/rfq";
+import { ProjectStatus } from "@fleetip/contracts/project";
 import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
 import type { ProductSubcategoryRepositoryPort } from "../../../catalogue/domain/ports.js";
 import type { ProjectRepositoryPort } from "../../project/domain/ports.js";
@@ -58,7 +59,7 @@ export class RequirementService {
     if (!project || project.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Project not found in this organization");
     }
-    if (project.status !== "active") {
+    if (project.status !== ProjectStatus.active) {
       throw new ValidationError("Cannot post a requirement against a project that is not active");
     }
 
@@ -132,7 +133,7 @@ export class RequirementService {
     if (!existing || existing.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Requirement not found in this organization");
     }
-    if (existing.status !== "open") {
+    if (existing.status !== RequirementStatus.open) {
       throw new ConflictError("Requirement fields can only be edited while it is open");
     }
     // Cross-field ordering can't be a schema-level refine here — a partial

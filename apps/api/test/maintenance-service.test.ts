@@ -312,4 +312,23 @@ describe("MaintenanceService", () => {
     const list = await service.listByOrganization("user-1", RC_ORG_ID);
     expect(list).toHaveLength(2);
   });
+
+  it("gets one maintenance record, hidden from other organizations and unknown ids", async () => {
+    const ownMachine = machine();
+    const service = buildService([ownMachine]);
+    const created = await service.createMaintenance("user-1", RC_ORG_ID, baseInput);
+
+    await expect(
+      service.getMaintenanceRecord("user-1", RC_ORG_ID, created.id),
+    ).resolves.toMatchObject({ id: created.id, machineId: MACHINE_ID, status: "scheduled" });
+    await expect(service.getMaintenanceRecord("user-1", RC_ORG_ID, "missing")).rejects.toThrow(
+      NotFoundError,
+    );
+
+    // The record's machine now belongs to another tenant.
+    ownMachine.organization_id = "some-other-org";
+    await expect(service.getMaintenanceRecord("user-1", RC_ORG_ID, created.id)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
 });

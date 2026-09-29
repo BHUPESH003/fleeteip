@@ -37,6 +37,8 @@ export const notificationTypeSchema = z.enum([
   "billing.payment_recorded",
 ]);
 export type NotificationType = z.infer<typeof notificationTypeSchema>;
+/** NotificationType.x names each value once; `NotificationType` is also the type. */
+export const NotificationType = notificationTypeSchema.enum;
 
 export const notificationSchema = z.object({
   id: z.string().uuid(),

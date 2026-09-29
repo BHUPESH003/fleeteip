@@ -1,650 +1,498 @@
 "use client";
 
-import type { Product } from "@fleetip/contracts/catalogue";
-import type { Machine } from "@fleetip/contracts/equipment";
+import { InvoiceStatus, type Invoice, type InvoiceDetail } from "@fleetip/contracts/billing";
+import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
+import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Logsheet, MachineUtilization } from "@fleetip/contracts/logsheet";
 import type { MaintenanceRecord } from "@fleetip/contracts/maintenance";
 import type { Organization } from "@fleetip/contracts/organization";
-import type { Rental } from "@fleetip/contracts/rental";
+import { RentalStatus, type Rental } from "@fleetip/contracts/rental";
+import type { TransportRecord } from "@fleetip/contracts/transport";
+import type { WorkOrder } from "@fleetip/contracts/work-order";
 import {
-  AvailabilityLane,
-  AvailabilityLaneLegend,
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  PageHeader,
-  StatusBadge,
-  Table,
-  Tabs,
-  Tbody,
-  Td,
-  Th,
-  Thead,
-  Tr,
+  Alert,
+  AttentionList,
+  KeyFigures,
+  PageBody,
+  type AttentionListItem,
+  type LaneBlock,
+  type MenuItem,
 } from "@fleetip/ui";
-import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { apiClient } from "../../../../lib/api-client";
-import { formatCurrencyINR, formatDate, formatDateRange, formatShortDate, daysBetween, todayIsoDate } from "../../../../lib/format";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ForbiddenPage, PageLoadError } from "../../../../components/PageStates";
+import { ApiError, apiClient } from "../../../../lib/api-client";
+import { useConnection } from "../../../../lib/connection";
+import { OFFLINE_HINT } from "../../../../lib/errors";
+import { todayIsoDate, rentalRef } from "../../../../lib/format";
+import { useListBackHref } from "../../../../lib/list-state";
 import { useSession } from "../../../../lib/session-context";
+import { optional, useLoad } from "../../../../lib/use-load";
+import { CreateRentalDialog } from "../../rentals/CreateRentalDialog";
+import { EditRentalTermsDialog } from "../../rentals/EditRentalTermsDialog";
+import { LogsheetDrawer } from "../../rentals/LogsheetDrawer";
 import { EditMachineDialog } from "../EditMachineDialog";
-import { laneBlocksFor } from "../lane";
-import { MaintenancePanel } from "../panels";
+import { MaintenanceFormDialog } from "../MaintenanceFormDialog";
+import { productName } from "../shared";
+import { AvailabilityCard } from "./AvailabilityCard";
+import { CurrentRentalCard } from "./CurrentRentalCard";
+import { CompleteJobDialog, RetireDialog, WorkshopDialog } from "./dialogs";
 import {
-  MACHINE_STATUS_MAP,
-  currentRentalFor,
-  flattenSpecifications,
-  legalNextMachineStatuses,
-} from "../shared";
+  RECORD_TABS,
+  activeRental,
+  attentionRows,
+  coverageFor,
+  currentRental,
+  defaultLogDate,
+  deployment,
+  keyFigures,
+  laneModel,
+  primaryAction,
+  retireBlocker,
+  workshopBlocker,
+  type Access,
+  type LaneView,
+  type MachineData,
+  type RecordTab,
+} from "./derive";
+import { HoursLogged, InspectionDocuments, IsItFree, RecordInfo, Specifications, type CheckRequest } from "./Aside";
+import { MachineDetailSkeleton } from "./MachineDetailSkeleton";
+import { MachineHeader, type HeaderAction } from "./MachineHeader";
+import { RecordDrawer, type RecordSelection } from "./RecordDrawer";
+import { RecordTabs } from "./RecordTabs";
 
-interface Loaded {
-  machine: Machine;
-  product: Product | null;
-  rentals: Rental[];
-  maintenanceRecords: MaintenanceRecord[];
-  utilization: MachineUtilization | null;
-  logsheets: Logsheet[];
-  renterNames: Map<string, string>;
+async function loadMachine(orgId: string, id: string, access: Access, ownerName: string): Promise<MachineData> {
+  const [machines, categories, products, allRentals, maintenance, allTransport, allInvoices, allWorkOrders, utilization, renters] =
+    await Promise.all([
+      apiClient.listMachines(orgId) as Promise<Machine[]>,
+      optional(true, () => apiClient.listProductCategories() as Promise<ProductCategory[]>, [] as ProductCategory[]),
+      optional(true, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
+      optional(access.rentals, () => apiClient.listRentals(orgId) as Promise<Rental[]>, [] as Rental[]),
+      optional(access.maintenance, () => apiClient.listMaintenanceForMachine(orgId, id) as Promise<MaintenanceRecord[]>, [] as MaintenanceRecord[]),
+      optional(access.transport, () => apiClient.listTransportRecords(orgId) as Promise<TransportRecord[]>, [] as TransportRecord[]),
+      optional(access.billing, () => apiClient.listInvoices(orgId) as Promise<Invoice[]>, [] as Invoice[]),
+      optional(access.workOrders, () => apiClient.listWorkOrders(orgId) as Promise<WorkOrder[]>, [] as WorkOrder[]),
+      optional(access.logsheets, () => apiClient.getMachineUtilization(orgId, id) as Promise<MachineUtilization>, null as MachineUtilization | null),
+      optional(access.customers, () => apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>, [] as Organization[]),
+    ]);
+
+  const machine = machines.find((m) => m.id === id);
+  // There's no single-machine GET (ticket c): a machine not in this org's list is a 404.
+  if (!machine) throw new ApiError("Machine not found", 404, "not_found");
+
+  const product = products.find((p) => p.id === machine.productId) ?? null;
+  const subcategoryLists = await Promise.all(
+    categories.map((c) => optional(true, () => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>, [] as ProductSubcategory[])),
+  );
+  const subcategory = product ? (subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null) : null;
+  const category = subcategory ? (categories.find((c) => c.id === subcategory.productCategoryId) ?? null) : null;
+
+  const rentals = allRentals.filter((r) => r.machineId === id).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const rentalIds = new Set(rentals.map((r) => r.id));
+  const transport = allTransport
+    .filter((t) => rentalIds.has(t.rentalId))
+    .sort((a, b) => (b.actualDate ?? b.plannedDate ?? b.createdAt).localeCompare(a.actualDate ?? a.plannedDate ?? a.createdAt));
+  const invoices = allInvoices.filter((i) => rentalIds.has(i.rentalId)).sort((a, b) => b.billingPeriodStart.localeCompare(a.billingPeriodStart));
+  const workOrders = allWorkOrders.filter((w) => w.machineId === id || rentalIds.has(w.rentalId));
+  const sortedMaintenance = maintenance.filter((m) => m.machineId === id).sort((a, b) => b.startDate.localeCompare(a.startDate));
+
+  // Wave 2: the current rental's logsheets and the balance on unpaid invoices.
+  const logRental = rentals.find((r) => r.status === RentalStatus.active) ?? rentals.find((r) => r.status === RentalStatus.off_rent) ?? null;
+  const unpaid = invoices.filter((i) => i.status === InvoiceStatus.issued || i.status === InvoiceStatus.overdue);
+  const [logsheets, details] = await Promise.all([
+    logRental
+      ? optional(access.logsheets, () => apiClient.listLogsheetsForRental(orgId, logRental.id) as Promise<Logsheet[]>, [] as Logsheet[])
+      : Promise.resolve([] as Logsheet[]),
+    Promise.all(unpaid.map((i) => optional(access.billing, () => apiClient.getInvoiceDetail(orgId, i.id) as Promise<InvoiceDetail>, null as InvoiceDetail | null))),
+  ]);
+
+  return {
+    machine,
+    product,
+    subcategory,
+    category,
+    rentals,
+    maintenance: sortedMaintenance,
+    transport,
+    invoices,
+    invoiceDetails: new Map(details.filter((d): d is InvoiceDetail => d !== null).map((d) => [d.invoice.id, d])),
+    workOrders,
+    logsheets,
+    utilization,
+    customerNames: new Map(renters.map((o) => [o.id, o.name])),
+    ownerName,
+    access,
+    today: todayIsoDate(),
+  };
 }
 
-const TABS = [
-  { key: "overview", label: "Overview" },
-  { key: "rentals", label: "Rental history" },
-  { key: "maintenance", label: "Maintenance" },
-  { key: "logsheets", label: "Logsheets" },
-  { key: "documents", label: "Documents", disabled: true },
-  { key: "activity", label: "Activity" },
-];
-
-const LANE_WINDOW_MONTHS = 12;
-const LANE_WINDOW_DAYS = 365;
+const LEGACY_TAB: Record<string, RecordTab> = { maintenance: "workshop", overview: "rentals", documents: "rentals", activity: "rentals" };
 
 export default function MachineDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
-  const organizationType = currentMembership?.organization.organizationTypeCode;
-  const canManage = organizationType === "rental_company";
-  // Utilization/logsheets, rental history, maintenance records, and renter
-  // names are enrichment, not the point of this page (equipment.manage is)
-  // — a role without the matching logsheet/rental/maintenance/quotation
-  // permission still gets a fully working machine page, just with those
-  // sections falling back to "no data" (already handled: utilization ?
-  // ... : "No utilization data yet.", empty rentals/logsheets/maintenance
-  // lists, renter name falling back to "Renter"/"—").
-  const canViewLogsheets = canManage ? hasPermission("logsheet.manage") : hasPermission("logsheet.respond");
-  const canListRentals = canManage ? hasPermission("rental.manage") : hasPermission("rental.respond");
-  const canListRenterOrgs = hasPermission("quotation.manage");
-  const canListMaintenance = hasPermission("maintenance.manage");
+  const canView = hasPermission("equipment.manage");
 
-  const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState(searchParams.get("tab") ?? "overview");
-  const [editOpen, setEditOpen] = useState(false);
+  const access: Access = {
+    rentals: hasPermission("rental.manage"),
+    maintenance: hasPermission("maintenance.manage"),
+    transport: hasPermission("transport.manage"),
+    billing: hasPermission("billing.manage"),
+    logsheets: hasPermission("logsheet.manage"),
+    workOrders: hasPermission("rental.manage"),
+    customers: hasPermission("quotation.manage"),
+    quotations: hasPermission("quotation.manage"),
+  };
+  const accessKey = Object.values(access).join(",");
+  const ownerName = currentMembership?.organization.name ?? "Your organization";
 
-  // A notification/search hit for a *different* machine reaches this page
-  // via router.push — same route, only the [id] segment differs — which the
-  // App Router doesn't remount the page for either, so the useState
-  // initializer above never re-runs and `tab` stays stuck on whatever it
-  // was for the previous machine. Reset per `id`, reading tab fresh each
-  // time (falls back to "overview" when the new link carries no tab param).
-  useEffect(() => {
-    setTab(searchParams.get("tab") ?? "overview");
-  }, [id]);
+  const { data, error, loading, reload } = useLoad(
+    () => loadMachine(organizationId!, id, access, ownerName),
+    [organizationId, id, accessKey],
+    Boolean(organizationId) && canView,
+  );
 
-  async function load(orgId: string) {
-    const [machines, utilization, rentals, maintenanceRecords, renterOrgs] = await Promise.all([
-      apiClient.listMachines(orgId) as Promise<Machine[]>,
-      canViewLogsheets
-        ? (apiClient.getMachineUtilization(orgId, id) as Promise<MachineUtilization>)
-        : Promise.resolve(null),
-      canListRentals ? (apiClient.listRentals(orgId) as Promise<Rental[]>) : Promise.resolve([]),
-      canListMaintenance
-        ? (apiClient.listMaintenanceForMachine(orgId, id) as Promise<MaintenanceRecord[]>)
-        : Promise.resolve([]),
-      canListRenterOrgs ? (apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>) : Promise.resolve([]),
-    ]);
-    const machine = machines.find((m) => m.id === id) ?? null;
-    if (!machine) {
-      setError("Machine not found");
-      return;
+  if (currentMembership && !canView) {
+    return <ForbiddenPage what="machines" permissionHint="Viewing fleet records needs the Equipment permission." />;
+  }
+  if (error) {
+    return (
+      <PageLoadError
+        error={error}
+        onRetry={() => void reload()}
+        notFound={{
+          title: "We can't find this machine",
+          body: "It may belong to a different organization, or the link may be wrong. Machines are never deleted, so a retired machine would still open.",
+        }}
+        forbidden={{ what: "machines", permissionHint: "Viewing fleet records needs the Equipment permission." }}
+        serverTitle="This machine didn't load"
+        backHref="/machines"
+        backLabel="Back to machines"
+      />
+    );
+  }
+  if (loading || !data || !organizationId) return <MachineDetailSkeleton />;
+
+  // Keyed by id: every local state (tab-independent drawers, lane view) resets when another machine opens.
+  return <MachineDetailView key={id} data={data} organizationId={organizationId} reload={reload} />;
+}
+
+function MachineDetailView({
+  data,
+  organizationId,
+  reload,
+}: {
+  data: MachineData;
+  organizationId: string;
+  reload: () => Promise<void>;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { online } = useConnection();
+  const backHref = useListBackHref("machines", "/machines");
+
+  const { machine, access } = data;
+  const [view, setView] = useState<LaneView>("90");
+  const [selection, setSelection] = useState<RecordSelection | null>(null);
+  const [logDate, setLogDate] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<"workshop" | "complete" | "retire" | "edit" | "maintenance" | "terms" | null>(null);
+  const [createRental, setCreateRental] = useState<{ from?: string; to?: string } | null>(null);
+  const [checkRequest, setCheckRequest] = useState<CheckRequest | null>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  // ?tab= deep links; read from the URL every render (never copied into state).
+  const tabParam = searchParams.get("tab") ?? "rentals";
+  const tab: RecordTab = (RECORD_TABS as string[]).includes(tabParam) ? (tabParam as RecordTab) : (LEGACY_TAB[tabParam] ?? "rentals");
+  const setTab = useCallback(
+    (next: RecordTab) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("tab", next);
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
+
+  const active = activeRental(data);
+  const current = currentRental(data);
+  const coverage = useMemo(() => (active ? coverageFor(active, data.logsheets, data.today) : null), [active, data.logsheets, data.today]);
+  const rows = useMemo(() => attentionRows(data, coverage), [data, coverage]);
+  const figures = useMemo(() => keyFigures(data, coverage), [data, coverage]);
+  const lanes = useMemo(() => laneModel(data, view, coverage), [data, view, coverage]);
+  const dep = deployment(data);
+  const productLabel = productName(data.product);
+
+  const can = {
+    logsheet: access.logsheets,
+    rental: access.rentals,
+    maintenance: access.maintenance,
+  };
+
+  function openLog(date: string) {
+    if (!active) return;
+    setSelection(null);
+    setLogDate(date);
+  }
+
+  const action = primaryAction(data, can);
+  const primary: HeaderAction | null =
+    action === "logsheet"
+      ? { label: "Submit logsheet", icon: "logsheet", onClick: () => openLog(defaultLogDate(coverage, data.today)) }
+      : action === "create_rental"
+        ? { label: "Create rental", icon: "plus", onClick: () => setCreateRental({}) }
+        : action === "complete_job"
+          ? { label: "Mark job complete", icon: "check", onClick: () => setDialog("complete") }
+          : null;
+  if (primary && !online) {
+    primary.disabled = true;
+    primary.title = OFFLINE_HINT;
+  }
+
+  const menuItems: MenuItem[] = [];
+  const offline = !online;
+  menuItems.push({
+    key: "edit",
+    label: "Edit details",
+    icon: "edit",
+    hint: offline ? OFFLINE_HINT : "Asset code, chassis, registration, year built. Product can't be changed.",
+    onSelect: () => setDialog("edit"),
+    disabled: offline,
+  });
+  if (machine.status !== MachineStatus.retired && access.maintenance) {
+    menuItems.push({
+      key: "log-maintenance",
+      label: "Log maintenance",
+      icon: "maintenance",
+      hint: offline ? OFFLINE_HINT : "Record a job that happened or plan one. Machine status doesn't change.",
+      onSelect: () => setDialog("maintenance"),
+      disabled: offline,
+    });
+    if (machine.status === MachineStatus.under_maintenance) {
+      menuItems.push({
+        key: "complete",
+        label: "Mark job complete",
+        icon: "check",
+        hint: offline ? OFFLINE_HINT : "Completes the workshop job and sets status back to Active.",
+        onSelect: () => setDialog("complete"),
+        disabled: offline,
+      });
+    } else {
+      const blocker = workshopBlocker(data);
+      menuItems.push({
+        key: "workshop",
+        label: "Send to workshop",
+        icon: "maintenance",
+        hint: offline
+          ? OFFLINE_HINT
+          : blocker
+            ? `Not possible today: ${rentalRef(blocker.id)} is booked over today. End it or mark it off rent first.`
+            : "Creates a workshop job and sets status to Under maintenance.",
+        onSelect: () => setDialog("workshop"),
+        disabled: offline || Boolean(blocker),
+      });
     }
-    const products = (await apiClient.listProducts()) as Product[];
-    const product = products.find((p) => p.id === machine.productId) ?? null;
-    const rental = currentRentalFor(machine.id, rentals);
-    const logsheets =
-      rental && canViewLogsheets
-        ? ((await apiClient.listLogsheetsForRental(orgId, rental.id)) as Logsheet[])
-        : [];
-    setData({
-      machine,
-      product,
-      rentals,
-      maintenanceRecords,
-      utilization,
-      logsheets,
-      renterNames: new Map(renterOrgs.map((o) => [o.id, o.name])),
+  }
+  if (machine.status !== MachineStatus.retired) {
+    const blocker = retireBlocker(data);
+    menuItems.push({
+      key: "retire",
+      label: "Retire machine",
+      icon: "retire",
+      danger: true,
+      separatorBefore: true,
+      hint: offline
+        ? OFFLINE_HINT
+        : !access.rentals
+          ? "Your role can't view rentals, so FleetIP can't confirm nothing is booked on this machine."
+          : blocker
+            ? `Not possible while ${rentalRef(blocker.id)} is ${blocker.status === RentalStatus.off_rent ? "off rent and returning" : blocker.status === RentalStatus.active ? "Active" : "Confirmed"}.`
+            : "Stops new quotations and rentals. History is kept. This is final.",
+      onSelect: () => setDialog("retire"),
+      disabled: offline || Boolean(blocker) || !access.rentals,
     });
   }
 
-  useEffect(() => {
-    if (!organizationId) return;
-    void (async () => {
-      try {
-        await load(organizationId);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load machine");
-      }
-    })();
-  }, [organizationId, id, canViewLogsheets, canListRentals, canListMaintenance, canListRenterOrgs]);
+  const attentionItems: AttentionListItem[] = rows.map((row) => {
+    const intent = row.action?.intent;
+    return {
+      key: row.key,
+      severity: row.severity,
+      title: row.title,
+      context: row.context,
+      action: !row.action || !intent
+        ? undefined
+        : intent.kind === "href"
+          ? { label: row.action.label, href: intent.href }
+          : intent.kind === "log"
+            ? { label: row.action.label, onClick: () => openLog(intent.date), disabled: offline || !access.logsheets }
+            : intent.kind === "tab"
+              ? {
+                  label: row.action.label,
+                  onClick: () => {
+                    setTab(intent.tab);
+                    tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  },
+                }
+              : { label: row.action.label, onClick: () => setCheckRequest({ from: intent.from, to: intent.to ?? "", nonce: Date.now() }) },
+    };
+  });
 
-  async function handleMarkStatus(status: Machine["status"]) {
-    if (!organizationId) return;
-    await apiClient.updateMachineStatus(organizationId, id, status);
-    await load(organizationId);
+  function onLaneSelect(block: LaneBlock) {
+    const key = block.key ?? "";
+    const [kind, ref] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    if (kind === "log") {
+      if (access.logsheets && active && online) openLog(ref);
+      return;
+    }
+    if (kind === "rental" || kind === "maintenance" || kind === "transport") setSelection({ kind, id: ref });
   }
 
-  if (error) return <ErrorState message={error} />;
-  if (!data) return <LoadingState label="Loading machine…" />;
-
-  const { machine, product, rentals, maintenanceRecords, utilization, logsheets, renterNames } = data;
-  const rental = currentRentalFor(machine.id, rentals);
-  const rentalName = rental
-    ? (rental.renterOrganizationId && renterNames.get(rental.renterOrganizationId)) ||
-      rental.clientSnapshot?.name ||
-      "Renter"
-    : null;
-  const specRows = flattenSpecifications(product?.specifications);
-  const today = todayIsoDate();
-
-  const machineRentals = rentals.filter((r) => r.machineId === machine.id).sort((a, b) => b.startDate.localeCompare(a.startDate));
-  const machineMaintenance = maintenanceRecords
-    .filter((rec) => rec.machineId === machine.id)
-    .sort((a, b) => b.startDate.localeCompare(a.startDate));
-
-  // 12-month lane window: 6 months back, 6 months ahead of today.
-  const windowStart = (() => {
-    const d = new Date(`${today}T00:00:00Z`);
-    d.setUTCMonth(d.getUTCMonth() - 6);
-    return d.toISOString().slice(0, 10);
-  })();
-  const yearScale = Array.from({ length: LANE_WINDOW_MONTHS }, (_, i) => {
-    const d = new Date(`${windowStart}T00:00:00Z`);
-    d.setUTCMonth(d.getUTCMonth() + i);
-    return new Intl.DateTimeFormat("en-GB", { month: "short" }).format(d);
-  });
-  // laneBlocksFor only covers rentals occupying the machine now/ahead
-  // (active/confirmed) plus open maintenance windows — past rentals need
-  // their own `past`-kind blocks added here so the 12-month history
-  // actually shows completed/cancelled rentals, matching the canvas.
-  const yearLaneBlocks = [
-    ...laneBlocksFor(machine.id, rentals, maintenanceRecords),
-    ...machineRentals
-      .filter((r) => r.status === "completed" || r.status === "cancelled")
-      .map((r) => ({ from: r.startDate, to: r.endDate ?? r.startDate, kind: "past" as const })),
-  ];
-
-  const unbookedDays = (() => {
-    // Whole 12-month window minus every occupying/maintenance day, floored at 0 — a real
-    // derivation from the same block data drawn in the lane, not a separate estimate.
-    const totalDays = LANE_WINDOW_DAYS;
-    const occupied = yearLaneBlocks.reduce((sum, b) => {
-      const to = b.to ?? today;
-      return sum + Math.max(0, daysBetween(b.from, to));
-    }, 0);
-    return Math.max(0, totalDays - occupied);
-  })();
+  const selectedKey = selection ? `${selection.kind}:${selection.id}` : logDate ? `log:${logDate}` : null;
 
   return (
-    <div className="flex min-w-0 flex-col gap-3.5">
-      <PageHeader
-        breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: machine.assetCode }]}
-        title={product ? `${product.manufacturer} ${product.name}` : machine.assetCode}
-        actions={
-          <div className="flex flex-wrap gap-2">
-            {legalNextMachineStatuses(machine.status).map((next) => (
-              <Button key={next} variant="secondary" onClick={() => void handleMarkStatus(next)}>
-                Mark {MACHINE_STATUS_MAP[next]?.label ?? next}
-              </Button>
-            ))}
-            <Button variant="secondary" onClick={() => setEditOpen(true)}>
-              Edit details
-            </Button>
-            <Button disabled={Boolean(rental)} title={rental ? "Already on rent" : "Not built yet"}>
-              Add to quotation
-            </Button>
-          </div>
+    <div className="flex min-w-0 flex-col">
+      <MachineHeader
+        machine={machine}
+        product={data.product}
+        subcategory={data.subcategory}
+        category={data.category}
+        deployment={dep}
+        ownerName={data.ownerName}
+        backHref={backHref}
+        primary={primary}
+        quote={
+          access.quotations
+            ? {
+                href: `/quotations?create=1&machineId=${machine.id}`,
+                enabled: machine.status === MachineStatus.active && online,
+                reason: !online ? OFFLINE_HINT : "Only Active machines can be quoted",
+              }
+            : null
         }
+        menuItems={menuItems}
       />
 
-      <div className="flex flex-wrap items-center gap-2.5">
-        <StatusBadge status={machine.status} map={MACHINE_STATUS_MAP} />
-        {rental && (
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-on-rent">On rent</span>
+      <PageBody>
+        {machine.status === MachineStatus.retired && (
+          <Alert tone="neutral" icon="retire">
+            <strong className="font-semibold text-ink">This machine is retired.</strong> It can&apos;t be quoted, rented or sent
+            to the workshop. Its rental, workshop and invoice history is kept below. FleetIP doesn&apos;t record the date it was
+            retired or who retired it.
+          </Alert>
         )}
-        <span className="font-mono text-sm text-meta">{machine.assetCode}</span>
-        <span className="text-meta-light">·</span>
-        <span className="font-mono text-xs text-meta">{machine.registrationNumber}</span>
-        {machine.chassisNumber && (
-          <>
-            <span className="text-meta-light">·</span>
-            <span className="font-mono text-xs text-meta">Chassis {machine.chassisNumber}</span>
-          </>
-        )}
-        {machine.yearOfManufacture && (
-          <>
-            <span className="text-meta-light">·</span>
-            <span className="font-mono text-xs text-meta">YOM {machine.yearOfManufacture}</span>
-          </>
-        )}
-      </div>
 
-      <Tabs items={TABS} active={tab} onChange={setTab} />
+        <AttentionList items={attentionItems} note="Worked out when this page opened. FleetIP doesn't send reminders for these." />
 
-      {tab === "overview" && (
-        <div className="flex flex-col gap-3.5">
-          <div className="grid grid-cols-2 overflow-hidden rounded-panel border border-border-strong bg-surface sm:grid-cols-3 lg:flex">
-            <Metric
-              label="Deployment"
-              value={rental ? "On rent" : machine.status === "under_maintenance" ? "Maintenance" : machine.status === "retired" ? "Retired" : "Available"}
-              sub={rental ? `RN-${rental.id.slice(0, 8).toUpperCase()} · ${rentalName ?? "—"}` : undefined}
-              tone={rental ? "text-on-rent" : "text-ink"}
+        <KeyFigures items={figures} />
+
+        <AvailabilityCard
+          model={lanes}
+          view={view}
+          onViewChange={setView}
+          today={data.today}
+          selectedKey={selectedKey}
+          onSelect={onLaneSelect}
+        />
+
+        <div className="flex flex-wrap items-start gap-3.5">
+          <div className="flex min-w-0 flex-[1_1_560px] flex-col gap-3.5">
+            <CurrentRentalCard
+              data={data}
+              rental={current}
+              coverage={current && current.id === active?.id ? coverage : null}
+              canEditTerms={access.rentals && online}
+              onEditTerms={() => setDialog("terms")}
             />
-            <Metric
-              label="Frees on"
-              value={rental ? (rental.endDate ? formatDate(rental.endDate) : "No end date") : "—"}
-              sub={
-                rental
-                  ? `${daysBetween(rental.startDate, today)} of ${
-                      rental.endDate ? daysBetween(rental.startDate, rental.endDate) : "∞"
-                    } days elapsed`
-                  : undefined
-              }
-            />
-            <Metric
-              label="Earning"
-              value={rental ? formatCurrencyINR(rental.rate) : "—"}
-              sub={rental ? `per ${rental.rateUnit}, since ${formatDate(rental.startDate)}` : undefined}
-            />
-            <Metric label="Logged days" value={String(utilization?.loggedDayCount ?? "—")} sub="logsheets on record" />
-            <Metric
-              label="Unbooked"
-              value={`${unbookedDays} days`}
-              sub="in the last twelve months"
-              tone="text-attention"
-            />
-          </div>
-
-          <Card>
-            <div className="mb-2.5 flex flex-wrap items-baseline gap-2.5">
-              <h2 className="text-sm font-semibold text-ink">Twelve-month record</h2>
-              <span className="text-xs text-meta">
-                Rentals and workshop blocks on one scale · {formatShortDate(windowStart)} → {formatShortDate(today)}
-              </span>
-            </div>
-            <AvailabilityLane
-              windowStart={windowStart}
-              windowDays={LANE_WINDOW_DAYS}
-              scale={yearScale}
-              blocks={yearLaneBlocks}
-              today={today}
-              height={34}
-            />
-            <div className="mt-2.5 flex flex-wrap items-center gap-4">
-              <AvailabilityLaneLegend items={[
-                { label: "On rent", kind: "active" },
-                { label: "Past rental", kind: "past" },
-                { label: "Workshop", kind: "maintenance" },
-              ]} />
-              <span className="ml-auto text-xs text-meta">Gaps are unbooked days — {unbookedDays} across the year</span>
-            </div>
-          </Card>
-
-          <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[minmax(0,1fr)_352px]">
-            <div className="flex flex-col gap-3.5">
-              {rental && (
-                <Card padding="none">
-                  <div className="flex items-center gap-2.5 border-b border-border px-4.5 py-3.5">
-                    <h2 className="text-sm font-semibold text-ink">Current rental</h2>
-                    <span className="font-mono text-xs text-accent-text">RN-{rental.id.slice(0, 8).toUpperCase()}</span>
-                    <StatusBadge status={rental.status} map={{ active: { label: "Active", tone: "info" }, confirmed: { label: "Confirmed", tone: "warning" } }} />
-                    <a href={`/rentals/${rental.id}`} className="ml-auto text-xs font-medium text-accent-text">
-                      Open rental
-                    </a>
-                  </div>
-                  <div className="flex flex-col gap-3.5 p-4.5">
-                    <div className="flex flex-wrap items-start gap-6">
-                      <Field label="Customer" value={rentalName ?? "—"} sub={rental.clientSnapshot ? "Client snapshot · not a FleetIP organization" : undefined} />
-                      <Field label="Project" value={rental.projectName ?? "—"} sub={rental.projectLocation ?? undefined} />
-                      <Field label="Rate" value={formatCurrencyINR(rental.rate)} sub={`per ${rental.rateUnit}`} align="right" mono className="ml-auto" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-cell border border-border sm:grid-cols-4">
-                      <TermCell label="Rate unit" value={rental.rateUnit} mono />
-                      <TermCell label="Operator scope" value={rental.operatorScope?.replace("_", " ") ?? "—"} />
-                      <TermCell label="Shift structure" value={rental.shiftStructure ?? "—"} />
-                      <TermCell label="Overtime" value={rental.overtimeRate ? formatCurrencyINR(rental.overtimeRate) + " / hr" : "—"} mono />
-                      <TermCell label="Mobilization" value={rental.mobilizationCharge ? formatCurrencyINR(rental.mobilizationCharge) : "—"} mono />
-                      <TermCell label="Demobilization" value={rental.demobilizationCharge ? formatCurrencyINR(rental.demobilizationCharge) : "—"} mono />
-                      <TermCell label="Fuel norms" value={rental.fuelNorms ?? "—"} />
-                      <TermCell label="Notice period" value={rental.noticePeriodDays ? `${rental.noticePeriodDays} days` : "—"} mono />
-                    </div>
-                  </div>
-                </Card>
-              )}
-
-              <Card padding="none">
-                <div className="flex items-center gap-2.5 border-b border-border px-4.5 py-3.5">
-                  <h2 className="text-sm font-semibold text-ink">Rental history</h2>
-                  <span className="text-xs text-meta">
-                    {machineRentals.length > 5 ? `Five most recent of ${machineRentals.length}` : `${machineRentals.length} total`}
-                  </span>
-                  <button type="button" className="ml-auto text-xs font-medium text-accent-text" onClick={() => setTab("rentals")}>
-                    All rentals
-                  </button>
-                </div>
-                {machineRentals.length === 0 ? (
-                  <EmptyState title="No rental history" />
-                ) : (
-                  <Table>
-                    <Thead>
-                      <Tr>
-                        <Th>Rental</Th>
-                        <Th>Customer &amp; project</Th>
-                        <Th>Term</Th>
-                        <Th>Status</Th>
-                        <Th className="text-right">Rate</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {machineRentals.slice(0, 5).map((r) => (
-                        <Tr key={r.id}>
-                          <Td className="font-mono text-accent-text">RN-{r.id.slice(0, 8).toUpperCase()}</Td>
-                          <Td>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-ink-strong">
-                                {(r.renterOrganizationId && renterNames.get(r.renterOrganizationId)) || r.clientSnapshot?.name || "—"}
-                              </span>
-                              <span className="text-xs text-meta">{r.projectName ?? "—"}</span>
-                            </div>
-                          </Td>
-                          <Td className="font-mono">{formatDateRange(r.startDate, r.endDate)}</Td>
-                          <Td>
-                            <StatusBadge
-                              status={r.status}
-                              map={{
-                                confirmed: { label: "Confirmed", tone: "warning" },
-                                active: { label: "Active", tone: "info" },
-                                off_rent: { label: "Off rent", tone: "warning" },
-                                completed: { label: "Completed", tone: "success" },
-                                cancelled: { label: "Cancelled", tone: "neutral" },
-                              }}
-                            />
-                          </Td>
-                          <Td className="text-right font-mono font-semibold">{formatCurrencyINR(r.rate)}</Td>
-                        </Tr>
-                      ))}
-                    </Tbody>
-                  </Table>
-                )}
-              </Card>
-
-              <Card padding="none">
-                <div className="flex items-center gap-2.5 border-b border-border px-4.5 py-3.5">
-                  <h2 className="text-sm font-semibold text-ink">Workshop record</h2>
-                  <span className="text-xs text-meta">
-                    {machineMaintenance.length > 3 ? `Three most recent of ${machineMaintenance.length}` : `${machineMaintenance.length} total`}
-                  </span>
-                  <button type="button" className="ml-auto text-xs font-medium text-accent-text" onClick={() => setTab("maintenance")}>
-                    Log maintenance
-                  </button>
-                </div>
-                {machineMaintenance.length === 0 ? (
-                  <EmptyState
-                    title="No maintenance logged"
-                    description={canListMaintenance ? "Nothing scheduled yet." : "You don't have permission to view maintenance."}
-                  />
-                ) : (
-                  <div className="flex flex-col">
-                    {machineMaintenance.slice(0, 3).map((rec) => (
-                      <div key={rec.id} className="grid grid-cols-[110px_140px_minmax(0,1fr)_120px] items-center gap-3 border-b border-border px-4.5 py-3 last:border-0">
-                        <span className="text-[11px] font-medium uppercase tracking-wide text-ink-strong capitalize">{rec.maintenanceType}</span>
-                        <span className="font-mono text-xs text-ink-strong">{formatDateRange(rec.startDate, rec.endDate)}</span>
-                        <span className="truncate text-sm text-ink-muted">{rec.notes ?? "—"}</span>
-                        <span className="text-right text-xs font-medium text-available">{rec.status === "completed" ? "Completed" : rec.status.replace("_", " ")}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </div>
-
-            <div className="flex flex-col gap-3.5">
-              <Card padding="none">
-                <div className="flex items-baseline gap-2 border-b border-border px-4 py-3.5">
-                  <h2 className="text-sm font-semibold text-ink">Utilization</h2>
-                  <span className="text-xs text-meta">from logsheets</span>
-                </div>
-                <div className="flex flex-col gap-3 p-4">
-                  {utilization ? (
-                    <>
-                      <StatRow label="Operating hours" value={utilization.totalOperatingHours} />
-                      <StatRow label="Idle hours" value={utilization.totalIdleHours} />
-                      <StatRow label="Logged days" value={utilization.loggedDayCount} />
-                      <div className="flex h-2 overflow-hidden rounded-xs bg-surface-rail-track">
-                        <div
-                          className="bg-on-rent"
-                          style={{
-                            width: `${Math.round(
-                              (utilization.totalOperatingHours /
-                                Math.max(1, utilization.totalOperatingHours + utilization.totalIdleHours)) *
-                                100,
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                      <p className="text-xs leading-normal text-meta">
-                        Operating vs. idle hours as a share of logged hours. The contracts expose no total
-                        rental days per machine, so no percentage of the year is claimed here.
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-meta">No utilization data yet.</p>
-                  )}
-                </div>
-              </Card>
-
-              <Card padding="none">
-                <div className="border-b border-border px-4 py-3.5 text-sm font-semibold text-ink">Specifications</div>
-                {specRows.length === 0 ? (
-                  <p className="p-4 text-sm text-meta">No specifications recorded for this product.</p>
-                ) : (
-                  <div className="flex flex-col gap-2 p-4">
-                    {specRows.map((row) => (
-                      <StatRow key={row.label} label={row.label} value={row.value} mono />
-                    ))}
-                  </div>
-                )}
-              </Card>
+            <div ref={tabsRef} className="scroll-mt-4">
+              <RecordTabs
+                data={data}
+                coverage={coverage}
+                tab={tab}
+                onTabChange={setTab}
+                canLog={access.logsheets && online}
+                onLogDate={openLog}
+              />
             </div>
           </div>
+          <aside
+            aria-label="Machine facts"
+            className="grid min-w-0 flex-[1_1_300px] grid-cols-1 gap-3.5 min-[760px]:max-[1179px]:grid-cols-2 min-[1180px]:max-w-[380px]"
+          >
+            <IsItFree
+              data={data}
+              organizationId={organizationId}
+              canCheck={access.rentals}
+              canCreateRental={access.rentals && machine.status === MachineStatus.active && online}
+              onCreateRental={(from, to) => setCreateRental({ from, to: to ?? undefined })}
+              request={checkRequest}
+            />
+            <HoursLogged data={data} />
+            <InspectionDocuments data={data} />
+            <Specifications data={data} />
+            <RecordInfo data={data} />
+          </aside>
         </div>
-      )}
+      </PageBody>
 
-      {tab === "rentals" && (
-        <Card padding={machineRentals.length === 0 ? "md" : "none"}>
-          {machineRentals.length === 0 ? (
-            <EmptyState title="No rental history" />
-          ) : (
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th>Rental</Th>
-                  <Th>Party</Th>
-                  <Th>Period</Th>
-                  <Th>Rate</Th>
-                  <Th>Status</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {machineRentals.map((r) => (
-                  <Tr key={r.id}>
-                    <Td className="font-mono">RN-{r.id.slice(0, 8).toUpperCase()}</Td>
-                    <Td>
-                      {(r.renterOrganizationId && renterNames.get(r.renterOrganizationId)) ||
-                        r.clientSnapshot?.name ||
-                        "—"}
-                    </Td>
-                    <Td className="font-mono">{formatDateRange(r.startDate, r.endDate)}</Td>
-                    <Td className="font-mono">{formatCurrencyINR(r.rate)}/{r.rateUnit}</Td>
-                    <Td>
-                      <Badge
-                        tone={
-                          r.status === "active"
-                            ? "info"
-                            : r.status === "cancelled"
-                              ? "danger"
-                              : "neutral"
-                        }
-                      >
-                        {r.status}
-                      </Badge>
-                    </Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          )}
-        </Card>
-      )}
+      <RecordDrawer data={data} selection={selection} onClose={() => setSelection(null)} />
 
-      {tab === "maintenance" && organizationId && (
-        <MaintenancePanel organizationId={organizationId} machineId={machine.id} />
-      )}
-
-      {tab === "logsheets" && (
-        <Card padding={!rental || logsheets.length === 0 ? "md" : "none"}>
-          {!rental ? (
-            <EmptyState
-              title="No current rental"
-              description="Logsheets are tied to the current rental — there isn't one right now."
-            />
-          ) : logsheets.length === 0 ? (
-            <EmptyState title="No logsheets yet" />
-          ) : (
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th>Date</Th>
-                  <Th>Operating</Th>
-                  <Th>Idle</Th>
-                  <Th>Overtime</Th>
-                  <Th>Operator</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {logsheets.map((sheet) => (
-                  <Tr key={sheet.id}>
-                    <Td className="font-mono">{formatDate(sheet.logDate)}</Td>
-                    <Td className="font-mono">{sheet.operatingHours ?? "—"}</Td>
-                    <Td className="font-mono">{sheet.idleHours ?? "—"}</Td>
-                    <Td className="font-mono">{sheet.overtimeHours ?? "—"}</Td>
-                    <Td>{sheet.operatorName ?? "—"}</Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          )}
-        </Card>
-      )}
-
-      {tab === "activity" && (
-        <Card>
-          <p className="text-sm text-meta">
-            Per-machine activity history isn&apos;t available yet — recorded in the frontend/backend
-            gap report.
-          </p>
-        </Card>
-      )}
-
-      {organizationId && (
-        <EditMachineDialog
-          open={editOpen}
-          onClose={() => setEditOpen(false)}
+      {active && logDate && (
+        <LogsheetDrawer
+          open
+          onClose={() => setLogDate(null)}
           organizationId={organizationId}
-          machine={machine}
-          onUpdated={(updated) => setData((prev) => (prev ? { ...prev, machine: updated } : prev))}
+          rental={active}
+          logsheets={data.logsheets.filter((l) => l.rentalId === active.id)}
+          initialDate={logDate}
+          onSaved={() => void reload()}
         />
       )}
-    </div>
-  );
-}
 
-function Metric({
-  label,
-  value,
-  sub,
-  tone = "text-ink",
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone?: string;
-}) {
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1 border-b border-r border-border-soft px-4 py-3.5 lg:border-b-0 lg:last:border-r-0">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["truncate font-mono text-[19px] font-semibold leading-tight", tone].join(" ")}>{value}</span>
-      {sub && <span className="truncate text-[11px] leading-tight text-meta">{sub}</span>}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  sub,
-  align = "left",
-  mono = false,
-  className,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  align?: "left" | "right";
-  mono?: boolean;
-  className?: string;
-}) {
-  return (
-    <div className={["flex flex-col gap-0.5", align === "right" ? "items-end" : "items-start", className].filter(Boolean).join(" ")}>
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-[15px] font-medium leading-tight text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
-        {value}
-      </span>
-      {sub && <span className="text-xs leading-tight text-meta">{sub}</span>}
-    </div>
-  );
-}
-
-function TermCell({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex flex-col gap-1 bg-surface px-3 py-2.5">
-      <span className="text-[11px] leading-tight text-meta">{label}</span>
-      <span className={["text-[13px] font-medium leading-tight text-ink-strong capitalize", mono && "font-mono normal-case"].filter(Boolean).join(" ")}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function StatRow({ label, value, mono }: { label: string; value: string | number; mono?: boolean }) {
-  return (
-    <div className="flex items-baseline gap-2.5">
-      <span className="flex-1 text-xs leading-tight text-ink-muted">{label}</span>
-      <span className={["text-sm font-semibold text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>{value}</span>
+      <EditMachineDialog
+        open={dialog === "edit"}
+        onClose={() => setDialog(null)}
+        organizationId={organizationId}
+        machine={machine}
+        productLabel={productLabel}
+        onUpdated={() => void reload()}
+      />
+      <MaintenanceFormDialog
+        open={dialog === "maintenance"}
+        onClose={() => setDialog(null)}
+        organizationId={organizationId}
+        machine={machine}
+        rentals={data.rentals}
+        onSaved={() => void reload()}
+      />
+      <WorkshopDialog open={dialog === "workshop"} onClose={() => setDialog(null)} organizationId={organizationId} data={data} onChanged={() => void reload()} />
+      <CompleteJobDialog open={dialog === "complete"} onClose={() => setDialog(null)} organizationId={organizationId} data={data} onChanged={() => void reload()} />
+      <RetireDialog
+        open={dialog === "retire"}
+        onClose={() => setDialog(null)}
+        organizationId={organizationId}
+        data={data}
+        onChanged={() => void reload()}
+        productLabel={productLabel}
+      />
+      {current && current.status === RentalStatus.confirmed && (
+        <EditRentalTermsDialog
+          open={dialog === "terms"}
+          onClose={() => setDialog(null)}
+          organizationId={organizationId}
+          rental={current}
+          onUpdated={() => void reload()}
+        />
+      )}
+      <CreateRentalDialog
+        open={createRental !== null}
+        onClose={() => setCreateRental(null)}
+        organizationId={organizationId}
+        initialMachineId={machine.id}
+        initialStartDate={createRental?.from}
+        initialEndDate={createRental?.to}
+        onCreated={() => void reload()}
+      />
     </div>
   );
 }

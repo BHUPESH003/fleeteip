@@ -25,4 +25,8 @@ export class SessionRepository implements SessionRepositoryPort {
   deleteByTokenHash(tokenHash: string) {
     return this.db.deleteFrom("sessions").where("token_hash", "=", tokenHash).execute();
   }
+
+  deleteByUserId(userId: string) {
+    return this.db.deleteFrom("sessions").where("user_id", "=", userId).execute();
+  }
 }

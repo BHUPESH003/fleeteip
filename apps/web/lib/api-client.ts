@@ -6,7 +6,12 @@ import type {
   AuctionSummary,
   BiddingDirection,
 } from "@fleetip/contracts/auction";
-import type { CreateInvoiceRequest, Invoice, InvoiceDetail } from "@fleetip/contracts/billing";
+import type {
+  CreateInvoiceRequest,
+  Invoice,
+  InvoiceDetail,
+  RecordPaymentRequest,
+} from "@fleetip/contracts/billing";
 import type {
   CreateProductCategoryRequest,
   CreateProductRequest,
@@ -19,16 +24,23 @@ import type {
   UpdateProductSubcategoryRequest,
 } from "@fleetip/contracts/catalogue";
 import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
-import type { Logsheet, MachineUtilization, RentalUtilization } from "@fleetip/contracts/logsheet";
+import type {
+  Logsheet,
+  MachineUtilization,
+  RentalUtilization,
+  SubmitLogsheetRequest,
+} from "@fleetip/contracts/logsheet";
 import type {
   AcceptInviteRequest,
   CreateInviteResponse,
   CreateRoleRequest,
   InvitePreview,
   Organization,
+  OrganizationInvite,
   OrganizationMember,
   RoleName,
   RoleWithPermissions,
+  UpdateOrganizationRequest,
   UpdateRoleRequest,
 } from "@fleetip/contracts/organization";
 import type {
@@ -72,51 +84,127 @@ import type {
   CreateTransportRequest,
   TransportLeg,
   TransportRecord,
+  UpdateTransportRequest,
 } from "@fleetip/contracts/transport";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
+/**
+ * Every failed call throws an ApiError. The API answers errors as
+ * `{error:{code,message}}` (apps/api/src/app.ts); a request that never
+ * reached the server (offline, API down) has status 0 and code "network".
+ * Screens never show `message` raw — see lib/errors.ts.
+ */
+/** One rejected request field, as the API reports it (400). `path` is dotted, empty for the whole request. */
+export interface ApiIssue {
+  path: string;
+  message: string;
+}
 
 export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code: string = "unknown",
+    /** 400 only: every rejected field. */
+    public readonly issues: ApiIssue[] = [],
+    /** 409 only, when the conflict is about one field (e.g. "assetCode"). */
+    public readonly field?: string,
   ) {
     super(message);
+    this.name = "ApiError";
+  }
+
+  get isNetwork(): boolean {
+    return this.status === 0;
   }
 }
 
-function errorMessageFromBody(body: unknown, status: number): string {
+function errorFromBody(body: unknown, status: number): ApiError {
   if (typeof body === "object" && body !== null) {
     const directMessage = (body as { message?: unknown }).message;
-    if (typeof directMessage === "string") return directMessage;
+    if (typeof directMessage === "string") return new ApiError(directMessage, status);
 
-    const nestedError = (body as { error?: unknown }).error;
-    if (typeof nestedError === "object" && nestedError !== null) {
-      const nestedMessage = (nestedError as { message?: unknown }).message;
-      if (typeof nestedMessage === "string") return nestedMessage;
+    const nested = (body as { error?: unknown }).error;
+    if (typeof nested === "object" && nested !== null) {
+      const { message, code, issues, field } = nested as { message?: unknown; code?: unknown; issues?: unknown; field?: unknown };
+      if (typeof message === "string") {
+        return new ApiError(
+          message,
+          status,
+          typeof code === "string" ? code : "unknown",
+          Array.isArray(issues) ? issues.filter(isIssue) : [],
+          typeof field === "string" ? field : undefined,
+        );
+      }
     }
   }
-  return `Request failed with status ${status}`;
+  return new ApiError(`Request failed with status ${status}`, status);
+}
+
+function isIssue(value: unknown): value is ApiIssue {
+  return typeof value === "object" && value !== null && typeof (value as ApiIssue).path === "string" && typeof (value as ApiIssue).message === "string";
+}
+
+// --- Connection state, read by the offline banner (components/OfflineBanner) ---
+type ConnectionListener = (state: { reachable: boolean; lastSuccessAt: Date | null }) => void;
+let lastSuccessAt: Date | null = null;
+let reachable = true;
+const connectionListeners = new Set<ConnectionListener>();
+
+function setReachable(value: boolean) {
+  if (value) lastSuccessAt = new Date();
+  if (reachable === value && value) return;
+  reachable = value;
+  connectionListeners.forEach((listener) => listener({ reachable, lastSuccessAt }));
+}
+
+export function subscribeConnection(listener: ConnectionListener): () => void {
+  connectionListeners.add(listener);
+  return () => connectionListeners.delete(listener);
+}
+
+export function connectionSnapshot() {
+  return { reachable, lastSuccessAt };
+}
+
+/** Lightweight reachability probe used by "Try again". */
+export async function pingApi(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_URL}/health`, { credentials: "include", cache: "no-store" });
+    setReachable(response.ok);
+    return response.ok;
+  } catch {
+    setReachable(false);
+    return false;
+  }
 }
 
 async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T | undefined> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    credentials: "include",
-    // Only claim a JSON content-type when there's actually a body — sending
-    // it on a bodiless request (e.g. logout) makes Fastify's JSON parser
-    // reject the empty body outright.
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      credentials: "include",
+      // Only claim a JSON content-type when there's actually a body — sending
+      // it on a bodiless request (e.g. logout) makes Fastify's JSON parser
+      // reject the empty body outright.
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+    });
+  } catch {
+    setReachable(false);
+    throw new ApiError("Could not reach FleetIP", 0, "network");
+  }
+  setReachable(true);
 
   if (response.status === 204) return undefined;
 
   const body = await response.json().catch(() => undefined);
   if (!response.ok) {
-    throw new ApiError(errorMessageFromBody(body, response.status), response.status);
+    throw errorFromBody(body, response.status);
   }
   return body as T;
 }
@@ -149,6 +237,10 @@ export const apiClient = {
     apiRequest("/auth/login", { method: "POST", body: JSON.stringify(input) }),
   logout: () => apiRequest("/auth/logout", { method: "POST" }),
   me: () => apiRequest("/auth/me", { method: "GET" }),
+  requestPasswordReset: (input: { email: string }) =>
+    apiRequest("/auth/password-reset/request", { method: "POST", body: JSON.stringify(input) }),
+  confirmPasswordReset: (input: { token: string; password: string }) =>
+    apiRequest("/auth/password-reset/confirm", { method: "POST", body: JSON.stringify(input) }),
 
   // --- Organization administration (tenant) ---
   getOrganizationProfile: (organizationId: string) =>
@@ -161,6 +253,17 @@ export const apiClient = {
     apiRequest<CreateInviteResponse>(`/organizations/${organizationId}/invites`, {
       method: "POST",
       body: JSON.stringify({ roleId }),
+    }),
+  listInvites: (organizationId: string) =>
+    apiRequest<OrganizationInvite[]>(`/organizations/${organizationId}/invites`, { method: "GET" }),
+  revokeInvite: (organizationId: string, inviteId: string) =>
+    apiRequest<OrganizationInvite>(`/organizations/${organizationId}/invites/${inviteId}/revoke`, {
+      method: "POST",
+    }),
+  updateOrganizationProfile: (organizationId: string, input: UpdateOrganizationRequest) =>
+    apiRequest<Organization>(`/organizations/${organizationId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
     }),
   updateMemberRole: (organizationId: string, membershipId: string, roleId: string) =>
     apiRequest<OrganizationMember>(`/organizations/${organizationId}/members/${membershipId}`, {
@@ -199,10 +302,24 @@ export const apiClient = {
     apiRequest<ProductSubcategory[]>(`/product-categories/${categoryId}/subcategories`, {
       method: "GET",
     }),
-  listProducts: (subcategoryId?: string) =>
-    apiRequest<Product[]>(`/products${subcategoryId ? `?subcategoryId=${subcategoryId}` : ""}`, {
-      method: "GET",
-    }),
+  // Includes disabled products by default: most callers resolve names for
+  // existing machines. Pickers (register machine) pass includeDisabled=false.
+  listProducts: (subcategoryId?: string, includeDisabled = true) => {
+    const query = new URLSearchParams(subcategoryId ? { subcategoryId } : {});
+    if (includeDisabled) query.set("includeDisabled", "true");
+    return apiRequest<Product[]>(`/products?${query}`, { method: "GET" });
+  },
+  getProductCategory: (categoryId: string) =>
+    apiRequest<ProductCategory>(`/product-categories/${categoryId}`, { method: "GET" }),
+  getProductSubcategory: (subcategoryId: string) =>
+    apiRequest<ProductSubcategory>(`/product-subcategories/${subcategoryId}`, { method: "GET" }),
+  getProduct: (productId: string) =>
+    apiRequest<Product>(`/products/${productId}`, { method: "GET" }),
+  setProductDisabled: (organizationId: string, productId: string, disabled: boolean) =>
+    apiRequest<Product>(
+      `/organizations/${organizationId}/products/${productId}/${disabled ? "disable" : "enable"}`,
+      { method: "POST" },
+    ),
   createProductCategory: (organizationId: string, input: CreateProductCategoryRequest) =>
     apiRequest<ProductCategory>(`/organizations/${organizationId}/product-categories`, {
       method: "POST",
@@ -617,6 +734,11 @@ export const apiClient = {
     apiRequest<MaintenanceRecord[]>(`/organizations/${organizationId}/maintenance-records`, {
       method: "GET",
     }),
+  getMaintenanceRecord: (organizationId: string, maintenanceId: string) =>
+    apiRequest<MaintenanceRecord>(
+      `/organizations/${organizationId}/maintenance-records/${maintenanceId}`,
+      { method: "GET" },
+    ),
   listMaintenanceForMachine: (organizationId: string, machineId: string) =>
     apiRequest<MaintenanceRecord[]>(
       `/organizations/${organizationId}/machines/${machineId}/maintenance-records`,
@@ -664,7 +786,7 @@ export const apiClient = {
     organizationId: string,
     rentalId: string,
     leg: TransportLeg,
-    updates: { status?: TransportRecord["status"]; actualDate?: string },
+    updates: UpdateTransportRequest,
   ) =>
     apiRequest<TransportRecord>(
       `/organizations/${organizationId}/rentals/${rentalId}/transport/${leg}`,
@@ -685,7 +807,7 @@ export const apiClient = {
   submitLogsheet: (
     organizationId: string,
     rentalId: string,
-    input: { logDate: string; operatingHours?: number; idleHours?: number; overtimeHours?: number },
+    input: SubmitLogsheetRequest,
   ) =>
     apiRequest<Logsheet>(`/organizations/${organizationId}/rentals/${rentalId}/logsheets`, {
       method: "PUT",
@@ -726,7 +848,7 @@ export const apiClient = {
   recordPayment: (
     organizationId: string,
     invoiceId: string,
-    input: { amount: number; paidDate: string; method?: string; reference?: string },
+    input: RecordPaymentRequest,
   ) =>
     apiRequest<Invoice>(`/organizations/${organizationId}/invoices/${invoiceId}/payments`, {
       method: "POST",

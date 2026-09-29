@@ -1,4 +1,4 @@
-import type { RequirementStatus } from "@fleetip/contracts/rfq";
+import { RequirementStatus } from "@fleetip/contracts/rfq";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import type {
@@ -70,7 +70,7 @@ export class RequirementRepository implements RequirementRepositoryPort {
         crew_requirement: input.crewRequirement ?? null,
         shift_requirement: input.shiftRequirement ?? null,
         validity_date: input.validityDate,
-        status: "open",
+        status: RequirementStatus.open,
         notes: input.notes ?? null,
       })
       .returning(REQUIREMENT_COLUMNS)
@@ -101,7 +101,7 @@ export class RequirementRepository implements RequirementRepositoryPort {
     const rows = await this.db
       .selectFrom("requirements")
       .selectAll()
-      .where("status", "=", "open")
+      .where("status", "=", RequirementStatus.open)
       .where(sql<boolean>`validity_date >= current_date`)
       .orderBy("created_at", "desc")
       .execute();

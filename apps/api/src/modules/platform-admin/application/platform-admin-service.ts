@@ -1,12 +1,13 @@
 import type { Requirement } from "@fleetip/contracts/rfq";
 import type { Auction } from "@fleetip/contracts/auction";
+import { AuctionStatus } from "@fleetip/contracts/auction";
 import { NotFoundError } from "../../../shared/errors.js";
 import type { CatalogueService } from "../../catalogue/application/catalogue-service.js";
 import type {
   OrganizationRepositoryPort,
   OrganizationWithTypeRecord,
 } from "../../organizations/domain/ports.js";
-import type { PublicUserRecord, UserRepositoryPort } from "../../identity/domain/ports.js";
+import type { PublicUserRecord, SessionRepositoryPort, UserRepositoryPort } from "../../identity/domain/ports.js";
 import type { RequirementRepositoryPort } from "../../marketplace/rfq/domain/ports.js";
 import { toRequirement } from "../../marketplace/rfq/application/requirement-service.js";
 import type { AuctionRepositoryPort, AuctionRecord } from "../../marketplace/auction/domain/ports.js";
@@ -75,6 +76,7 @@ export class PlatformAdminService {
     private readonly userRepository: UserRepositoryPort,
     private readonly requirementRepository: RequirementRepositoryPort,
     private readonly auctionRepository: AuctionRepositoryPort,
+    private readonly sessionRepository: SessionRepositoryPort,
   ) {}
 
   async listOrganizations(): Promise<PlatformOrganization[]> {
@@ -102,6 +104,8 @@ export class PlatformAdminService {
     const existing = await this.userRepository.findById(userId);
     if (!existing) throw new NotFoundError("User not found");
     const record = await this.userRepository.updateStatus(userId, status);
+    // A suspended user is signed out everywhere at once, not when their cookie expires.
+    if (status === "suspended") await this.sessionRepository.deleteByUserId(userId);
     return toPlatformUser(record);
   }
 
@@ -131,7 +135,7 @@ export class PlatformAdminService {
       organizations: organizations.length,
       users: users.length,
       openRequirements: openRequirements.length,
-      liveAuctions: auctions.filter((a) => a.status === "live" || a.status === "scheduled").length,
+      liveAuctions: auctions.filter((a) => a.status === AuctionStatus.live || a.status === AuctionStatus.scheduled).length,
     };
   }
 }

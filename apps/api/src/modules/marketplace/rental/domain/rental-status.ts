@@ -1,9 +1,9 @@
-import type { RentalStatus } from "@fleetip/contracts/rental";
+import { RentalStatus } from "@fleetip/contracts/rental";
 
 const VALID_TRANSITIONS: Record<RentalStatus, RentalStatus[]> = {
-  confirmed: ["active", "cancelled"],
-  active: ["off_rent", "cancelled"],
-  off_rent: ["completed", "cancelled"],
+  confirmed: [RentalStatus.active, RentalStatus.cancelled],
+  active: [RentalStatus.off_rent, RentalStatus.cancelled],
+  off_rent: [RentalStatus.completed, RentalStatus.cancelled],
   completed: [],
   cancelled: [],
 };

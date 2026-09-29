@@ -1,50 +1,36 @@
 "use client";
 
 import type { Notification, NotificationListResponse } from "@fleetip/contracts/notification";
-import { Dropdown, DropdownItem } from "@fleetip/ui";
+import { Dropdown, Icon, cx } from "@fleetip/ui";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiClient } from "../lib/api-client";
 import { formatRelativeTime } from "../lib/format";
+import { ROUTE_BY_RESOURCE_TYPE } from "../lib/navigation";
 import { useSession } from "../lib/session-context";
 import { useInterval } from "../lib/use-interval";
 
 const UNREAD_POLL_INTERVAL_MS = 25_000;
 
-// Every resource type a notify() call actually sets relatedResourceType to
-// (see docs/decisions.md) gets a real deep link — most have a plain [id]
-// detail route; Auction and Billing invoices don't have one (they're
-// selected via a query param on their list page instead).
-const ROUTE_BY_RESOURCE_TYPE: Record<string, (id: string) => string> = {
-  requirement: (id) => `/requirements/${id}`,
-  // requirement.quotation_requested's recipient is a Rental Company, which
-  // can't open /requirements/[id] at all (Renter-only) — a distinct
-  // resource type routes it to where they can actually act: the create-
-  // quotation flow, prefilled from the requirement.
-  quotation_request: (id) => `/quotations?requirementId=${id}`,
-  quotation: (id) => `/quotations/${id}`,
-  auction: (id) => `/auctions?auctionId=${id}`,
-  rental: (id) => `/rentals/${id}`,
-  machine: (id) => `/machines/${id}`,
-  transport: (id) => `/transport/${id}`,
-  work_order: (id) => `/work-orders/${id}`,
-  invoice: (id) => `/billing?invoiceId=${id}`,
-};
 
-export function NotificationBell() {
+/**
+ * Bell with the count of stored, unread notifications (FleetIP sends no
+ * time-based reminders — that needs a scheduler, backend ticket i).
+ */
+export function NotificationBell({ tone = "light" }: { tone?: "light" | "dark" }) {
   const { currentOrganizationId } = useSession();
   const router = useRouter();
-  const [data, setData] = useState<NotificationListResponse>({
-    notifications: [],
-    unreadCount: 0,
-  });
+  const [data, setData] = useState<NotificationListResponse>({ notifications: [], unreadCount: 0 });
+  const [loadFailed, setLoadFailed] = useState(false);
 
   async function load() {
     if (!currentOrganizationId) return;
     try {
       setData((await apiClient.listNotifications(currentOrganizationId)) as NotificationListResponse);
+      setLoadFailed(false);
     } catch {
-      // Best-effort — the bell just stays at its last-known state.
+      // Best-effort — the bell keeps its last-known state.
+      setLoadFailed(true);
     }
   }
 
@@ -64,11 +50,8 @@ export function NotificationBell() {
         // Navigation still proceeds even if marking-as-read failed.
       }
     }
-    const buildPath =
-      notification.relatedResourceType && ROUTE_BY_RESOURCE_TYPE[notification.relatedResourceType];
-    if (buildPath && notification.relatedResourceId) {
-      router.push(buildPath(notification.relatedResourceId));
-    }
+    const buildPath = notification.relatedResourceType && ROUTE_BY_RESOURCE_TYPE[notification.relatedResourceType];
+    if (buildPath && notification.relatedResourceId) router.push(buildPath(notification.relatedResourceId));
   }
 
   async function handleMarkAllRead() {
@@ -81,54 +64,85 @@ export function NotificationBell() {
     }
   }
 
-  if (!currentOrganizationId) return <span />;
+  if (!currentOrganizationId) return null;
+  const unread = data.unreadCount;
 
   return (
     <Dropdown
       align="right"
+      triggerLabel={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+      triggerClassName={cx(
+        "relative h-8 w-8 justify-center",
+        tone === "dark"
+          ? "text-white hover:bg-rail-active focus-visible:!outline-focus-on-dark"
+          : "border border-border-control bg-surface text-ink-strong hover:bg-surface-hover",
+      )}
+      panelClassName="w-[min(360px,calc(100vw-24px))] p-0"
       trigger={
-        <span
-          className="relative flex h-[30px] w-[30px] items-center justify-center rounded-control border border-border text-meta-light"
-          aria-label="Notifications"
-        >
-          &#9662;
-          {data.unreadCount > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-accent px-[3px] text-[9px] font-semibold text-white">
-              {data.unreadCount > 9 ? "9+" : data.unreadCount}
+        <>
+          <Icon name="notification" size={16} />
+          {unread > 0 && (
+            <span
+              aria-hidden="true"
+              className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-semibold text-white"
+            >
+              {unread > 9 ? "9+" : unread}
             </span>
           )}
-        </span>
+        </>
       }
     >
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-xs font-semibold text-ink-strong">Notifications</span>
-        {data.unreadCount > 0 && (
+      <div className="flex items-center justify-between border-b border-border px-3.5 py-2.5">
+        <span className="text-sm font-semibold text-ink">Notifications</span>
+        {unread > 0 && (
           <button
             type="button"
-            onClick={() => void handleMarkAllRead()}
-            className="text-xs text-accent-text hover:underline"
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleMarkAllRead();
+            }}
+            className="text-xs font-medium text-accent-text hover:text-accent-text-hover hover:underline"
           >
             Mark all read
           </button>
         )}
       </div>
-      <div className="max-h-96 w-80 overflow-y-auto">
-        {data.notifications.length === 0 ? (
-          <p className="px-3 py-4 text-sm text-meta">No notifications yet.</p>
+      <div className="max-h-[420px] overflow-y-auto">
+        {loadFailed && data.notifications.length === 0 ? (
+          <p className="m-0 px-3.5 py-4 text-sm text-ink-soft">Notifications couldn&apos;t be loaded. They&apos;ll retry shortly.</p>
+        ) : data.notifications.length === 0 ? (
+          <p className="m-0 px-3.5 py-4 text-sm text-ink-soft">No notifications yet.</p>
         ) : (
-          data.notifications.map((notification) => (
-            <DropdownItem
-              key={notification.id}
-              onClick={() => void handleOpenNotification(notification)}
-              className={notification.readAt ? undefined : "bg-info-bg"}
-            >
-              <p className="text-sm font-medium text-ink">{notification.title}</p>
-              <p className="text-xs text-ink-muted">{notification.message}</p>
-              <p className="mt-0.5 text-[11px] text-meta-light">
-                {formatRelativeTime(notification.createdAt)}
-              </p>
-            </DropdownItem>
-          ))
+          <ul className="m-0 list-none p-0">
+            {data.notifications.map((notification) => {
+              const isUnread = !notification.readAt;
+              return (
+                <li key={notification.id} className="border-b border-border last:border-0">
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenNotification(notification)}
+                    className={cx(
+                      "flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left hover:bg-surface-page focus-visible:outline-2 focus-visible:-outline-offset-2",
+                      isUnread && "bg-on-rent-bg/60",
+                    )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cx("mt-1.5 h-1.5 w-1.5 flex-none rounded-full", isUnread ? "bg-accent" : "bg-transparent")}
+                    />
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className={cx("text-sm leading-snug text-ink", isUnread ? "font-semibold" : "font-medium")}>
+                        {isUnread && <span className="sr-only">Unread: </span>}
+                        {notification.title}
+                      </span>
+                      <span className="text-xs leading-[1.45] text-ink-muted">{notification.message}</span>
+                      <span className="text-[11px] text-meta-light">{formatRelativeTime(notification.createdAt)}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     </Dropdown>

@@ -838,7 +838,7 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         ...(decision === "accepted"
           ? {
               start_date: existing.proposed_alternate_start_date ?? existing.start_date,
-              end_date: existing.proposed_alternate_end_date,
+              end_date: existing.proposed_alternate_end_date ?? existing.end_date,
             }
           : {}),
         alternate_date_status: "none",
@@ -1361,19 +1361,19 @@ describe("CommercialQuotationService", () => {
     expect(awarded.status).toBe("awarded");
   });
 
-  it("clears a prior Renter acceptance when the Rental Company edits terms directly, requiring re-acceptance", async () => {
+  it("allows editing terms in draft and freezes them once the quotation is sent", async () => {
     const service = buildService();
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
       ...pathBInput,
       clientSnapshot: undefined,
       renterOrganizationId: RENTER_ORG_ID,
     });
+    await service.updateTerms("user-1", RC_ORG_ID, quotation.id, { paymentTerms: "Net 30" });
     await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
-    await service.acceptQuotation("user-2", RENTER_ORG_ID, quotation.id);
-    await service.updateTerms("user-1", RC_ORG_ID, quotation.id, { paymentTerms: "Net 15" });
-    await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow(
-      ConflictError,
-    );
+    // Terms are frozen once sent — changes go through offers / alternate dates.
+    await expect(
+      service.updateTerms("user-1", RC_ORG_ID, quotation.id, { paymentTerms: "Net 15" }),
+    ).rejects.toThrow(ConflictError);
   });
 
   it("rejects a Rental Company accepting its own quotation on the Renter's behalf", async () => {
@@ -1641,6 +1641,33 @@ describe("CommercialQuotationService", () => {
       expect(accepted.proposedAlternateStartDate).toBeNull();
     });
 
+    it("keeps the current end date when the accepted proposal has none", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, { startDate: "2026-03-03" });
+      const accepted = await service.respondToAlternateDates("user-2", RENTER_ORG_ID, quotation.id, "accepted");
+      expect(accepted.startDate).toBe("2026-03-03");
+      expect(accepted.endDate).toBe(pathBInput.endDate);
+    });
+
+    it("rejects a start-only proposal that would land after the current end date", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+      });
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await expect(
+        service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, { startDate: "2026-04-01" }),
+      ).rejects.toThrow(ValidationError);
+    });
+
     it("leaves the quotation's dates untouched when the Renter rejects the proposal", async () => {
       const service = buildService();
       const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
@@ -1651,6 +1678,7 @@ describe("CommercialQuotationService", () => {
       await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
       await service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
         startDate: "2026-04-01",
+        endDate: "2026-04-10",
       });
 
       const rejected = await service.respondToAlternateDates(
@@ -1674,6 +1702,7 @@ describe("CommercialQuotationService", () => {
       await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
       await service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {
         startDate: "2026-04-01",
+        endDate: "2026-04-10",
       });
       await expect(
         service.proposeAlternateDates("user-1", RC_ORG_ID, quotation.id, {

@@ -9,6 +9,8 @@ import { z } from "zod";
 // decision (this phase) that reversed that call.
 export const projectStatusSchema = z.enum(["active", "completed", "cancelled"]);
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+/** ProjectStatus.x names each value once; `ProjectStatus` is also the type. */
+export const ProjectStatus = projectStatusSchema.enum;
 
 export const projectSchema = z.object({
   id: z.string().uuid(),

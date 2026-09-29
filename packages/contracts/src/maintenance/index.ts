@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const maintenanceTypeSchema = z.enum(["scheduled", "breakdown", "inspection", "other"]);
 export type MaintenanceType = z.infer<typeof maintenanceTypeSchema>;
+/** MaintenanceType.x names each value once; `MaintenanceType` is also the type. */
+export const MaintenanceType = maintenanceTypeSchema.enum;
 
 export const maintenanceStatusSchema = z.enum([
   "scheduled",
@@ -10,6 +12,8 @@ export const maintenanceStatusSchema = z.enum([
   "cancelled",
 ]);
 export type MaintenanceStatus = z.infer<typeof maintenanceStatusSchema>;
+/** MaintenanceStatus.x names each value once; `MaintenanceStatus` is also the type. */
+export const MaintenanceStatus = maintenanceStatusSchema.enum;
 
 export const maintenanceRecordSchema = z.object({
   id: z.string().uuid(),

@@ -10,6 +10,11 @@ import type {
   UpdateCommercialQuotationTermsRequest,
 } from "@fleetip/contracts/quotation";
 import { addDuration } from "@fleetip/contracts/shared";
+import { AlternateDateStatus, CommercialQuotationStatus, QuotationOfferStatus } from "@fleetip/contracts/quotation";
+import { AuctionStatus, ParticipantStatus } from "@fleetip/contracts/auction";
+import { MachineStatus } from "@fleetip/contracts/equipment";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
+import { RequirementStatus } from "@fleetip/contracts/rfq";
 import {
   ConflictError,
   ForbiddenError,
@@ -128,7 +133,10 @@ function toScopeItem(record: QuotationScopeItemRecord): QuotationScopeItem {
   };
 }
 
-const EDITABLE_STATUSES = new Set(["draft", "sent", "negotiating"]);
+// Terms and scope are frozen once sent: after that the deal moves only
+// through counter-offers (rate) and the alternate-dates flow (dates), so
+// what the Renter accepted is what was sent.
+const EDITABLE_STATUSES = new Set<string>([CommercialQuotationStatus.draft]);
 
 export class CommercialQuotationService {
   constructor(
@@ -173,7 +181,7 @@ export class CommercialQuotationService {
     if (!machine || machine.organization_id !== rentalCompanyOrganizationId) {
       throw new NotFoundError("Machine not found in this organization");
     }
-    if (machine.status === "retired") {
+    if (machine.status === MachineStatus.retired) {
       throw new ConflictError("Machine is retired and cannot be quoted");
     }
 
@@ -181,7 +189,7 @@ export class CommercialQuotationService {
       const renterOrganization = await this.organizationRepository.findWithTypeById(
         input.renterOrganizationId,
       );
-      if (!renterOrganization || renterOrganization.organization_type_code !== "renter") {
+      if (!renterOrganization || renterOrganization.organization_type_code !== OrganizationTypeCode.renter) {
         throw new ValidationError("renterOrganizationId must reference a Renter organization");
       }
     }
@@ -190,7 +198,7 @@ export class CommercialQuotationService {
     if (input.requirementId) {
       requirement = await this.requirementRepository.findById(input.requirementId);
       if (!requirement) throw new NotFoundError("Requirement not found");
-      if (requirement.status !== "open") {
+      if (requirement.status !== RequirementStatus.open) {
         throw new ConflictError("Cannot quote against a requirement that is not open");
       }
       // A quotation created against a Requirement must stay tied to that
@@ -294,14 +302,14 @@ export class CommercialQuotationService {
   ): Promise<void> {
     const auction = await this.auctionRepository.findById(sourceAuctionId);
     if (!auction) throw new NotFoundError("Auction not found");
-    if (auction.status !== "closed") {
+    if (auction.status !== AuctionStatus.closed) {
       throw new ConflictError("Auction has not closed yet");
     }
     const participant = await this.auctionRepository.findParticipantByOrganization(
       sourceAuctionId,
       rentalCompanyOrganizationId,
     );
-    if (!participant || participant.status !== "selected") {
+    if (!participant || participant.status !== ParticipantStatus.selected) {
       throw new ValidationError(
         "Only the participant selected by the auction owner may formalize this quotation",
       );
@@ -319,7 +327,7 @@ export class CommercialQuotationService {
       rentalCompanyOrganizationId,
       "quotation.manage",
     );
-    const records = await this.organizationRepository.listByType("renter");
+    const records = await this.organizationRepository.listByType(OrganizationTypeCode.renter);
     return records.map(toOrganization);
   }
 
@@ -335,7 +343,7 @@ export class CommercialQuotationService {
       renterOrganizationId,
       "quotation.respond",
     );
-    const records = await this.organizationRepository.listByType("rental_company");
+    const records = await this.organizationRepository.listByType(OrganizationTypeCode.rental_company);
     return records.map(toOrganization);
   }
 
@@ -417,7 +425,7 @@ export class CommercialQuotationService {
     // offer, so the Renter never sees it until it's actually sent.
     return Promise.all(
       records
-        .filter((record) => record.status !== "draft")
+        .filter((record) => record.status !== CommercialQuotationStatus.draft)
         .map(async (record) => toQuotation(record, await this.resolveMachineInfoForRenter(record))),
     );
   }
@@ -435,7 +443,7 @@ export class CommercialQuotationService {
     );
     const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
     if (!EDITABLE_STATUSES.has(existing.status)) {
-      throw new ConflictError("Terms can only be edited before the quotation is closed out");
+      throw new ConflictError("Terms can only be edited while the quotation is a draft");
     }
     const record = await this.quotationRepository.updateTerms(quotationId, updates);
     return toQuotation(record);
@@ -459,7 +467,7 @@ export class CommercialQuotationService {
     );
     const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
     if (!EDITABLE_STATUSES.has(existing.status)) {
-      throw new ConflictError("Scope items can only be edited before the quotation is closed out");
+      throw new ConflictError("Scope items can only be edited while the quotation is a draft");
     }
     const record = await this.scopeItemRepository.create({
       quotationId,
@@ -494,7 +502,7 @@ export class CommercialQuotationService {
     );
     const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
     if (!EDITABLE_STATUSES.has(existing.status)) {
-      throw new ConflictError("Scope items can only be edited before the quotation is closed out");
+      throw new ConflictError("Scope items can only be edited while the quotation is a draft");
     }
     const item = await this.scopeItemRepository.findById(scopeItemId);
     if (!item || item.quotation_id !== quotationId) {
@@ -508,7 +516,7 @@ export class CommercialQuotationService {
     rentalCompanyOrganizationId: string,
     quotationId: string,
   ): Promise<CommercialQuotation> {
-    return this.transitionAsRentalCompany(userId, rentalCompanyOrganizationId, quotationId, "sent");
+    return this.transitionAsRentalCompany(userId, rentalCompanyOrganizationId, quotationId, CommercialQuotationStatus.sent);
   }
 
   async withdrawQuotation(
@@ -520,7 +528,7 @@ export class CommercialQuotationService {
       userId,
       rentalCompanyOrganizationId,
       quotationId,
-      "withdrawn",
+      CommercialQuotationStatus.withdrawn,
     );
   }
 
@@ -551,13 +559,13 @@ export class CommercialQuotationService {
     if (!existing || existing.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Quotation not found in this organization");
     }
-    if (existing.status !== "sent" && existing.status !== "negotiating") {
+    if (existing.status !== CommercialQuotationStatus.sent && existing.status !== CommercialQuotationStatus.negotiating) {
       throw new ConflictError(`Cannot accept a quotation that is ${existing.status}`);
     }
     const offers = await this.offerRepository.listByQuotation(quotationId);
-    const pendingOffer = offers.find((offer) => offer.status === "pending");
+    const pendingOffer = offers.find((offer) => offer.status === QuotationOfferStatus.pending);
     if (pendingOffer && pendingOffer.offered_by_organization_id !== renterOrganizationId) {
-      await this.offerRepository.updateStatus(pendingOffer.id, "accepted");
+      await this.offerRepository.updateStatus(pendingOffer.id, QuotationOfferStatus.accepted);
       await this.quotationRepository.applyAcceptedOffer(quotationId, {
         rate: pendingOffer.rate,
         rateUnit: pendingOffer.rate_unit,
@@ -592,10 +600,10 @@ export class CommercialQuotationService {
     if (!existing || existing.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Quotation not found in this organization");
     }
-    if (!canTransition(existing.status, "rejected")) {
+    if (!canTransition(existing.status, CommercialQuotationStatus.rejected)) {
       throw new ConflictError(`Cannot reject a quotation that is ${existing.status}`);
     }
-    const record = await this.quotationRepository.updateStatus(quotationId, "rejected");
+    const record = await this.quotationRepository.updateStatus(quotationId, CommercialQuotationStatus.rejected);
     const renter = await this.organizationRepository.findById(renterOrganizationId);
     await this.notify({
       recipientOrganizationId: record.rental_company_organization_id,
@@ -624,7 +632,7 @@ export class CommercialQuotationService {
       throw new ConflictError(`Cannot transition quotation from ${existing.status} to ${status}`);
     }
     const record = await this.quotationRepository.updateStatus(quotationId, status);
-    if (status === "sent" && record.renter_organization_id) {
+    if (status === CommercialQuotationStatus.sent && record.renter_organization_id) {
       const rentalCompany = await this.organizationRepository.findById(rentalCompanyOrganizationId);
       await this.notify({
         recipientOrganizationId: record.renter_organization_id,
@@ -646,7 +654,7 @@ export class CommercialQuotationService {
   ): Promise<QuotationOffer> {
     await this.requireQuotationPermission(userId, organizationId);
     const existing = await this.loadAsParty(organizationId, quotationId);
-    if (existing.status !== "sent" && existing.status !== "negotiating") {
+    if (existing.status !== CommercialQuotationStatus.sent && existing.status !== CommercialQuotationStatus.negotiating) {
       throw new ConflictError("A quotation must be sent before it can be negotiated");
     }
 
@@ -667,9 +675,9 @@ export class CommercialQuotationService {
       endDate: existing.end_date ?? undefined,
       notes: input.notes,
     });
-    const isFirstOffer = existing.status === "sent";
+    const isFirstOffer = existing.status === CommercialQuotationStatus.sent;
     if (isFirstOffer) {
-      await this.quotationRepository.updateStatus(quotationId, "negotiating");
+      await this.quotationRepository.updateStatus(quotationId, CommercialQuotationStatus.negotiating);
     }
     const recipientOrganizationId =
       organizationId === existing.rental_company_organization_id
@@ -713,14 +721,14 @@ export class CommercialQuotationService {
     if (!offer || offer.quotation_id !== quotationId) {
       throw new NotFoundError("Offer not found on this quotation");
     }
-    if (offer.status !== "pending") {
+    if (offer.status !== QuotationOfferStatus.pending) {
       throw new ConflictError("Offer is no longer pending");
     }
     if (offer.offered_by_organization_id === organizationId) {
       throw new ForbiddenError("Cannot accept your own offer");
     }
 
-    const accepted = await this.offerRepository.updateStatus(offerId, "accepted");
+    const accepted = await this.offerRepository.updateStatus(offerId, QuotationOfferStatus.accepted);
     const record = await this.quotationRepository.applyAcceptedOffer(quotationId, {
       rate: accepted.rate,
       rateUnit: accepted.rate_unit,
@@ -769,7 +777,7 @@ export class CommercialQuotationService {
       "quotation.manage",
     );
     const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
-    if (!canTransition(existing.status, "awarded")) {
+    if (!canTransition(existing.status, CommercialQuotationStatus.awarded)) {
       throw new ConflictError(`Cannot award a quotation that is ${existing.status}`);
     }
     if (existing.renter_organization_id && !existing.renter_accepted_at) {
@@ -799,13 +807,13 @@ export class CommercialQuotationService {
     let projectId: string | undefined;
     if (existing.requirement_id) {
       const requirement = await this.requirementRepository.findById(existing.requirement_id);
-      if (requirement?.status === "open") {
-        await this.requirementRepository.updateStatus(existing.requirement_id, "closed");
+      if (requirement?.status === RequirementStatus.open) {
+        await this.requirementRepository.updateStatus(existing.requirement_id, RequirementStatus.closed);
       }
       projectId = requirement?.project_id;
     }
 
-    const record = await this.quotationRepository.updateStatus(quotationId, "awarded");
+    const record = await this.quotationRepository.updateStatus(quotationId, CommercialQuotationStatus.awarded);
 
     // The Work Order is the finalized commercial order — created here,
     // automatically, from the same terms just awarded, never hand-entered.
@@ -892,7 +900,7 @@ export class CommercialQuotationService {
     // it's actually sent, same as any other "not yours" case. Centralized
     // here rather than in each caller since every Renter-facing lookup on
     // a single quotation already routes through this method.
-    if (existing.renter_organization_id === organizationId && existing.status === "draft") {
+    if (existing.renter_organization_id === organizationId && existing.status === CommercialQuotationStatus.draft) {
       throw new NotFoundError("Quotation not found");
     }
     return (await this.quotationRepository.expireIfDue(quotationId)) ?? existing;
@@ -923,11 +931,18 @@ export class CommercialQuotationService {
       "quotation.manage",
     );
     const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
-    if (existing.status !== "sent" && existing.status !== "negotiating") {
+    if (existing.status !== CommercialQuotationStatus.sent && existing.status !== CommercialQuotationStatus.negotiating) {
       throw new ConflictError("Alternate dates can only be proposed on a sent/negotiating quotation");
     }
-    if (existing.alternate_date_status === "pending") {
+    if (existing.alternate_date_status === AlternateDateStatus.pending) {
       throw new ConflictError("An alternate-date request is already pending on this quotation");
+    }
+    // No proposed end date means the current end date stays (see
+    // respondToAlternateDates) — so it must still come after the new start.
+    if (!input.endDate && existing.end_date && existing.end_date < input.startDate) {
+      throw new ValidationError("The new start date is after the current end date. Propose an end date too.", [
+        { path: "endDate", message: "Propose an end date on or after the new start date" },
+      ]);
     }
     const record = await this.quotationRepository.proposeAlternateDates(quotationId, input);
     if (record.renter_organization_id) {
@@ -961,7 +976,7 @@ export class CommercialQuotationService {
     if (existing.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Quotation not found in this organization");
     }
-    if (existing.alternate_date_status !== "pending") {
+    if (existing.alternate_date_status !== AlternateDateStatus.pending) {
       throw new ConflictError("No alternate-date request is pending on this quotation");
     }
     const record = await this.quotationRepository.respondToAlternateDates(quotationId, decision);

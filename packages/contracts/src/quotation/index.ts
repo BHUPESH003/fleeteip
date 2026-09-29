@@ -6,6 +6,8 @@ import { isPastIsoDate } from "../shared/dates.js";
 
 export const quotationResponseStatusSchema = z.enum(["pending", "interested", "not_interested"]);
 export type QuotationResponseStatus = z.infer<typeof quotationResponseStatusSchema>;
+/** QuotationResponseStatus.x names each value once; `QuotationResponseStatus` is also the type. */
+export const QuotationResponseStatus = quotationResponseStatusSchema.enum;
 
 export const quotationResponseSchema = z.object({
   id: z.string().uuid(),
@@ -46,6 +48,8 @@ export type SubmitQuotationResponseRequest = z.infer<typeof submitQuotationRespo
 
 export const alternateDateStatusSchema = z.enum(["none", "pending", "accepted", "rejected"]);
 export type AlternateDateStatus = z.infer<typeof alternateDateStatusSchema>;
+/** AlternateDateStatus.x names each value once; `AlternateDateStatus` is also the type. */
+export const AlternateDateStatus = alternateDateStatusSchema.enum;
 
 export const commercialQuotationStatusSchema = z.enum([
   "draft",
@@ -57,6 +61,8 @@ export const commercialQuotationStatusSchema = z.enum([
   "withdrawn",
 ]);
 export type CommercialQuotationStatus = z.infer<typeof commercialQuotationStatusSchema>;
+/** CommercialQuotationStatus.x names each value once; `CommercialQuotationStatus` is also the type. */
+export const CommercialQuotationStatus = commercialQuotationStatusSchema.enum;
 
 // Who bears a given cost/duty — the common case for fuel/accommodation.
 // `operatorScope` (with_operator/without_operator, reused from Rental)
@@ -65,6 +71,8 @@ export type CommercialQuotationStatus = z.infer<typeof commercialQuotationStatus
 // column, per this phase's brief §5.
 export const responsiblePartySchema = z.enum(["client", "company"]);
 export type ResponsibleParty = z.infer<typeof responsiblePartySchema>;
+/** ResponsibleParty.x names each value once; `ResponsibleParty` is also the type. */
+export const ResponsibleParty = responsiblePartySchema.enum;
 
 // Mirrors rentalSchema's term fields exactly — an awarded quotation converts
 // into a Rental by copying fields across. See docs/marketplace-core-loop-design.md §6.
@@ -259,6 +267,8 @@ export type UpdateCommercialQuotationStatusRequest = z.infer<
 
 export const quotationOfferStatusSchema = z.enum(["pending", "accepted", "rejected", "superseded"]);
 export type QuotationOfferStatus = z.infer<typeof quotationOfferStatusSchema>;
+/** QuotationOfferStatus.x names each value once; `QuotationOfferStatus` is also the type. */
+export const QuotationOfferStatus = quotationOfferStatusSchema.enum;
 
 export const quotationOfferSchema = z.object({
   id: z.string().uuid(),

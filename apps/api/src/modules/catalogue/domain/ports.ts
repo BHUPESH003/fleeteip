@@ -56,6 +56,8 @@ export interface ProductRecord {
   capacity: number | null;
   capacity_unit: string | null;
   specifications: unknown | null;
+  // ponytail: optional so pre-0030 test fakes stay valid; the DB always returns it.
+  disabled_at?: Date | string | null;
   created_at: Date | string;
 }
 
@@ -74,10 +76,13 @@ export interface UpdateProductInput {
   capacity?: number;
   capacityUnit?: string;
   specifications?: unknown;
+  // null re-enables; a Date soft-disables (0030).
+  disabledAt?: Date | null;
 }
 
 export interface ProductRepositoryPort {
-  listAll(subcategoryId?: string): Promise<ProductRecord[]>;
+  // Disabled products are excluded unless includeDisabled is true.
+  listAll(subcategoryId?: string, includeDisabled?: boolean): Promise<ProductRecord[]>;
   findById(id: string): Promise<ProductRecord | undefined>;
   create(input: CreateProductInput): Promise<ProductRecord>;
   update(id: string, updates: UpdateProductInput): Promise<ProductRecord>;

@@ -31,6 +31,16 @@ export const loginRequestSchema = z.object({
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
+export const passwordResetRequestSchema = z.object({ email: emailSchema });
+export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
+
+/** Same password rules as signup (passwordSchema). */
+export const passwordResetConfirmSchema = z.object({
+  token: z.string().min(1).max(200),
+  password: passwordSchema,
+});
+export type PasswordResetConfirmRequest = z.infer<typeof passwordResetConfirmSchema>;
+
 /** Response to "who am I" — the authenticated user plus every organization they belong to. */
 export const authenticatedSessionSchema = z.object({
   user: userSchema,

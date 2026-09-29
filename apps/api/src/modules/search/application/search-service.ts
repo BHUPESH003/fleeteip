@@ -1,4 +1,5 @@
 import type { SearchResult } from "@fleetip/contracts/search";
+import { SearchResultType } from "@fleetip/contracts/search";
 import type { MachineRepositoryPort } from "../../equipment/domain/ports.js";
 import type { CommercialQuotationRepositoryPort } from "../../marketplace/commercial-quotation/domain/ports.js";
 import type { RentalRepositoryPort } from "../../marketplace/rental/domain/ports.js";
@@ -66,25 +67,25 @@ export class SearchService {
 
     return [
       ...machines.map((m): SearchResult => ({
-        type: "machine",
+        type: SearchResultType.machine,
         id: m.id,
         title: m.asset_code,
         subtitle: m.registration_number,
       })),
       ...requirements.map((r): SearchResult => ({
-        type: "requirement",
+        type: SearchResultType.requirement,
         id: r.id,
         title: r.project_name ?? "Untitled requirement",
         subtitle: r.requested_start_date,
       })),
       ...quotations.map((q): SearchResult => ({
-        type: "quotation",
+        type: SearchResultType.quotation,
         id: q.id,
         title: q.reference_number,
         subtitle: q.client_snapshot?.name ?? null,
       })),
       ...rentals.map((r): SearchResult => ({
-        type: "rental",
+        type: SearchResultType.rental,
         id: r.id,
         title: r.project_name ?? "Untitled rental",
         subtitle: r.client_snapshot?.name ?? null,

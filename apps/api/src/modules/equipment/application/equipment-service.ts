@@ -1,5 +1,5 @@
 import type { Machine, MachineStatus, UpdateMachineRequest } from "@fleetip/contracts/equipment";
-import { ConflictError, NotFoundError } from "../../../shared/errors.js";
+import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
 import type { ProductRepositoryPort } from "../../catalogue/domain/ports.js";
 import { PermissionService } from "../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/machine-status.js";
@@ -37,12 +37,15 @@ export class EquipmentService {
     if (!product) {
       throw new NotFoundError("Product not found");
     }
+    if (product.disabled_at) {
+      throw new ValidationError("This product is disabled in the catalogue");
+    }
     const assetCodeExists = await this.machineRepository.assetCodeExists(
       organizationId,
       input.assetCode,
     );
     if (assetCodeExists) {
-      throw new ConflictError("Asset code already exists");
+      throw new ConflictError("Asset code already exists", "assetCode");
     }
 
     const record = await this.machineRepository.create({
@@ -102,7 +105,7 @@ export class EquipmentService {
         machineId,
       );
       if (assetCodeExists) {
-        throw new ConflictError("Asset code already exists");
+        throw new ConflictError("Asset code already exists", "assetCode");
       }
     }
 

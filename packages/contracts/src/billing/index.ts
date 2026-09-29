@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const invoiceStatusSchema = z.enum(["draft", "issued", "paid", "overdue", "cancelled"]);
 export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
+/** InvoiceStatus.x names each value once; `InvoiceStatus` is also the type. */
+export const InvoiceStatus = invoiceStatusSchema.enum;
 
 export const invoiceLineItemSchema = z.object({
   id: z.string().uuid(),
@@ -60,6 +62,18 @@ export const invoiceSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 export type Invoice = z.infer<typeof invoiceSchema>;
+
+// List rows carry the payment summary the detail computes, so a list view
+// needn't fetch every invoice's detail. Additive over `Invoice`.
+export const invoiceListItemSchema = invoiceSchema.extend({
+  balanceDue: z.number(),
+  // Issued, past its due date, with a balance left — whether or not the lazy
+  // issued -> overdue status flip has run yet.
+  overdue: z.boolean(),
+  // Latest payment date once fully paid; null while a balance remains.
+  paidAt: z.string().date().nullable(),
+});
+export type InvoiceListItem = z.infer<typeof invoiceListItemSchema>;
 
 export const invoiceDetailSchema = z.object({
   invoice: invoiceSchema,

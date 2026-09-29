@@ -1,334 +1,337 @@
 "use client";
 
-import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import {
   Button,
-  Card,
+  DescriptionList,
   EmptyState,
-  ErrorState,
-  Input,
-  LoadingState,
+  Icon,
+  IdentityTile,
+  Menu,
+  PageBody,
   PageHeader,
-  Select,
-  StatusBadge,
+  Panel,
   Table,
   Tbody,
   Td,
   Th,
   Thead,
   Tr,
+  UILink,
+  type IconName,
+  type MenuItem,
 } from "@fleetip/ui";
-import Link from "next/link";
 import { useParams } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { PageLoadError } from "../../../../../components/PageStates";
 import { apiClient } from "../../../../../lib/api-client";
+import { categoryIcon } from "../../../../../lib/category-icon";
+import { useConnection } from "../../../../../lib/connection";
+import { formatDate, formatNumber } from "../../../../../lib/format";
+import { useListBackHref } from "../../../../../lib/list-state";
 import { useSession } from "../../../../../lib/session-context";
-import { flattenSpecifications, MACHINE_STATUS_MAP } from "../../../machines/shared";
+import { Status } from "../../../../../lib/status";
+import { useLoad } from "../../../../../lib/use-load";
 import { RegisterMachineDialog } from "../../../machines/RegisterMachineDialog";
-import { CatalogueConfirmDialog, CatalogueFormDialog } from "../../AdminDialogs";
-import { formatCapacity } from "../../shared";
+import { specGroups } from "../../../machines/shared";
+import { ProductFormDialog } from "../../AdminDialogs";
+import { OFFLINE_HINT } from "../../../../../lib/errors";
+import { CatalogueDetailSkeleton, DisabledBadge, ProductToggleDialog, RecordInfoLine, productToggleItem } from "../../parts";
+import { formatCapacity, loadCatalogue, machinesUsingProduct, tenantCatalogueWriter } from "../../shared";
 
-interface Loaded {
-  product: Product;
-  subcategory: ProductSubcategory | null;
-  category: ProductCategory | null;
-  ownMachines: Machine[];
-}
+type Fleet = { ok: true; machines: Machine[] } | { ok: false };
+
+const OPEN_LINK =
+  "inline-flex h-7 items-center rounded-cell border border-border-control bg-surface px-[11px] text-xs font-medium text-ink-strong no-underline hover:bg-surface-hover";
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
-  const canSeeOwnFleet = currentMembership?.organization.organizationTypeCode === "rental_company";
+  const isRentalCompany = currentMembership?.organization.organizationTypeCode === OrganizationTypeCode.rental_company;
   const canManage = hasPermission("catalogue.manage");
-  const canRegisterMachine = canSeeOwnFleet && hasPermission("equipment.manage");
+  // The fleet panel is enrichment: listMachines needs equipment.manage, and
+  // a failure there empties that panel, never the page.
+  const canSeeFleet = isRentalCompany && hasPermission("equipment.manage");
+  const canRegister = canSeeFleet;
+  const { online } = useConnection();
+  const backHref = useListBackHref("catalogue", "/catalogue");
+  const [dialog, setDialog] = useState<"edit" | "register" | "toggle" | null>(null);
+  const writer = useMemo(() => (organizationId ? tenantCatalogueWriter(organizationId) : null), [organizationId]);
 
-  const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [editOpen, setEditOpen] = useState(false);
-  const [disableOpen, setDisableOpen] = useState(false);
-  const [registerOpen, setRegisterOpen] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
-  const [editSubmitting, setEditSubmitting] = useState(false);
+  // A changed [id] doesn't remount the page (docs/decisions.md) — close any dialog left open for the previous one.
+  useEffect(() => setDialog(null), [id]);
 
-  async function load() {
-    const products = (await apiClient.listProducts()) as Product[];
-    const product = products.find((p) => p.id === id);
-    if (!product) {
-      setError("Product not found");
-      return;
-    }
-    const categories = (await apiClient.listProductCategories()) as ProductCategory[];
-    const subcategoryLists = await Promise.all(
-      categories.map(
-        (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
-      ),
+  const { data, error, loading, reload } = useLoad(
+    async () => {
+      // getProduct throws ApiError 404 for an unknown id, and still returns disabled products.
+      const [product, catalogue, fleet] = await Promise.all([
+        apiClient.getProduct(id).then((p) => p!),
+        loadCatalogue(),
+        canSeeFleet
+          ? apiClient
+              .listMachines(organizationId!)
+              .then((machines): Fleet => ({ ok: true, machines: machinesUsingProduct(id, machines ?? []) }))
+              .catch((): Fleet => ({ ok: false }))
+          : Promise.resolve<Fleet | null>(null),
+      ]);
+      const subcategory = catalogue.subcategoriesById.get(product.productSubcategoryId) ?? null;
+      const category = subcategory ? (catalogue.categoriesById.get(subcategory.productCategoryId) ?? null) : null;
+      return { ...catalogue, product, subcategory, category, fleet };
+    },
+    [id, organizationId, canSeeFleet],
+    Boolean(organizationId),
+  );
+
+  if (error) {
+    return (
+      <PageLoadError
+        error={error}
+        onRetry={() => void reload()}
+        notFound={{
+          title: "We can't find this product",
+          body: "The link may be wrong or out of date. Catalogue products are never removed, so check the link you followed.",
+        }}
+        forbidden={{ what: "the catalogue", permissionHint: "Browsing the catalogue needs an active membership." }}
+        serverTitle="This product didn't load"
+        backHref={backHref}
+        backLabel="Back to the catalogue"
+      />
     );
-    const subcategory =
-      subcategoryLists.flat().find((s) => s.id === product.productSubcategoryId) ?? null;
-    const category = categories.find((c) => c.id === subcategory?.productCategoryId) ?? null;
-    const ownMachines =
-      canSeeOwnFleet && hasPermission("equipment.manage") && organizationId
-        ? ((await apiClient.listMachines(organizationId)) as Machine[]).filter(
-            (m) => m.productId === id,
-          )
-        : [];
-    setData({ product, subcategory, category, ownMachines });
   }
+  if (loading || !data) return <CatalogueDetailSkeleton label="Loading product" columns={3} />;
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        await load();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load product");
-      }
-    })();
-  }, [id, organizationId, canSeeOwnFleet]);
+  const { product, subcategory, category, fleet } = data;
+  const label = `${product.manufacturer} ${product.name}`;
+  const capacity = formatCapacity(product);
+  const boom = product.specifications?.boomFamily?.boomLengthM ?? null;
+  const groups = specGroups(product.specifications);
+  const offline = !online;
+  const fleetCount = fleet?.ok ? fleet.machines.length : null;
 
-  async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!organizationId) return;
-    setEditError(null);
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get("name") ?? "");
-    const manufacturer = String(form.get("manufacturer") ?? "");
-    const capacity = form.get("capacity");
-    const capacityUnit = form.get("capacityUnit");
-    setEditSubmitting(true);
-    try {
-      await apiClient.updateProduct(organizationId, id, {
-        ...(name ? { name } : {}),
-        ...(manufacturer ? { manufacturer } : {}),
-        ...(capacity ? { capacity: Number(capacity) } : {}),
-        ...(capacityUnit
-          ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> }
-          : {}),
-      });
-      setEditOpen(false);
-      await load();
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to update product");
-    } finally {
-      setEditSubmitting(false);
-    }
+  // One primary: registering a machine when the role can, else editing.
+  // A disabled product can't take new machines (the API rejects it too).
+  const primary: { label: string; icon: IconName; onClick: () => void } | null = canRegister && !product.disabledAt
+    ? { label: "Register as machine", icon: "plus", onClick: () => setDialog("register") }
+    : canManage
+      ? { label: "Edit product", icon: "edit", onClick: () => setDialog("edit") }
+      : null;
+  const menuItems: MenuItem[] = [];
+  if (canManage && canRegister) {
+    menuItems.push({
+      key: "edit",
+      label: "Edit product",
+      icon: "edit",
+      hint: offline ? OFFLINE_HINT : "Name, maker, capacity and specifications.",
+      disabled: offline,
+      onSelect: () => setDialog("edit"),
+    });
   }
+  if (canManage) menuItems.push(productToggleItem(product, offline, () => setDialog("toggle")));
 
-  if (error) return <ErrorState message={error} />;
-  if (!data) return <LoadingState label="Loading product…" />;
-
-  const { product, subcategory, category, ownMachines } = data;
-  const specRows = flattenSpecifications(product.specifications);
+  const modelLine = [subcategory?.name ?? category?.name, capacity, boom ? `${formatNumber(boom, 2)} m boom` : null].filter(Boolean);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col">
       <PageHeader
         breadcrumbs={[
-          { label: "Catalogue", href: "/catalogue" },
-          ...(category
-            ? [{ label: category.name, href: `/catalogue/categories/${category.id}` }]
-            : []),
-          ...(subcategory
-            ? [{ label: subcategory.name, href: `/catalogue/subcategories/${subcategory.id}` }]
-            : []),
-          { label: product.name },
+          { label: "Catalogue", href: backHref },
+          ...(category ? [{ label: category.name, href: `/catalogue/categories/${category.id}` }] : []),
+          ...(subcategory ? [{ label: subcategory.name, href: `/catalogue/subcategories/${subcategory.id}` }] : []),
+          { label },
         ]}
-        title={`${product.manufacturer} ${product.name}`}
-        description={
-          formatCapacity(product) !== "—" ? `Capacity ${formatCapacity(product)}` : undefined
+        note="Filters on the catalogue are kept when you go back"
+        leading={
+          <IdentityTile title={`Category: ${category?.name ?? "Not specified"}`}>
+            <Icon name={categoryIcon(category)} size={28} strokeWidth={1.3} />
+          </IdentityTile>
         }
+        title={label}
+        meta={<DisabledBadge disabledAt={product.disabledAt} />}
+        description={modelLine.length > 0 ? modelLine.join(" · ") : undefined}
         actions={
-          <Button
-            variant="secondary"
-            onClick={() => setEditOpen(true)}
-            title={
-              canManage
-                ? undefined
-                : "Requires catalogue.manage (Rental Company organizations only)"
-            }
-          >
-            Edit product
-          </Button>
+          primary || menuItems.length > 0 ? (
+            <>
+              {primary && (
+                <Button icon={primary.icon} onClick={primary.onClick} disabled={offline} title={offline ? OFFLINE_HINT : undefined}>
+                  {primary.label}
+                </Button>
+              )}
+              {menuItems.length > 0 && <Menu label={`More actions for ${label}`} items={menuItems} width={300} />}
+            </>
+          ) : undefined
         }
-      />
-
-      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.5fr_1fr]">
-        <div className="flex flex-col gap-3.5">
-          <Card>
-            <h2 className="mb-3 text-sm font-semibold text-ink">Identity</h2>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <Field label="Manufacturer" value={product.manufacturer} />
-              <Field label="Product" value={product.name} />
-              <Field label="Category" value={category?.name ?? "—"} />
-              <Field label="Subcategory" value={subcategory?.name ?? "—"} />
-              <Field label="Capacity" value={formatCapacity(product)} mono />
-              <Field label="Created" value={product.createdAt.slice(0, 10)} mono />
-            </div>
-          </Card>
-
-          <Card>
-            <h2 className="mb-3 text-sm font-semibold text-ink">Specifications</h2>
-            {specRows.length === 0 ? (
-              <p className="text-sm text-meta">No specifications recorded for this product.</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {specRows.map((row) => (
-                  <Field key={row.label} label={row.label} value={row.value} mono />
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-
-        <Card>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-ink">Machines using this product</h2>
-            {canSeeOwnFleet && (
-              <Button
-                variant="secondary"
-                onClick={() => setRegisterOpen(true)}
-                title={
-                  canRegisterMachine
-                    ? undefined
-                    : "Requires equipment.manage (Rental Company organizations only)"
-                }
-              >
-                Register as machine
-              </Button>
-            )}
-          </div>
-          {!canSeeOwnFleet ? (
-            <p className="text-sm text-meta">Only visible to a Rental Company&apos;s own fleet.</p>
-          ) : ownMachines.length === 0 ? (
-            <EmptyState
-              title="No machines yet"
-              description="No machine in your fleet uses this product."
-            />
-          ) : (
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th>Asset code</Th>
-                  <Th>Status</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {ownMachines.map((machine) => (
-                  <Tr key={machine.id}>
-                    <Td className="font-mono">
-                      <Link href={`/machines/${machine.id}`} className="text-accent-text">
-                        {machine.assetCode}
-                      </Link>
-                    </Td>
-                    <Td>
-                      <StatusBadge status={machine.status} map={MACHINE_STATUS_MAP} />
-                    </Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          )}
-          <p className="mt-3 text-xs text-meta-light">
-            Your organization&apos;s fleet only — there is no platform-wide product→machine lookup
-            yet (see the frontend/backend gap report).
-          </p>
-        </Card>
-      </div>
-
-      <div>
-        <button
-          type="button"
-          onClick={() => setDisableOpen(true)}
-          className="text-xs font-medium text-danger"
-        >
-          Disable product…
-        </button>
-      </div>
-
-      <CatalogueFormDialog
-        open={editOpen}
-        onClose={() => {
-          setEditOpen(false);
-          setEditError(null);
-        }}
-        title="Edit product"
-        submitLabel="Save changes"
-        canManage={canManage}
-        onSubmit={handleEditSubmit}
-        submitting={editSubmitting}
-        error={editError}
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Input label="Product name" name="name" defaultValue={product.name} required />
-          <Input
-            label="Manufacturer"
-            name="manufacturer"
-            defaultValue={product.manufacturer}
-            required
-          />
-          <Input
-            label="Capacity"
-            name="capacity"
-            type="number"
-            defaultValue={product.capacity ?? undefined}
-          />
-          <Select
-            label="Capacity unit"
-            name="capacityUnit"
-            options={[
-              { value: "", label: "—" },
-              ...["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u })),
-            ]}
-            defaultValue={product.capacityUnit ?? ""}
-          />
-        </div>
-        {specRows.length > 0 && (
-          <div className="grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2">
-            <p className="col-span-full text-xs text-meta-light">
-              Specifications aren&apos;t editable through this form yet (shown read-only below).
-            </p>
-            {specRows.map((row) => (
-              <Input key={row.label} label={row.label} defaultValue={row.value} disabled />
-            ))}
+        <DescriptionList
+          layout="inline"
+          items={[
+            { label: "Manufacturer", value: product.manufacturer },
+            { label: "Model", value: product.name },
+            { label: "Rated capacity", value: capacity, mono: true },
+            {
+              label: "Subcategory",
+              value: subcategory ? (
+                <UILink href={`/catalogue/subcategories/${subcategory.id}`} className="text-accent-text no-underline hover:underline">
+                  {subcategory.name}
+                </UILink>
+              ) : null,
+            },
+            { label: "Added", value: formatDate(product.createdAt), mono: true },
+          ]}
+        />
+      </PageHeader>
+
+      <PageBody>
+        <div className="flex flex-wrap items-start gap-3.5">
+          <div className="flex min-w-0 flex-[1_1_520px] flex-col gap-3.5">
+            <Panel title="Specifications" subtitle="recorded on the catalogue product" icon="document" padding="none">
+              {groups.length === 0 ? (
+                <EmptyState
+                  title="No detailed specifications recorded"
+                  description={
+                    canManage
+                      ? "Boom, rigging, fluids and transport dimensions can be added with Edit product."
+                      : "Only the rated capacity is recorded for this product."
+                  }
+                />
+              ) : (
+                <div className="flex flex-col">
+                  {groups.map((group) => (
+                    <section key={group.key} aria-label={group.label} className="border-b border-border px-4 py-3 last:border-b-0">
+                      <h3 className="m-0 mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-meta">{group.label}</h3>
+                      <DescriptionList
+                        layout="grid"
+                        minColumnWidth={170}
+                        items={group.items.map((item) => ({ label: item.label, value: item.value, mono: true }))}
+                      />
+                    </section>
+                  ))}
+                </div>
+              )}
+            </Panel>
           </div>
-        )}
-      </CatalogueFormDialog>
 
-      <CatalogueConfirmDialog
-        open={disableOpen}
-        onClose={() => setDisableOpen(false)}
-        title="Disable product"
-        dependencyCopy={
-          canSeeOwnFleet
-            ? `This product is currently used by ${ownMachines.length} machine(s) in your fleet (and possibly more across other rental companies — no platform-wide count is available). Existing machines would retain their product association.`
-            : "This product may be in use by machines across one or more rental companies. Existing machines would retain their product association."
-        }
-        confirmLabel="Disable"
-      />
+          <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-3.5 min-[1180px]:max-w-[460px]">
+            <Panel
+              title="Machines on this product"
+              count={fleetCount ?? undefined}
+              subtitle={canSeeFleet ? "your fleet" : undefined}
+              icon="machine"
+              padding="none"
+            >
+              {!isRentalCompany ? (
+                <p className="m-0 px-4 py-3.5 text-sm leading-[1.5] text-ink-soft">
+                  Machines are registered by rental companies. Your organization doesn&apos;t keep a fleet in FleetIP.
+                </p>
+              ) : !canSeeFleet ? (
+                <p className="m-0 px-4 py-3.5 text-sm leading-[1.5] text-ink-soft">
+                  Seeing your fleet needs the Equipment permission. Ask an organization admin to add it to your role.
+                </p>
+              ) : !fleet || !fleet.ok ? (
+                <div className="flex flex-col gap-2 px-4 py-3.5">
+                  <p className="m-0 flex items-center gap-1.5 text-sm font-medium text-destructive">
+                    <Icon name="error" size={14} />
+                    Your machines didn&apos;t load
+                  </p>
+                  <p className="m-0 text-xs leading-[1.5] text-ink-soft">The rest of the product page still works.</p>
+                  <Button variant="secondary" size="sm" icon="refresh" className="self-start" onClick={() => void reload()}>
+                    Try again
+                  </Button>
+                </div>
+              ) : fleet.machines.length === 0 ? (
+                <EmptyState
+                  title="None of your machines use this product yet"
+                  description="Register one to add it to your fleet with this product's details."
+                  action={
+                    canRegister ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon="plus"
+                        onClick={() => setDialog("register")}
+                        disabled={offline}
+                        title={offline ? OFFLINE_HINT : undefined}
+                      >
+                        Register as machine
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <Table bare minWidth={420} caption={`Your machines on ${label}`}>
+                  <Thead>
+                    <Tr>
+                      <Th>Asset code</Th>
+                      <Th>Registration</Th>
+                      <Th>Status</Th>
+                      <Th className="w-[1%]">
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {[...fleet.machines]
+                      .sort((a, b) => a.assetCode.localeCompare(b.assetCode))
+                      .map((machine) => (
+                        <Tr key={machine.id} interactive>
+                          <Td className="whitespace-nowrap font-mono text-xs font-semibold">
+                            <UILink href={`/machines/${machine.id}`} className="text-ink no-underline hover:underline">
+                              {machine.assetCode}
+                            </UILink>
+                          </Td>
+                          <Td className="whitespace-nowrap font-mono text-xs">{machine.registrationNumber}</Td>
+                          <Td>
+                            <Status domain="machine" value={machine.status} size="sm" />
+                          </Td>
+                          <Td>
+                            <UILink href={`/machines/${machine.id}`} className={OPEN_LINK} aria-label={`Open ${machine.assetCode}`}>
+                              Open
+                            </UILink>
+                          </Td>
+                        </Tr>
+                      ))}
+                  </Tbody>
+                </Table>
+              )}
+              {canSeeFleet && (
+                <p className="m-0 border-t border-border px-4 py-2.5 text-[11px] leading-[1.45] text-meta-light">
+                  Your organization&apos;s machines only. FleetIP doesn&apos;t show which other rental companies use this product.
+                </p>
+              )}
+            </Panel>
+            <RecordInfoLine createdAt={product.createdAt} />
+          </div>
+        </div>
+      </PageBody>
 
-      {organizationId && (
+      {writer && canManage && (
+        <ProductFormDialog
+          open={dialog === "edit"}
+          onClose={() => setDialog(null)}
+          writer={writer}
+          subcategories={data.subcategories}
+          categoriesById={data.categoriesById}
+          product={product}
+          existingProducts={data.products}
+          affectedMachines={fleetCount}
+          onSaved={() => void reload()}
+        />
+      )}
+      {organizationId && canManage && dialog === "toggle" && (
+        <ProductToggleDialog organizationId={organizationId} product={product} onClose={() => setDialog(null)} onChanged={() => void reload()} />
+      )}
+      {organizationId && canRegister && dialog === "register" && (
         <RegisterMachineDialog
-          open={registerOpen}
-          onClose={() => setRegisterOpen(false)}
+          open
+          onClose={() => setDialog(null)}
           organizationId={organizationId}
-          onRegistered={() => void load()}
+          onRegistered={() => void reload()}
           initialCategoryId={subcategory?.productCategoryId}
           initialSubcategoryId={product.productSubcategoryId}
           initialProductId={product.id}
         />
       )}
-    </div>
-  );
-}
-
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex flex-col gap-0.5 border-b border-border pb-2">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-meta">{label}</span>
-      <span className={["text-sm text-ink", mono && "font-mono"].filter(Boolean).join(" ")}>
-        {value}
-      </span>
     </div>
   );
 }

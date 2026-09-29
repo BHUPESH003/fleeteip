@@ -1,10 +1,11 @@
-import type { InvoiceStatus } from "@fleetip/contracts/billing";
+import { InvoiceStatus } from "@fleetip/contracts/billing";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import type {
   CreateInvoiceInput,
   CreatePaymentInput,
   InvoiceLineItemRecord,
+  InvoiceListRecord,
   InvoiceRecord,
   InvoiceRepositoryPort,
   PaymentRecord,
@@ -65,7 +66,7 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
           invoice_number: input.invoiceNumber,
           billing_period_start: input.billingPeriodStart,
           billing_period_end: input.billingPeriodEnd,
-          status: "draft",
+          status: InvoiceStatus.draft,
           subtotal: input.subtotal,
           tax_amount: input.taxAmount,
           adjustment_amount: input.adjustmentAmount,
@@ -102,25 +103,46 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
     return row as InvoiceRecord | undefined;
   }
 
-  async listByRentalCompany(rentalCompanyOrganizationId: string) {
-    const rows = await this.db
+  // One query: each invoice with its payment total / latest payment date.
+  private selectInvoicesWithPayments() {
+    return this.db
       .selectFrom("invoices")
-      .selectAll()
-      .where("rental_company_organization_id", "=", rentalCompanyOrganizationId)
-      .orderBy("created_at", "desc")
+      .leftJoin(
+        (eb) =>
+          eb
+            .selectFrom("payments")
+            .select((eb) => [
+              "invoice_id",
+              eb.fn.sum<number>("amount").as("amount_paid"),
+              eb.fn.max("paid_date").as("last_paid_date"),
+            ])
+            .groupBy("invoice_id")
+            .as("payment_totals"),
+        (join) => join.onRef("payment_totals.invoice_id", "=", "invoices.id"),
+      )
+      .selectAll("invoices")
+      .select([
+        sql<number>`coalesce(payment_totals.amount_paid, 0)`.as("amount_paid"),
+        "payment_totals.last_paid_date",
+        sql<boolean>`invoices.due_date < current_date`.as("past_due"),
+      ]);
+  }
+
+  async listByRentalCompany(rentalCompanyOrganizationId: string) {
+    const rows = await this.selectInvoicesWithPayments()
+      .where("invoices.rental_company_organization_id", "=", rentalCompanyOrganizationId)
+      .orderBy("invoices.created_at", "desc")
       .execute();
-    return rows as InvoiceRecord[];
+    return rows as InvoiceListRecord[];
   }
 
   async listByRenter(renterOrganizationId: string) {
-    const rows = await this.db
-      .selectFrom("invoices")
+    const rows = await this.selectInvoicesWithPayments()
       .innerJoin("rentals", "rentals.id", "invoices.rental_id")
-      .selectAll("invoices")
       .where("rentals.renter_organization_id", "=", renterOrganizationId)
       .orderBy("invoices.created_at", "desc")
       .execute();
-    return rows as InvoiceRecord[];
+    return rows as InvoiceListRecord[];
   }
 
   async listLineItems(invoiceId: string) {
@@ -155,9 +177,9 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
   async markOverdueIfDue(id: string) {
     const row = await this.db
       .updateTable("invoices")
-      .set({ status: "overdue", updated_at: new Date() })
+      .set({ status: InvoiceStatus.overdue, updated_at: new Date() })
       .where("id", "=", id)
-      .where("status", "=", "issued")
+      .where("status", "=", InvoiceStatus.issued)
       .where(sql<boolean>`due_date < current_date`)
       .returning(INVOICE_COLUMNS)
       .executeTakeFirst();
@@ -192,10 +214,10 @@ export class InvoiceRepository implements InvoiceRepositoryPort {
       const amountPaid = Number(sumResult.rows[0]?.total ?? 0);
 
       let updatedInvoice = invoice;
-      if (amountPaid >= Number(invoice.total_amount) && invoice.status !== "paid") {
+      if (amountPaid >= Number(invoice.total_amount) && invoice.status !== InvoiceStatus.paid) {
         updatedInvoice = await trx
           .updateTable("invoices")
-          .set({ status: "paid", updated_at: new Date() })
+          .set({ status: InvoiceStatus.paid, updated_at: new Date() })
           .where("id", "=", input.invoiceId)
           .returning(INVOICE_COLUMNS)
           .executeTakeFirstOrThrow();

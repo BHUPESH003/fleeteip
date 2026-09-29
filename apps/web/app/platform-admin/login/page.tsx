@@ -1,48 +1,97 @@
 "use client";
 
-import { Button, Input } from "@fleetip/ui";
-import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { Button, FormBanner, Input } from "@fleetip/ui";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, type FormEvent } from "react";
+import { z } from "zod";
 import { adminApiClient } from "../../../lib/admin-api-client";
+import { useForm } from "../../../lib/form";
+import { AuthCard } from "../../(public)/AuthShell";
+import { PasswordInput, emailField } from "../../(public)/fields";
+import { useStatusCopy } from "../../../components/status-copy";
+import { staffCall } from "../staff-api";
 
+const schema = z.object({
+  email: emailField("Enter your staff email address."),
+  password: z.string().min(1, "Enter your password."),
+});
+
+const STATUS_COPY = {
+  401: { title: "Email or password is incorrect.", body: "Check both and try again. Passwords are case-sensitive." },
+  429: { title: "Too many sign-in attempts", body: "For security, wait a minute before trying again." },
+};
+
+// useSearchParams (?ended=1) needs a Suspense boundary for static rendering.
 export default function PlatformAdminLoginPage() {
-  const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex min-h-screen flex-col bg-surface-page">
+      <header className="flex h-12 flex-none items-center gap-2.5 bg-rail px-4 min-[760px]:px-6">
+        <span aria-hidden="true" className="h-[22px] w-[22px] flex-none rounded-cell bg-accent" />
+        <span className="text-sm font-bold text-white">FleetIP</span>
+        <span className="truncate text-xs text-rail-tag">· Platform admin · staff only</span>
+      </header>
+      <main id="main" className="flex flex-1 justify-center px-4 py-10 min-[760px]:py-16">
+        <div className="flex w-full max-w-[420px] flex-col gap-4">
+          <Suspense fallback={null}>
+            <StaffLoginForm />
+          </Suspense>
+        </div>
+      </main>
+    </div>
+  );
+}
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const form = new FormData(event.currentTarget);
-    try {
-      await adminApiClient.login({
-        email: String(form.get("email")),
-        password: String(form.get("password")),
-      });
-      router.push("/platform-admin");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    }
-  }
+function StaffLoginForm() {
+  const router = useRouter();
+  const sessionEnded = useSearchParams().get("ended") === "1";
+  const form = useForm({ schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
+  const status = useStatusCopy(STATUS_COPY);
+  const problem = status.banner ?? form.banner;
+
+  // staffCall turns AdminApiError into ApiError, so useForm and the status copy can read it.
+  const save = form.submit(async (body) => {
+    await status.guard(() => staffCall(() => adminApiClient.login(body)));
+    router.push("/platform-admin");
+  });
+  const handleSubmit = (event: FormEvent) => {
+    status.clear();
+    void save(event);
+  };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-ink-strong px-4">
-      <div className="w-full max-w-sm rounded-panel bg-surface p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <div className="h-4 w-4 rounded-xs bg-warning" />
-          <span className="text-sm font-bold tracking-wide text-ink">FleetIP · Platform Admin</span>
-        </div>
-        {error && <p className="mb-4 text-sm text-danger">{error}</p>}
-        <form onSubmit={handleSubmit}>
-          <Input label="Staff email" name="email" type="email" required />
-          <Input label="Password" name="password" type="password" required />
-          <Button type="submit" className="mt-1 w-full">
-            Log in
-          </Button>
-        </form>
-        <p className="mt-4 text-xs text-meta-light">
-          Staff accounts are provisioned out of band — there is no signup here.
-        </p>
-      </div>
-    </div>
+    <AuthCard
+      title="Staff sign-in"
+      description="For FleetIP staff only. Staff accounts are set up by FleetIP directly — there's no sign-up here."
+    >
+      <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+        {sessionEnded && !problem && (
+          <FormBanner tone="info" title="Your staff session ended">
+            Sign in again to carry on.
+          </FormBanner>
+        )}
+        {problem && (
+          <FormBanner tone="error" title={problem.title}>
+            {problem.body}
+          </FormBanner>
+        )}
+        <Input
+          label="Staff email"
+          type="email"
+          required
+          autoComplete="username"
+          inputMode="email"
+          {...form.field("email")}
+        />
+        <PasswordInput
+          label="Password"
+          required
+          autoComplete="current-password"
+          {...form.field("password")}
+        />
+        <Button type="submit" busy={form.busy} busyLabel="Signing in…" className="w-full">
+          Sign in
+        </Button>
+      </form>
+    </AuthCard>
   );
 }

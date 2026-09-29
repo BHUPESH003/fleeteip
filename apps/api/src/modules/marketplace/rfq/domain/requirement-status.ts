@@ -1,7 +1,7 @@
-import type { RequirementStatus } from "@fleetip/contracts/rfq";
+import { RequirementStatus } from "@fleetip/contracts/rfq";
 
 const VALID_TRANSITIONS: Record<RequirementStatus, RequirementStatus[]> = {
-  open: ["closed", "cancelled"],
+  open: [RequirementStatus.closed, RequirementStatus.cancelled],
   closed: [],
   cancelled: [],
 };

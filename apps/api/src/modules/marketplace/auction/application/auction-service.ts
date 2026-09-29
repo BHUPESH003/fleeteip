@@ -8,6 +8,9 @@ import type {
   AuctionSummary,
   CreateAuctionRequest,
 } from "@fleetip/contracts/auction";
+import { AuctionStatus, ParticipantStatus } from "@fleetip/contracts/auction";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
+import { RequirementStatus } from "@fleetip/contracts/rfq";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../../../shared/errors.js";
 import type { OrganizationRepositoryPort } from "../../../organizations/domain/ports.js";
 import type { RequirementRepositoryPort } from "../../rfq/domain/ports.js";
@@ -126,9 +129,9 @@ export class AuctionService {
     after: AuctionRecord,
   ): Promise<void> {
     if (before === after.status) return;
-    if (before === "scheduled" && after.status === "live") {
+    if (before === AuctionStatus.scheduled && after.status === AuctionStatus.live) {
       const participants = await this.auctionRepository.listParticipants(after.id);
-      for (const p of participants.filter((p) => p.status === "approved")) {
+      for (const p of participants.filter((p) => p.status === ParticipantStatus.approved)) {
         await this.notify({
           recipientOrganizationId: p.rental_company_organization_id,
           type: "auction.started",
@@ -138,7 +141,7 @@ export class AuctionService {
           relatedResourceId: after.id,
         });
       }
-    } else if ((before === "scheduled" || before === "live") && after.status === "closed") {
+    } else if ((before === AuctionStatus.scheduled || before === AuctionStatus.live) && after.status === AuctionStatus.closed) {
       await this.notify({
         recipientOrganizationId: after.created_by_organization_id,
         type: "auction.ended",
@@ -148,7 +151,7 @@ export class AuctionService {
         relatedResourceId: after.id,
       });
       const participants = await this.auctionRepository.listParticipants(after.id);
-      for (const p of participants.filter((p) => p.status === "approved")) {
+      for (const p of participants.filter((p) => p.status === ParticipantStatus.approved)) {
         await this.notify({
           recipientOrganizationId: p.rental_company_organization_id,
           type: "auction.ended",
@@ -172,7 +175,7 @@ export class AuctionService {
     if (!requirement || requirement.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Requirement not found in this organization");
     }
-    if (requirement.status !== "open") {
+    if (requirement.status !== RequirementStatus.open) {
       throw new ConflictError("Cannot run an auction against a requirement that is not open");
     }
 
@@ -197,7 +200,7 @@ export class AuctionService {
     organizationId: string,
   ): Promise<AuctionSummary[]> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "rental_company") {
+    if (organization?.organization_type_code === OrganizationTypeCode.rental_company) {
       await this.permissionService.requirePermission(userId, organizationId, "auction.participate");
       const rows = await this.auctionRepository.listByParticipantOrganization(organizationId);
       return rows.map((row) => ({
@@ -205,7 +208,7 @@ export class AuctionService {
         requirementProjectName: row.requirement_project_name,
         participantCount: null,
         ownParticipantStatus: row.own_participant_status,
-        needsAttention: row.own_participant_status === "selected",
+        needsAttention: row.own_participant_status === ParticipantStatus.selected,
       }));
     }
 
@@ -216,7 +219,7 @@ export class AuctionService {
       requirementProjectName: row.requirement_project_name,
       participantCount: row.participant_count,
       ownParticipantStatus: null,
-      needsAttention: row.status === "closed" && !row.has_selected_participant,
+      needsAttention: row.status === AuctionStatus.closed && !row.has_selected_participant,
     }));
   }
 
@@ -247,7 +250,7 @@ export class AuctionService {
       "auction.participate",
     );
     const auctions = await this.auctionRepository.listByRequirement(requirementId);
-    const active = auctions.find((auction) => auction.status !== "cancelled");
+    const active = auctions.find((auction) => auction.status !== AuctionStatus.cancelled);
     if (!active) {
       throw new NotFoundError("No auction found for this requirement");
     }
@@ -268,7 +271,7 @@ export class AuctionService {
     );
     const auction = await this.auctionRepository.syncStatus(auctionId);
     if (!auction) throw new NotFoundError("Auction not found");
-    if (auction.status === "closed" || auction.status === "cancelled") {
+    if (auction.status === AuctionStatus.closed || auction.status === AuctionStatus.cancelled) {
       throw new ConflictError(`Cannot join an auction that is ${auction.status}`);
     }
 
@@ -302,7 +305,7 @@ export class AuctionService {
       throw new NotFoundError("Participant not found in this auction");
     }
     const record = await this.auctionRepository.updateParticipantStatus(participantId, status);
-    if (status === "approved") {
+    if (status === ParticipantStatus.approved) {
       await this.notify({
         recipientOrganizationId: record.rental_company_organization_id,
         type: "auction.participant_approved",
@@ -337,21 +340,21 @@ export class AuctionService {
     if (!auction || auction.created_by_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Auction not found in this organization");
     }
-    if (auction.status !== "closed") {
+    if (auction.status !== AuctionStatus.closed) {
       throw new ConflictError("Can only select a participant once the auction has closed");
     }
     const participant = await this.auctionRepository.findParticipantById(participantId);
     if (!participant || participant.auction_id !== auctionId) {
       throw new NotFoundError("Participant not found in this auction");
     }
-    if (participant.status !== "approved") {
+    if (participant.status !== ParticipantStatus.approved) {
       throw new ConflictError("Only an approved participant may be selected");
     }
     const allParticipants = await this.auctionRepository.listParticipants(auctionId);
-    if (allParticipants.some((p) => p.status === "selected")) {
+    if (allParticipants.some((p) => p.status === ParticipantStatus.selected)) {
       throw new ConflictError("A participant has already been selected for this auction");
     }
-    const record = await this.auctionRepository.updateParticipantStatus(participantId, "selected");
+    const record = await this.auctionRepository.updateParticipantStatus(participantId, ParticipantStatus.selected);
     await this.notify({
       recipientOrganizationId: record.rental_company_organization_id,
       type: "auction.participant_selected",
@@ -381,7 +384,7 @@ export class AuctionService {
       auctionId,
       rentalCompanyOrganizationId,
     );
-    if (!participant || participant.status !== "approved") {
+    if (!participant || participant.status !== ParticipantStatus.approved) {
       throw new ForbiddenError("Only an approved participant may bid on this auction");
     }
     const record = await this.auctionRepository.placeBid(auctionId, participant.id, amount);

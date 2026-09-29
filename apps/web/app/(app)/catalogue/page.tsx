@@ -2,37 +2,63 @@
 
 import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import {
   Button,
+  Card,
+  CellStack,
   EmptyState,
   ErrorState,
+  Icon,
   Input,
-  LoadingState,
+  PageBody,
   PageHeader,
+  Pagination,
   Select,
   Table,
+  TableFooter,
+  TableSkeleton,
+  TableToolbar,
+  TabPanel,
   Tabs,
   Tbody,
   Td,
   Th,
   Thead,
   Tr,
+  UILink,
+  type MenuItem,
+  type SortDirection,
 } from "@fleetip/ui";
-import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiClient } from "../../../lib/api-client";
+import { categoryIcon } from "../../../lib/category-icon";
+import { useConnection } from "../../../lib/connection";
+import { OFFLINE_HINT, describeError } from "../../../lib/errors";
+import { formatNumber } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
-import { CatalogueFormDialog } from "./AdminDialogs";
-import { formatCapacity } from "./shared";
-
-interface Loaded {
-  categories: ProductCategory[];
-  subcategories: ProductSubcategory[];
-  products: Product[];
-  machines: Machine[];
-}
+import { useUrlSearch, useUrlState } from "../../../lib/url-state";
+import { optional, useLoad } from "../../../lib/use-load";
+import { RegisterMachineDialog } from "../machines/RegisterMachineDialog";
+import { CategoryFormDialog, ProductFormDialog, SubcategoryFormDialog } from "./AdminDialogs";
+import { DisabledBadge, ProductToggleDialog, RowActions, disabledRemoveItem, productToggleItem } from "./parts";
+import { formatCapacity, loadCatalogue, machineCountsByProduct, tenantCatalogueWriter, type CatalogueIndex } from "./shared";
 
 type TabKey = "categories" | "subcategories" | "products";
+const TAB_KEYS: TabKey[] = ["categories", "subcategories", "products"];
+const PAGE_SIZE = 25;
+
+interface Loaded extends CatalogueIndex {
+  /** Own-fleet machines per product (empty without equipment.manage). */
+  machineCounts: Map<string, number>;
+}
+
+type DialogState =
+  | { kind: "category"; category?: ProductCategory }
+  | { kind: "subcategory"; subcategory?: ProductSubcategory; fixedCategoryId?: string }
+  | { kind: "product"; product?: Product; fixedSubcategoryId?: string }
+  | { kind: "register"; product: Product; subcategory: ProductSubcategory | undefined }
+  | { kind: "toggle"; product: Product };
 
 export default function CataloguePage() {
   const { currentMembership, hasPermission } = useSession();
@@ -40,371 +66,637 @@ export default function CataloguePage() {
   const canManage = hasPermission("catalogue.manage");
   // Machine counts are enrichment, not the point of this page (browsing the
   // catalogue needs no permission at all) — a role without equipment.manage
-  // still gets the full catalogue, just without the "in your fleet" counts
-  // (already handled: `machines` empty → counts fall back to 0). Gating the
-  // fetch itself also skips a request that would 403.
+  // still gets the full catalogue, just without the "in your fleet" column.
+  // Gating the fetch itself also skips a request that would 403.
   const canListMachines = hasPermission("equipment.manage");
+  const canRegister = currentMembership?.organization.organizationTypeCode === OrganizationTypeCode.rental_company && canListMachines;
+  const { online } = useConnection();
 
-  const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>("categories");
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const { get, set } = useUrlState("catalogue");
+  const search = useUrlSearch("q", get, set);
+  const tabParam = get("tab", "categories");
+  const tab: TabKey = (TAB_KEYS as string[]).includes(tabParam) ? (tabParam as TabKey) : "categories";
+  const categoryFilter = get("category");
+  const subcategoryFilter = get("subcategory");
+  // Search starts at 2 characters (table rules: debounced, minimum 2).
+  const rawQuery = get("q").trim().toLowerCase();
+  const query = rawQuery.length >= 2 ? rawQuery : "";
+  // Every tab sorts by name unless ?sort= says otherwise.
+  const sortKey = get("sort") || "name";
+  const sortDir: "asc" | "desc" = get("dir") === "desc" ? "desc" : "asc";
+  const page = Math.max(1, Math.floor(Number(get("page", "1"))) || 1);
 
-  async function load(orgId: string) {
-    const [categories, products, machines] = await Promise.all([
-      apiClient.listProductCategories() as Promise<ProductCategory[]>,
-      apiClient.listProducts() as Promise<Product[]>,
-      canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
-    ]);
-    // Bounded fan-out over categories (a handful, platform-wide), same
-    // pattern already used by machines/page.tsx — not a per-machine
-    // N+1 loop.
-    const subcategoryLists = await Promise.all(
-      categories.map(
-        (c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>,
-      ),
-    );
-    setData({ categories, subcategories: subcategoryLists.flat(), products, machines });
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const writer = useMemo(() => (organizationId ? tenantCatalogueWriter(organizationId) : null), [organizationId]);
+
+  const { data, error, loading, reload } = useLoad<Loaded>(
+    async () => {
+      const [catalogue, machines] = await Promise.all([
+        loadCatalogue(),
+        optional(canListMachines, () => apiClient.listMachines(organizationId!), [] as Machine[]),
+      ]);
+      return { ...catalogue, machineCounts: machineCountsByProduct(machines) };
+    },
+    [organizationId, canListMachines],
+    Boolean(organizationId),
+  );
+
+  function sortProps(key: string, defaultDir: "asc" | "desc" = "asc") {
+    const active = sortKey === key;
+    return {
+      sortDirection: (active ? sortDir : null) as SortDirection,
+      onSort: () =>
+        set({ sort: key, dir: active ? (sortDir === "asc" ? "desc" : "asc") : defaultDir }),
+    };
   }
 
-  useEffect(() => {
-    if (!organizationId) return;
-    void (async () => {
-      try {
-        await load(organizationId);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load catalogue");
-      }
-    })();
-  }, [organizationId, canListMachines]);
+  const filtersActive = Boolean(query || (tab !== "categories" && (categoryFilter || subcategoryFilter)));
+  const clearFilters = () => {
+    search.setValue("");
+    set({ q: null, category: null, subcategory: null });
+  };
 
-  async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!organizationId) return;
-    setCreateError(null);
-    const form = new FormData(event.currentTarget);
-    setCreateSubmitting(true);
-    try {
-      if (tab === "categories") {
-        await apiClient.createProductCategory(organizationId, {
-          name: String(form.get("name") ?? ""),
-          code: String(form.get("code") ?? "").toUpperCase(),
-        });
-      } else if (tab === "subcategories") {
-        await apiClient.createProductSubcategory(organizationId, {
-          productCategoryId: String(form.get("productCategoryId") ?? ""),
-          name: String(form.get("name") ?? ""),
-          code: String(form.get("code") ?? "").toUpperCase(),
-        });
-      } else {
-        const capacity = form.get("capacity");
-        const capacityUnit = form.get("capacityUnit");
-        await apiClient.createProduct(organizationId, {
-          productSubcategoryId: String(form.get("productSubcategoryId") ?? ""),
-          name: String(form.get("name") ?? ""),
-          manufacturer: String(form.get("manufacturer") ?? ""),
-          ...(capacity ? { capacity: Number(capacity) } : {}),
-          ...(capacityUnit
-            ? { capacityUnit: capacityUnit as NonNullable<Product["capacityUnit"]> }
-            : {}),
-        });
-      }
-      setCreateOpen(false);
-      await load(organizationId);
-    } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create");
-    } finally {
-      setCreateSubmitting(false);
+  // ---- derived rows
+  const view = useMemo(() => {
+    if (!data) return null;
+    const { categories, subcategories, products, categoriesById, subcategoriesById, machineCounts } = data;
+    const productsBySub = new Map<string, Product[]>();
+    for (const product of products) {
+      productsBySub.set(product.productSubcategoryId, [...(productsBySub.get(product.productSubcategoryId) ?? []), product]);
     }
+    const subsByCategory = new Map<string, ProductSubcategory[]>();
+    for (const sub of subcategories) {
+      subsByCategory.set(sub.productCategoryId, [...(subsByCategory.get(sub.productCategoryId) ?? []), sub]);
+    }
+    const fleetForProducts = (list: Product[]) => list.reduce((sum, p) => sum + (machineCounts.get(p.id) ?? 0), 0);
+    const categoryRows = categories.map((category) => {
+      const subs = subsByCategory.get(category.id) ?? [];
+      const prods = subs.flatMap((s) => productsBySub.get(s.id) ?? []);
+      return { category, subcategoryCount: subs.length, productCount: prods.length, fleet: fleetForProducts(prods) };
+    });
+    const subcategoryRows = subcategories.map((subcategory) => {
+      const prods = productsBySub.get(subcategory.id) ?? [];
+      return {
+        subcategory,
+        category: categoriesById.get(subcategory.productCategoryId) ?? null,
+        productCount: prods.length,
+        fleet: fleetForProducts(prods),
+      };
+    });
+    const productRows = products.map((product) => {
+      const subcategory = subcategoriesById.get(product.productSubcategoryId) ?? null;
+      return {
+        product,
+        subcategory,
+        category: subcategory ? (categoriesById.get(subcategory.productCategoryId) ?? null) : null,
+        fleet: machineCounts.get(product.id) ?? 0,
+      };
+    });
+    return { categoryRows, subcategoryRows, productRows, fleetForProducts, productsBySub, subsByCategory };
+  }, [data]);
+
+  const categoryName = categoryFilter ? data?.categoriesById.get(categoryFilter)?.name : undefined;
+  const subcategoryName = subcategoryFilter ? data?.subcategoriesById.get(subcategoryFilter)?.name : undefined;
+
+  function applySort<T>(rows: T[], accessors: Record<string, (row: T) => string | number>, fallback: string): T[] {
+    const accessor = accessors[sortKey] ?? accessors[fallback];
+    if (!accessor) return rows;
+    const factor = accessors[sortKey] && sortDir === "desc" ? -1 : 1;
+    return [...rows].sort((a, b) => {
+      const x = accessor(a);
+      const y = accessor(b);
+      const cmp = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
+      return cmp * factor;
+    });
   }
 
-  const categoryById = useMemo(
-    () => new Map((data?.categories ?? []).map((c) => [c.id, c])),
-    [data],
-  );
-  const subcategoryById = useMemo(
-    () => new Map((data?.subcategories ?? []).map((s) => [s.id, s])),
-    [data],
-  );
+  const filteredCategories = view
+    ? applySort(
+        view.categoryRows.filter((row) => !query || `${row.category.name} ${row.category.code}`.toLowerCase().includes(query)),
+        {
+          name: (r) => r.category.name,
+          code: (r) => r.category.code,
+          subcategories: (r) => r.subcategoryCount,
+          products: (r) => r.productCount,
+          fleet: (r) => r.fleet,
+        },
+        "name",
+      )
+    : [];
+  const filteredSubcategories = view
+    ? applySort(
+        view.subcategoryRows.filter((row) => {
+          if (categoryFilter && row.subcategory.productCategoryId !== categoryFilter) return false;
+          return !query || `${row.subcategory.name} ${row.subcategory.code} ${row.category?.name ?? ""}`.toLowerCase().includes(query);
+        }),
+        {
+          name: (r) => r.subcategory.name,
+          code: (r) => r.subcategory.code,
+          category: (r) => r.category?.name ?? "",
+          products: (r) => r.productCount,
+          fleet: (r) => r.fleet,
+        },
+        "name",
+      )
+    : [];
+  const filteredProducts = view
+    ? applySort(
+        view.productRows.filter((row) => {
+          if (categoryFilter && row.subcategory?.productCategoryId !== categoryFilter) return false;
+          if (subcategoryFilter && row.product.productSubcategoryId !== subcategoryFilter) return false;
+          return (
+            !query ||
+            `${row.product.manufacturer} ${row.product.name} ${row.subcategory?.name ?? ""} ${row.category?.name ?? ""}`
+              .toLowerCase()
+              .includes(query)
+          );
+        }),
+        {
+          name: (r) => `${r.product.manufacturer} ${r.product.name}`,
+          subcategory: (r) => `${r.category?.name ?? ""} ${r.subcategory?.name ?? ""}`,
+          capacity: (r) => r.product.capacity ?? -1,
+          fleet: (r) => r.fleet,
+        },
+        "name",
+      )
+    : [];
 
-  const filteredCategories = useMemo(() => {
-    if (!data) return [];
-    const q = search.trim().toLowerCase();
-    return data.categories.filter((c) => !q || `${c.name} ${c.code}`.toLowerCase().includes(q));
-  }, [data, search]);
+  const total =
+    tab === "categories" ? filteredCategories.length : tab === "subcategories" ? filteredSubcategories.length : filteredProducts.length;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageSlice = <T,>(rows: T[]) => rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
-  const filteredSubcategories = useMemo(() => {
-    if (!data) return [];
-    const q = search.trim().toLowerCase();
-    return data.subcategories.filter((s) => {
-      if (categoryFilter && s.productCategoryId !== categoryFilter) return false;
-      return !q || `${s.name} ${s.code}`.toLowerCase().includes(q);
-    });
-  }, [data, search, categoryFilter]);
-
-  const filteredProducts = useMemo(() => {
-    if (!data) return [];
-    const q = search.trim().toLowerCase();
-    return data.products.filter((p) => {
-      const subcategory = subcategoryById.get(p.productSubcategoryId);
-      if (categoryFilter && subcategory?.productCategoryId !== categoryFilter) return false;
-      return !q || `${p.name} ${p.manufacturer}`.toLowerCase().includes(q);
-    });
-  }, [data, search, categoryFilter, subcategoryById]);
-
-  if (error) return <ErrorState message={error} />;
-  if (!data) return <LoadingState label="Loading catalogue…" />;
-
-  const { categories, subcategories, products, machines } = data;
+  // ---- header primary: one per tab, catalogue.manage only
+  const noCategories = Boolean(data && data.categories.length === 0);
+  const noSubcategories = Boolean(data && data.subcategories.length === 0);
+  const primary =
+    canManage && data
+      ? tab === "categories"
+        ? { label: "New category", onClick: () => setDialog({ kind: "category" }), blocked: null }
+        : tab === "subcategories"
+          ? {
+              label: "New subcategory",
+              onClick: () => setDialog({ kind: "subcategory", fixedCategoryId: categoryFilter || undefined }),
+              blocked: noCategories ? "Create a category first." : null,
+            }
+          : {
+              label: "New product",
+              onClick: () => setDialog({ kind: "product", fixedSubcategoryId: subcategoryFilter || undefined }),
+              blocked: noSubcategories ? "Create a subcategory first." : null,
+            }
+      : null;
 
   const tabs = [
-    { key: "categories", label: `Categories (${categories.length})` },
-    { key: "subcategories", label: `Subcategories (${subcategories.length})` },
-    { key: "products", label: `Products (${products.length})` },
+    { key: "categories", label: "Categories", count: data?.categories.length },
+    { key: "subcategories", label: "Subcategories", count: data?.subcategories.length },
+    { key: "products", label: "Products", count: data?.products.length },
   ];
 
-  const createLabel =
-    tab === "categories"
-      ? "New category"
-      : tab === "subcategories"
-        ? "New subcategory"
-        : "New product";
+  const noun = tab === "categories" ? "categories" : tab === "subcategories" ? "subcategories" : "products";
+  const searchPlaceholder =
+    tab === "categories" ? "Search name or code" : tab === "subcategories" ? "Search name, code or category" : "Search product, maker or subcategory";
 
-  return (
-    <div className="flex flex-col gap-4">
-      <PageHeader
-        title="Catalogue"
-        description="Platform product catalogue — category → subcategory → product. Shared across every rental company; machines are registered against these products, not the other way round."
-        actions={
-          <Button
-            onClick={() => setCreateOpen(true)}
-            title={
-              canManage
-                ? undefined
-                : "Requires catalogue.manage (Rental Company organizations only)"
-            }
-          >
-            {createLabel}
+  function categoryMenu(category: ProductCategory): MenuItem[] {
+    const offline = !online;
+    return [
+      { key: "rename", label: "Rename category", icon: "edit", hint: offline ? OFFLINE_HINT : "The code stays the same.", disabled: offline, onSelect: () => setDialog({ kind: "category", category }) },
+      { key: "add-sub", label: "Add subcategory", icon: "plus", hint: offline ? OFFLINE_HINT : `Inside ${category.name}.`, disabled: offline, onSelect: () => setDialog({ kind: "subcategory", fixedCategoryId: category.id }) },
+      disabledRemoveItem("Disable category"),
+    ];
+  }
+
+  function subcategoryMenu(subcategory: ProductSubcategory): MenuItem[] {
+    const offline = !online;
+    return [
+      { key: "rename", label: "Rename subcategory", icon: "edit", hint: offline ? OFFLINE_HINT : "The code stays the same.", disabled: offline, onSelect: () => setDialog({ kind: "subcategory", subcategory }) },
+      { key: "add-product", label: "Add product", icon: "plus", hint: offline ? OFFLINE_HINT : `Inside ${subcategory.name}.`, disabled: offline, onSelect: () => setDialog({ kind: "product", fixedSubcategoryId: subcategory.id }) },
+      disabledRemoveItem("Disable subcategory"),
+    ];
+  }
+
+  function productMenu(product: Product, subcategory: ProductSubcategory | null): MenuItem[] {
+    const offline = !online;
+    const items: MenuItem[] = [];
+    if (canRegister) {
+      items.push({
+        key: "register",
+        label: "Register as machine",
+        icon: "machine",
+        hint: offline ? OFFLINE_HINT : "Adds a machine of this product to your fleet.",
+        disabled: offline,
+        onSelect: () => setDialog({ kind: "register", product, subcategory: subcategory ?? undefined }),
+      });
+    }
+    if (canManage) {
+      items.push({ key: "edit", label: "Edit product", icon: "edit", hint: offline ? OFFLINE_HINT : "Name, maker, capacity and specifications.", disabled: offline, onSelect: () => setDialog({ kind: "product", product }) });
+      items.push(productToggleItem(product, offline, () => setDialog({ kind: "toggle", product })));
+    }
+    return items;
+  }
+
+  const fleetHeader = canListMachines ? (
+    <Th align="right" {...sortProps("fleet", "desc")}>
+      In your fleet
+    </Th>
+  ) : null;
+  const singular = tab === "categories" ? "category" : tab === "subcategories" ? "subcategory" : "product";
+
+  function firstRunEmpty() {
+    const copy =
+      tab === "categories"
+        ? { title: "The catalogue has no categories yet", action: canManage ? "Create the first category" : null, kind: "category" as const }
+        : tab === "subcategories"
+          ? { title: "No subcategories yet", action: canManage && !noCategories ? "Create a subcategory" : null, kind: "subcategory" as const }
+          : { title: "No products yet", action: canManage && !noSubcategories ? "Create a product" : null, kind: "product" as const };
+    return (
+      <EmptyState
+        variant="page"
+        icon="catalogue"
+        title={copy.title}
+        description={
+          canManage
+            ? "Machines are registered against catalogue products, so start with a category, then its subcategories and products."
+            : "Entries appear here once someone with the Catalogue permission adds them."
+        }
+        action={
+          copy.action ? (
+            <Button icon="plus" disabled={!online} title={!online ? OFFLINE_HINT : undefined} onClick={() => setDialog({ kind: copy.kind })}>
+              {copy.action}
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  }
+
+  function filteredEmpty() {
+    const scope = [query ? `“${get("q")}”` : null, categoryName, tab === "products" ? subcategoryName : null].filter(Boolean).join(" · ");
+    return (
+      <EmptyState
+        title={`No ${noun} match ${scope || "these filters"}`}
+        description="Check the spelling, or clear the filters to see the whole list."
+        action={
+          <Button variant="secondary" onClick={clearFilters}>
+            Clear filters
           </Button>
         }
       />
+    );
+  }
 
-      <Tabs items={tabs} active={tab} onChange={(key) => setTab(key as TabKey)} />
+  const tableBody = (() => {
+    if (!data || !view) return null;
+    if (tab === "categories") {
+      if (data.categories.length === 0) return firstRunEmpty();
+      if (filteredCategories.length === 0) return filteredEmpty();
+      return (
+        <Table bare minWidth={640} caption="Catalogue categories">
+          <Thead>
+            <Tr>
+              <Th {...sortProps("name")}>Category</Th>
+              <Th {...sortProps("code")}>Code</Th>
+              <Th align="right" {...sortProps("subcategories", "desc")}>Subcategories</Th>
+              <Th align="right" {...sortProps("products", "desc")}>Products</Th>
+              {fleetHeader}
+              <Th className="w-[1%]">
+                <span className="sr-only">Actions</span>
+              </Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {pageSlice(filteredCategories).map(({ category, subcategoryCount, productCount, fleet }) => (
+              <Tr key={category.id} interactive>
+                <Td>
+                  <span className="flex items-center gap-2.5">
+                    <Icon name={categoryIcon(category)} size={16} className="text-tile-icon" />
+                    <CellStack
+                      title={
+                        <UILink href={`/catalogue/categories/${category.id}`} title={category.name} className="text-ink-strong no-underline hover:underline">
+                          {category.name}
+                        </UILink>
+                      }
+                    />
+                  </span>
+                </Td>
+                <Td className="font-mono text-xs font-medium">{category.code}</Td>
+                <Td align="right" className="font-mono">{formatNumber(subcategoryCount, 0)}</Td>
+                <Td align="right" className="font-mono">{formatNumber(productCount, 0)}</Td>
+                {canListMachines && <Td align="right" className="font-mono">{formatNumber(fleet, 0)}</Td>}
+                <Td>
+                  <RowActions
+                    href={`/catalogue/categories/${category.id}`}
+                    label={category.name}
+                    items={canManage ? categoryMenu(category) : []}
+                  />
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      );
+    }
+    if (tab === "subcategories") {
+      if (data.subcategories.length === 0) return firstRunEmpty();
+      if (filteredSubcategories.length === 0) return filteredEmpty();
+      return (
+        <Table bare minWidth={680} caption="Catalogue subcategories">
+          <Thead>
+            <Tr>
+              <Th {...sortProps("name")}>Subcategory</Th>
+              <Th {...sortProps("code")}>Code</Th>
+              <Th {...sortProps("category")}>Category</Th>
+              <Th align="right" {...sortProps("products", "desc")}>Products</Th>
+              {fleetHeader}
+              <Th className="w-[1%]">
+                <span className="sr-only">Actions</span>
+              </Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {pageSlice(filteredSubcategories).map(({ subcategory, category, productCount, fleet }) => (
+              <Tr key={subcategory.id} interactive>
+                <Td>
+                  <CellStack
+                    title={
+                      <UILink href={`/catalogue/subcategories/${subcategory.id}`} title={subcategory.name} className="text-ink-strong no-underline hover:underline">
+                        {subcategory.name}
+                      </UILink>
+                    }
+                  />
+                </Td>
+                <Td className="font-mono text-xs font-medium">{subcategory.code}</Td>
+                <Td>
+                  {category ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Icon name={categoryIcon(category)} size={16} className="text-tile-icon" />
+                      {category.name}
+                    </span>
+                  ) : (
+                    <span className="italic text-disabled-text">Not specified</span>
+                  )}
+                </Td>
+                <Td align="right" className="font-mono">{formatNumber(productCount, 0)}</Td>
+                {canListMachines && <Td align="right" className="font-mono">{formatNumber(fleet, 0)}</Td>}
+                <Td>
+                  <RowActions
+                    href={`/catalogue/subcategories/${subcategory.id}`}
+                    label={subcategory.name}
+                    items={canManage ? subcategoryMenu(subcategory) : []}
+                  />
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      );
+    }
+    if (data.products.length === 0) return firstRunEmpty();
+    if (filteredProducts.length === 0) return filteredEmpty();
+    return (
+      <Table bare minWidth={720} caption="Catalogue products">
+        <Thead>
+          <Tr>
+            <Th {...sortProps("name")}>Product</Th>
+            <Th {...sortProps("subcategory")}>Subcategory</Th>
+            <Th align="right" {...sortProps("capacity", "desc")}>Rated capacity</Th>
+            {fleetHeader}
+            <Th className="w-[1%]">
+              <span className="sr-only">Actions</span>
+            </Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {pageSlice(filteredProducts).map(({ product, subcategory, category, fleet }) => {
+            const capacity = formatCapacity(product);
+            const label = `${product.manufacturer} ${product.name}`;
+            return (
+              <Tr key={product.id} interactive>
+                <Td>
+                  <span className="flex items-center gap-2.5">
+                    <Icon name={categoryIcon(category)} size={16} className="text-tile-icon" />
+                    <CellStack
+                      title={
+                        <UILink href={`/catalogue/products/${product.id}`} title={label} className="text-ink-strong no-underline hover:underline">
+                          {label}
+                        </UILink>
+                      }
+                    />
+                    <DisabledBadge disabledAt={product.disabledAt} />
+                  </span>
+                </Td>
+                <Td>
+                  <CellStack title={subcategory?.name ?? "Not specified"} sub={category?.name} />
+                </Td>
+                <Td align="right" className="font-mono">
+                  {capacity ?? <span className="font-sans italic text-disabled-text">Not specified</span>}
+                </Td>
+                {canListMachines && <Td align="right" className="font-mono">{formatNumber(fleet, 0)}</Td>}
+                <Td>
+                  <RowActions href={`/catalogue/products/${product.id}`} label={label} items={productMenu(product, subcategory)} />
+                </Td>
+              </Tr>
+            );
+          })}
+        </Tbody>
+      </Table>
+    );
+  })();
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          placeholder={
-            tab === "categories"
-              ? "Search categories…"
-              : tab === "subcategories"
-                ? "Search subcategories…"
-                : "Product name, manufacturer…"
-          }
-          className="w-64"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        {tab !== "categories" && (
-          <Select
-            className="w-48"
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            options={[
-              { value: "", label: "All categories" },
-              ...categories.map((c) => ({ value: c.id, label: c.name })),
-            ]}
+  const subcategoryOptions = data
+    ? data.subcategories
+        .filter((s) => !categoryFilter || s.productCategoryId === categoryFilter)
+        .map((s) => ({ value: s.id, label: s.name }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    : [];
+
+  return (
+    <div className="flex min-w-0 flex-col">
+      <PageHeader
+        title="Catalogue"
+        description="The shared list of equipment every rental company on FleetIP registers machines against: categories, their subcategories, and the products in each."
+        actions={
+          primary ? (
+            <Button
+              icon="plus"
+              onClick={primary.onClick}
+              disabled={!online || Boolean(primary.blocked)}
+              title={!online ? OFFLINE_HINT : (primary.blocked ?? undefined)}
+            >
+              {primary.label}
+            </Button>
+          ) : undefined
+        }
+      />
+      <PageBody>
+        <Card padding="none" className="overflow-hidden">
+          <Tabs
+            variant="card"
+            label="Catalogue level"
+            idBase="catalogue"
+            items={tabs}
+            active={tab}
+            onChange={(key) => set({ tab: key === "categories" ? null : key, sort: null, dir: null })}
           />
-        )}
-      </div>
-
-      {tab === "categories" &&
-        (filteredCategories.length === 0 ? (
-          <EmptyState title="No categories match this search" />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Category</Th>
-                <Th>Code</Th>
-                <Th>Subcategories</Th>
-                <Th>Products</Th>
-                <Th />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {filteredCategories.map((category) => {
-                const subs = subcategories.filter((s) => s.productCategoryId === category.id);
-                const productCount = products.filter((p) =>
-                  subs.some((s) => s.id === p.productSubcategoryId),
-                ).length;
-                return (
-                  <Tr key={category.id}>
-                    <Td className="font-medium text-ink">{category.name}</Td>
-                    <Td className="font-mono">{category.code}</Td>
-                    <Td className="font-mono">{subs.length}</Td>
-                    <Td className="font-mono">{productCount}</Td>
-                    <Td>
-                      <Link
-                        href={`/catalogue/categories/${category.id}`}
-                        className="text-xs font-medium text-accent-text"
-                      >
-                        Open
-                      </Link>
-                    </Td>
+          <TableToolbar>
+            <Input
+              size="sm"
+              aria-label={searchPlaceholder}
+              placeholder={searchPlaceholder}
+              className="w-full max-w-[300px]"
+              value={search.value}
+              onChange={(event) => search.setValue(event.target.value)}
+              suffix={search.pending ? "Searching…" : undefined}
+              hideOptional
+            />
+            {tab !== "categories" && data && (
+              <Select
+                size="sm"
+                aria-label="Category"
+                className="w-[200px]"
+                value={categoryFilter}
+                onChange={(event) => set({ category: event.target.value || null, subcategory: null })}
+                options={[{ value: "", label: "All categories" }, ...data.categories.map((c) => ({ value: c.id, label: c.name }))]}
+                hideOptional
+              />
+            )}
+            {tab === "products" && data && (
+              <Select
+                size="sm"
+                aria-label="Subcategory"
+                className="w-[200px]"
+                value={subcategoryFilter}
+                onChange={(event) => set({ subcategory: event.target.value || null })}
+                options={[{ value: "", label: "All subcategories" }, ...subcategoryOptions]}
+                hideOptional
+              />
+            )}
+            {filtersActive && (
+              <Button variant="tertiary" size="sm" icon="close" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            )}
+            {data && (
+              <span className="ml-auto text-xs text-meta" aria-live="polite">
+                <span className="font-mono">{formatNumber(total, 0)}</span> {total === 1 ? singular : noun}
+                {filtersActive ? " match" : ""}
+              </span>
+            )}
+          </TableToolbar>
+          <TabPanel idBase="catalogue" tabKey={tab}>
+            {error ? (
+              <div className="p-4">
+                <ErrorState
+                  title="The catalogue didn't load"
+                  message={describeError(error).body}
+                  action={
+                    <Button variant="secondary" size="sm" icon="refresh" onClick={() => void reload()}>
+                      Try again
+                    </Button>
+                  }
+                />
+              </div>
+            ) : loading || !data ? (
+              <Table bare minWidth={640} caption="Loading catalogue">
+                <Thead>
+                  <Tr>
+                    <Th>{tab === "categories" ? "Category" : tab === "subcategories" ? "Subcategory" : "Product"}</Th>
+                    <Th>{tab === "products" ? "Subcategory" : "Code"}</Th>
+                    <Th align="right">{tab === "products" ? "Rated capacity" : tab === "categories" ? "Subcategories" : "Products"}</Th>
+                    <Th align="right">{tab === "categories" ? "Products" : ""}</Th>
+                    <Th />
                   </Tr>
-                );
-              })}
-            </Tbody>
-          </Table>
-        ))}
-
-      {tab === "subcategories" &&
-        (filteredSubcategories.length === 0 ? (
-          <EmptyState title="No subcategories match these filters" />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Subcategory</Th>
-                <Th>Code</Th>
-                <Th>Category</Th>
-                <Th>Products</Th>
-                <Th />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {filteredSubcategories.map((subcategory) => (
-                <Tr key={subcategory.id}>
-                  <Td className="font-medium text-ink">{subcategory.name}</Td>
-                  <Td className="font-mono">{subcategory.code}</Td>
-                  <Td>{categoryById.get(subcategory.productCategoryId)?.name ?? "—"}</Td>
-                  <Td className="font-mono">
-                    {products.filter((p) => p.productSubcategoryId === subcategory.id).length}
-                  </Td>
-                  <Td>
-                    <Link
-                      href={`/catalogue/subcategories/${subcategory.id}`}
-                      className="text-xs font-medium text-accent-text"
-                    >
-                      Open
-                    </Link>
-                  </Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        ))}
-
-      {tab === "products" &&
-        (filteredProducts.length === 0 ? (
-          <EmptyState title="No products match these filters" />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Product</Th>
-                <Th>Manufacturer</Th>
-                <Th>Subcategory</Th>
-                <Th>Capacity</Th>
-                <Th>In your fleet</Th>
-                <Th />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {filteredProducts.map((product) => {
-                const subcategory = subcategoryById.get(product.productSubcategoryId);
-                const ownCount = machines.filter((m) => m.productId === product.id).length;
-                return (
-                  <Tr key={product.id}>
-                    <Td className="font-medium text-ink">{product.name}</Td>
-                    <Td>{product.manufacturer}</Td>
-                    <Td>{subcategory?.name ?? "—"}</Td>
-                    <Td className="font-mono">{formatCapacity(product)}</Td>
-                    <Td className="font-mono">{ownCount}</Td>
-                    <Td>
-                      <Link
-                        href={`/catalogue/products/${product.id}`}
-                        className="text-xs font-medium text-accent-text"
-                      >
-                        Open
-                      </Link>
-                    </Td>
-                  </Tr>
-                );
-              })}
-            </Tbody>
-          </Table>
-        ))}
-
-      <p className="text-xs text-meta-light">
-        Machine counts above are your organization&apos;s own registered machines only — there is no
-        platform-wide product→machine lookup yet (see the frontend/backend gap report). No
-        active/inactive state is shown: the catalogue tables have no such column today.
-      </p>
-
-      <CatalogueFormDialog
-        open={createOpen}
-        onClose={() => {
-          setCreateOpen(false);
-          setCreateError(null);
-        }}
-        title={createLabel}
-        submitLabel={createLabel}
-        canManage={canManage}
-        onSubmit={handleCreateSubmit}
-        submitting={createSubmitting}
-        error={createError}
-      >
-        {tab === "categories" && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input label="Category name" name="name" placeholder="e.g. Cranes" required />
-            <Input label="Code" name="code" placeholder="e.g. CRN" required />
-          </div>
+                </Thead>
+                <TableSkeleton columns={5} label="Loading catalogue" />
+              </Table>
+            ) : (
+              tableBody
+            )}
+          </TabPanel>
+          {data && total > PAGE_SIZE && (
+            <TableFooter>
+              <Pagination
+                page={currentPage}
+                pageCount={pageCount}
+                onPageChange={(next) => set({ page: next > 1 ? next : null })}
+                total={total}
+                pageSize={PAGE_SIZE}
+                noun={noun}
+              />
+            </TableFooter>
+          )}
+        </Card>
+        {canListMachines && (
+          <p className="m-0 text-[11px] leading-[1.5] text-meta-light">
+            “In your fleet” counts your organization&apos;s own machines. FleetIP doesn&apos;t count other rental companies&apos;
+            machines per product.
+          </p>
         )}
-        {tab === "subcategories" && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
-              label="Category"
-              name="productCategoryId"
-              required
-              options={[
-                { value: "", label: "Select…" },
-                ...categories.map((c) => ({ value: c.id, label: c.name })),
-              ]}
-            />
-            <Input label="Subcategory name" name="name" placeholder="e.g. Mobile crane" required />
-            <Input label="Code" name="code" placeholder="e.g. MCR" required />
-          </div>
-        )}
-        {tab === "products" && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
-              label="Subcategory"
-              name="productSubcategoryId"
-              required
-              options={[
-                { value: "", label: "Select…" },
-                ...subcategories.map((s) => ({ value: s.id, label: s.name })),
-              ]}
-            />
-            <Input label="Product name" name="name" required />
-            <Input label="Manufacturer" name="manufacturer" required />
-            <Input label="Capacity" name="capacity" type="number" />
-            <Select
-              label="Capacity unit"
-              name="capacityUnit"
-              options={[
-                { value: "", label: "—" },
-                ...["Ton", "M³", "Meter", "Kgs", "KnM", "kVA"].map((u) => ({ value: u, label: u })),
-              ]}
-            />
-          </div>
-        )}
-      </CatalogueFormDialog>
+      </PageBody>
+
+      {writer && data && (
+        <>
+          <CategoryFormDialog
+            open={dialog?.kind === "category"}
+            onClose={() => setDialog(null)}
+            writer={writer}
+            category={dialog?.kind === "category" ? dialog.category : undefined}
+            existingCategories={data.categories}
+            affectedMachines={
+              canListMachines && dialog?.kind === "category" && dialog.category && view
+                ? view.fleetForProducts((view.subsByCategory.get(dialog.category.id) ?? []).flatMap((s) => view.productsBySub.get(s.id) ?? []))
+                : null
+            }
+            onSaved={() => void reload()}
+            openHref={(id) => `/catalogue/categories/${id}`}
+          />
+          <SubcategoryFormDialog
+            open={dialog?.kind === "subcategory"}
+            onClose={() => setDialog(null)}
+            writer={writer}
+            categories={data.categories}
+            subcategory={dialog?.kind === "subcategory" ? dialog.subcategory : undefined}
+            fixedCategoryId={dialog?.kind === "subcategory" ? dialog.fixedCategoryId : undefined}
+            existingSubcategories={data.subcategories}
+            affectedMachines={
+              canListMachines && dialog?.kind === "subcategory" && dialog.subcategory && view
+                ? view.fleetForProducts(view.productsBySub.get(dialog.subcategory.id) ?? [])
+                : null
+            }
+            onSaved={() => void reload()}
+            openHref={(id) => `/catalogue/subcategories/${id}`}
+          />
+          <ProductFormDialog
+            open={dialog?.kind === "product"}
+            onClose={() => setDialog(null)}
+            writer={writer}
+            subcategories={data.subcategories}
+            categoriesById={data.categoriesById}
+            product={dialog?.kind === "product" ? dialog.product : undefined}
+            fixedSubcategoryId={dialog?.kind === "product" ? dialog.fixedSubcategoryId : undefined}
+            existingProducts={data.products}
+            affectedMachines={
+              canListMachines && dialog?.kind === "product" && dialog.product ? (data.machineCounts.get(dialog.product.id) ?? 0) : null
+            }
+            onSaved={() => void reload()}
+            openHref={(id) => `/catalogue/products/${id}`}
+          />
+        </>
+      )}
+      {organizationId && dialog?.kind === "toggle" && (
+        <ProductToggleDialog organizationId={organizationId} product={dialog.product} onClose={() => setDialog(null)} onChanged={() => void reload()} />
+      )}
+      {organizationId && dialog?.kind === "register" && (
+        <RegisterMachineDialog
+          open
+          onClose={() => setDialog(null)}
+          organizationId={organizationId}
+          onRegistered={() => void reload()}
+          initialCategoryId={dialog.subcategory?.productCategoryId}
+          initialSubcategoryId={dialog.product.productSubcategoryId}
+          initialProductId={dialog.product.id}
+        />
+      )}
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { cx } from "./cx";
+
 export type LoadingStateSize = "panel" | "inline";
 
 export interface LoadingStateProps {
@@ -6,23 +8,21 @@ export interface LoadingStateProps {
   className?: string;
 }
 
-const SIZE_CLASSES: Record<LoadingStateSize, string> = {
-  panel: "py-12",
-  inline: "py-2",
-};
-
+/** Spinner + words. Prefer a layout-matching skeleton for pages and tables. */
 export function LoadingState({ label = "Loading…", size = "panel", className }: LoadingStateProps) {
   return (
     <div
-      className={[
+      role="status"
+      className={cx(
         "flex items-center justify-center gap-2 text-sm text-meta",
-        SIZE_CLASSES[size],
+        size === "panel" ? "py-12" : "py-2",
         className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
+      )}
     >
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-border-strong border-t-accent" />
+      <span
+        aria-hidden="true"
+        className="h-4 w-4 animate-spin rounded-full border-2 border-border-control border-t-accent"
+      />
       {label}
     </div>
   );

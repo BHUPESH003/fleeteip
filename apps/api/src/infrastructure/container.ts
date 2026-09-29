@@ -7,6 +7,10 @@ import { MachineRepository } from "../modules/equipment/infrastructure/machine-r
 import { AuthService } from "../modules/identity/application/auth-service.js";
 import { SessionRepository } from "../modules/identity/infrastructure/session-repository.js";
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
+import { PasswordResetService } from "../modules/identity/application/password-reset-service.js";
+import { PasswordResetTokenRepository } from "../modules/identity/infrastructure/password-reset-token-repository.js";
+import { LogMailer } from "./mail/log-mailer.js";
+import { logger } from "./logging/logger.js";
 import { AuctionService } from "../modules/marketplace/auction/application/auction-service.js";
 import { AuctionRepository } from "../modules/marketplace/auction/infrastructure/auction-repository.js";
 import { CommercialQuotationService } from "../modules/marketplace/commercial-quotation/application/commercial-quotation-service.js";
@@ -57,6 +61,8 @@ import { env } from "./config/env.js";
  */
 const userRepository = new UserRepository(db);
 const sessionRepository = new SessionRepository(db);
+// ponytail: dev-only mailer that logs messages — swap for a real provider here.
+const mailer = new LogMailer();
 const organizationRepository = new OrganizationRepository(db);
 const inviteRepository = new InviteRepository(db);
 const membershipRepository = new MembershipRepository(db);
@@ -127,6 +133,7 @@ const platformAdminService = new PlatformAdminService(
   userRepository,
   requirementRepository,
   auctionRepository,
+  sessionRepository,
 );
 
 const authService = new AuthService(
@@ -148,6 +155,14 @@ const inviteService = new InviteService(
 
 export const container = {
   authService,
+  passwordResetService: new PasswordResetService(
+    userRepository,
+    new PasswordResetTokenRepository(db),
+    sessionRepository,
+    mailer,
+    env.WEB_ORIGIN,
+    (error) => logger.error({ err: error }, "password reset mail send failed"),
+  ),
   permissionService,
 
   organizationService: new OrganizationService(

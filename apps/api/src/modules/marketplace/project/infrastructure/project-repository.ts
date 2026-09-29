@@ -1,4 +1,4 @@
-import type { ProjectStatus } from "@fleetip/contracts/project";
+import { ProjectStatus } from "@fleetip/contracts/project";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import type {
@@ -60,7 +60,7 @@ export class ProjectRepository implements ProjectRepositoryPort {
         district: input.district ?? null,
         start_date: input.startDate,
         end_date: input.endDate ?? null,
-        status: "active",
+        status: ProjectStatus.active,
       })
       .returning(PROJECT_COLUMNS)
       .executeTakeFirstOrThrow();

@@ -12,6 +12,8 @@ export const rentalStatusSchema = z.enum([
   "cancelled",
 ]);
 export type RentalStatus = z.infer<typeof rentalStatusSchema>;
+/** RentalStatus.x names each value once; `RentalStatus` is also the type. */
+export const RentalStatus = rentalStatusSchema.enum;
 
 // Decided, not inferred from legacy: shift/month are grounded in real legacy
 // fields (fleet1.hour_shift, linked_equipment.monthly_rental); day/week are
@@ -19,12 +21,18 @@ export type RentalStatus = z.infer<typeof rentalStatusSchema>;
 // see docs/rental-domain-design.md §11 for the full reasoning.
 export const rateUnitSchema = z.enum(["shift", "day", "week", "month"]);
 export type RateUnit = z.infer<typeof rateUnitSchema>;
+/** RateUnit.x names each value once; `RateUnit` is also the type. */
+export const RateUnit = rateUnitSchema.enum;
 
 export const operatorScopeSchema = z.enum(["with_operator", "without_operator"]);
 export type OperatorScope = z.infer<typeof operatorScopeSchema>;
+/** OperatorScope.x names each value once; `OperatorScope` is also the type. */
+export const OperatorScope = operatorScopeSchema.enum;
 
 export const actualDatesVerificationStatusSchema = z.enum(["pending", "verified", "disputed"]);
 export type ActualDatesVerificationStatus = z.infer<typeof actualDatesVerificationStatusSchema>;
+/** ActualDatesVerificationStatus.x names each value once; `ActualDatesVerificationStatus` is also the type. */
+export const ActualDatesVerificationStatus = actualDatesVerificationStatusSchema.enum;
 
 // Minimal, immutable-once-set snapshot of an external (non-FleetIP) customer
 // — deliberately not the full rentalclients shape (no GST/payment-terms/KAM,

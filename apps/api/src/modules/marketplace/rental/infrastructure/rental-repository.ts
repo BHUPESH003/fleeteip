@@ -1,4 +1,4 @@
-import type { RentalStatus } from "@fleetip/contracts/rental";
+import { RentalStatus, ActualDatesVerificationStatus } from "@fleetip/contracts/rental";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../../infrastructure/database/types.js";
 import { ConflictError } from "../../../../shared/errors.js";
@@ -181,11 +181,11 @@ export class RentalRepository implements RentalRepositoryPort {
       .updateTable("rentals")
       .set({
         status,
-        ...(status === "active" && actualDate !== undefined
-          ? { actual_start_date: actualDate, actual_dates_verification_status: "pending" }
+        ...(status === RentalStatus.active && actualDate !== undefined
+          ? { actual_start_date: actualDate, actual_dates_verification_status: ActualDatesVerificationStatus.pending }
           : {}),
-        ...(status === "off_rent" && actualDate !== undefined
-          ? { actual_end_date: actualDate, actual_dates_verification_status: "pending" }
+        ...(status === RentalStatus.off_rent && actualDate !== undefined
+          ? { actual_end_date: actualDate, actual_dates_verification_status: ActualDatesVerificationStatus.pending }
           : {}),
         updated_at: new Date(),
       })
@@ -204,7 +204,7 @@ export class RentalRepository implements RentalRepositoryPort {
       .updateTable("rentals")
       .set({
         actual_dates_verification_status: status,
-        actual_dates_dispute_reason: status === "disputed" ? (disputeReason ?? null) : null,
+        actual_dates_dispute_reason: status === ActualDatesVerificationStatus.disputed ? (disputeReason ?? null) : null,
         updated_at: new Date(),
       })
       .where("id", "=", id)

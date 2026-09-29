@@ -1,8 +1,13 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
-import type { OrganizationRepositoryPort } from "../domain/ports.js";
+import type {
+  OrganizationProfileRepositoryPort,
+  OrganizationRepositoryPort,
+} from "../domain/ports.js";
 
-export class OrganizationRepository implements OrganizationRepositoryPort {
+export class OrganizationRepository
+  implements OrganizationRepositoryPort, OrganizationProfileRepositoryPort
+{
   constructor(private readonly db: Kysely<Database>) {}
 
   findTypeByCode(code: string) {
@@ -37,6 +42,15 @@ export class OrganizationRepository implements OrganizationRepositoryPort {
     return this.db
       .updateTable("organizations")
       .set({ status })
+      .where("id", "=", id)
+      .returning(["id", "organization_type_id", "name", "code", "status", "created_at"])
+      .executeTakeFirstOrThrow();
+  }
+
+  updateName(id: string, name: string) {
+    return this.db
+      .updateTable("organizations")
+      .set({ name })
       .where("id", "=", id)
       .returning(["id", "organization_type_id", "name", "code", "status", "created_at"])
       .executeTakeFirstOrThrow();

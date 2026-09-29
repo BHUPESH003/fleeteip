@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const machineStatusSchema = z.enum(["active", "under_maintenance", "retired"]);
 export type MachineStatus = z.infer<typeof machineStatusSchema>;
+/** MachineStatus.x names each value once; `MachineStatus` is also the type. */
+export const MachineStatus = machineStatusSchema.enum;
 
 export const createMachineRequestSchema = z.object({
   productId: z.string().uuid(),

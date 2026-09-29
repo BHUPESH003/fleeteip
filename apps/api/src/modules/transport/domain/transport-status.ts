@@ -1,8 +1,8 @@
-import type { TransportStatus } from "@fleetip/contracts/transport";
+import { TransportStatus } from "@fleetip/contracts/transport";
 
 const VALID_TRANSITIONS: Record<TransportStatus, TransportStatus[]> = {
-  planned: ["dispatched", "cancelled"],
-  dispatched: ["delivered", "cancelled"],
+  planned: [TransportStatus.dispatched, TransportStatus.cancelled],
+  dispatched: [TransportStatus.delivered, TransportStatus.cancelled],
   delivered: [],
   cancelled: [],
 };

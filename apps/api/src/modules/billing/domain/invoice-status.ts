@@ -1,9 +1,9 @@
-import type { InvoiceStatus } from "@fleetip/contracts/billing";
+import { InvoiceStatus } from "@fleetip/contracts/billing";
 
 const VALID_TRANSITIONS: Record<InvoiceStatus, InvoiceStatus[]> = {
-  draft: ["issued", "cancelled"],
-  issued: ["paid", "overdue", "cancelled"],
-  overdue: ["paid", "cancelled"],
+  draft: [InvoiceStatus.issued, InvoiceStatus.cancelled],
+  issued: [InvoiceStatus.paid, InvoiceStatus.overdue, InvoiceStatus.cancelled],
+  overdue: [InvoiceStatus.paid, InvoiceStatus.cancelled],
   paid: [],
   cancelled: [],
 };

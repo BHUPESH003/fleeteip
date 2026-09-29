@@ -1,7 +1,7 @@
-import type { ProjectStatus } from "@fleetip/contracts/project";
+import { ProjectStatus } from "@fleetip/contracts/project";
 
 const VALID_TRANSITIONS: Record<ProjectStatus, ProjectStatus[]> = {
-  active: ["completed", "cancelled"],
+  active: [ProjectStatus.completed, ProjectStatus.cancelled],
   completed: [],
   cancelled: [],
 };

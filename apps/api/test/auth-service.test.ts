@@ -40,6 +40,9 @@ function fakeSessionRepository(): SessionRepositoryPort {
     deleteByTokenHash: async () => {
       throw new Error("not used in this test");
     },
+    deleteByUserId: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

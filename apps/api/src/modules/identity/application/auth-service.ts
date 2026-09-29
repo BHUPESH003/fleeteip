@@ -10,6 +10,7 @@ import {
   type OrganizationTypeCode,
   type PermissionCode,
 } from "@fleetip/contracts/organization";
+import { MembershipStatus } from "@fleetip/contracts/organization";
 import {
   ConflictError,
   ForbiddenError,
@@ -79,7 +80,7 @@ export class AuthService {
       userId: user.id,
       organizationId: organization.id,
       roleId: ownerRole.id,
-      status: "active",
+      status: MembershipStatus.active,
     });
 
     // Every organization gets its own starting "member" role — empty
@@ -114,7 +115,7 @@ export class AuthService {
     displayName: string;
   }): Promise<PublicUserRecord> {
     const existing = await this.userRepository.findByEmail(input.email);
-    if (existing) throw new ConflictError("An account with this email already exists");
+    if (existing) throw new ConflictError("An account with this email already exists", "email");
 
     const passwordHash = await hashPassword(input.password);
     return this.userRepository.create({
@@ -155,7 +156,8 @@ export class AuthService {
     if (!session) return null;
 
     const user = await this.userRepository.findById(session.user_id);
-    if (!user) return null;
+    // Suspending deletes the sessions too; this also covers any row created in between.
+    if (!user || user.status === "suspended") return null;
 
     const membershipRows = await this.membershipRepository.listWithOrganizationByUserId(user.id);
 

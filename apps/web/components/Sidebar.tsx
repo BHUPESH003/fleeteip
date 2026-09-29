@@ -1,30 +1,48 @@
 "use client";
 
+import { Icon, cx } from "@fleetip/ui";
 import Link from "next/link";
-import { NAV_ITEMS, PLANNED_NAV_ITEMS, filterNavItems, filterPlannedNavItems } from "../lib/navigation";
+import { usePathname } from "next/navigation";
+import { NAV_ITEMS, filterNavItems } from "../lib/navigation";
 import { useSession } from "../lib/session-context";
 import { NavList } from "./NavList";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
 
+/**
+ * 232px sidebar ≥1180px; a 60px icon rail from 760px to 1179px (icons keep
+ * a tooltip and an accessible name); hidden below 760px, where the dark
+ * top bar's menu opens the same nav in a drawer.
+ */
 export function Sidebar() {
   const { hasPermission } = useSession();
+  const pathname = usePathname();
   const items = filterNavItems(NAV_ITEMS, { hasPermission });
-  const planned = filterPlannedNavItems(PLANNED_NAV_ITEMS, { hasPermission });
-
+  const settingsActive = pathname === "/settings" || pathname.startsWith("/settings/");
   return (
-    <aside className="hidden w-[236px] shrink-0 flex-col bg-rail sm:flex">
-      <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-rail-border px-4">
-        <div className="h-5 w-5 rounded-xs bg-accent" />
-        <span className="text-[15px] font-bold tracking-wide text-white">FleetIP</span>
+    <aside className="sticky top-0 hidden h-screen w-[60px] flex-none flex-col bg-rail min-[760px]:flex min-[1180px]:w-[232px]">
+      <div className="flex flex-none items-center gap-[9px] px-4 pb-4 pt-[18px] min-[1180px]:pl-5 max-[1179px]:justify-center max-[1179px]:px-0">
+        <Link
+          href="/"
+          aria-label="FleetIP dashboard"
+          className="h-[26px] w-[26px] flex-none rounded-control bg-accent focus-visible:!outline-focus-on-dark"
+        />
+        <OrganizationSwitcher className="flex-1 max-[1179px]:hidden" />
       </div>
-      <nav className="scrollbar-rail min-h-0 flex-1 overflow-y-auto px-2.5 py-3.5">
-        <NavList items={items} planned={planned} />
+      <nav aria-label="Main" className="scrollbar-rail min-h-0 flex-1 overflow-y-auto">
+        <NavList items={items} />
       </nav>
-      <div className="mt-auto flex flex-col gap-2 border-t border-rail-border px-5 py-3">
-        <Link href="/settings?tab=organization" className="text-sm font-medium text-rail-muted hover:text-white">
-          Organization
-        </Link>
-        <Link href="/settings" className="text-sm font-medium text-rail-muted hover:text-white">
-          Settings
+      <div className="flex-none border-t border-rail-border py-2">
+        <Link
+          href="/settings"
+          aria-current={settingsActive ? "page" : undefined}
+          title="Organization & team"
+          className={cx(
+            "group/nav relative flex items-center gap-2.5 border-l-[3px] py-2 pl-[17px] pr-4 text-sm no-underline hover:bg-rail-active hover:text-white focus-visible:!outline-2 focus-visible:!-outline-offset-2 focus-visible:!outline-focus-on-dark max-[1179px]:justify-center max-[1179px]:px-0",
+            settingsActive ? "border-accent bg-rail-active font-semibold text-white" : "border-transparent text-rail-muted",
+          )}
+        >
+          <Icon name="organization" size={16} className={settingsActive ? "text-rail-icon-active" : "text-rail-icon"} />
+          <span className="max-[1179px]:sr-only">Organization &amp; team</span>
         </Link>
       </div>
     </aside>

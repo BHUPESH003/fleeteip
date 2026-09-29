@@ -3,9 +3,13 @@ import { isFutureIsoDate } from "../shared/dates.js";
 
 export const transportLegSchema = z.enum(["mobilization", "demobilization"]);
 export type TransportLeg = z.infer<typeof transportLegSchema>;
+/** TransportLeg.x names each value once; `TransportLeg` is also the type. */
+export const TransportLeg = transportLegSchema.enum;
 
 export const transportStatusSchema = z.enum(["planned", "dispatched", "delivered", "cancelled"]);
 export type TransportStatus = z.infer<typeof transportStatusSchema>;
+/** TransportStatus.x names each value once; `TransportStatus` is also the type. */
+export const TransportStatus = transportStatusSchema.enum;
 
 export const transportRecordSchema = z.object({
   id: z.string().uuid(),

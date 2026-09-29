@@ -18,6 +18,14 @@ export interface InvoiceRecord {
   updated_at: Date | string;
 }
 
+// An invoice row plus its payment aggregate, for list views.
+export interface InvoiceListRecord extends InvoiceRecord {
+  amount_paid: number;
+  last_paid_date: string | null;
+  // due_date < current_date, evaluated by the database like markOverdueIfDue.
+  past_due: boolean;
+}
+
 export interface InvoiceLineItemRecord {
   id: string;
   invoice_id: string;
@@ -74,8 +82,8 @@ export interface InvoiceRepositoryPort {
   nextInvoiceNumber(rentalCompanyOrganizationId: string): Promise<string>;
   create(input: CreateInvoiceInput): Promise<InvoiceRecord>;
   findById(id: string): Promise<InvoiceRecord | undefined>;
-  listByRentalCompany(rentalCompanyOrganizationId: string): Promise<InvoiceRecord[]>;
-  listByRenter(renterOrganizationId: string): Promise<InvoiceRecord[]>;
+  listByRentalCompany(rentalCompanyOrganizationId: string): Promise<InvoiceListRecord[]>;
+  listByRenter(renterOrganizationId: string): Promise<InvoiceListRecord[]>;
   listLineItems(invoiceId: string): Promise<InvoiceLineItemRecord[]>;
   listPayments(invoiceId: string): Promise<PaymentRecord[]>;
   updateStatus(id: string, status: InvoiceStatus): Promise<InvoiceRecord>;

@@ -20,9 +20,9 @@ import { ConflictError, ForbiddenError, NotFoundError } from "../src/shared/erro
 
 const OWNER_ROLE_ID = "role-owner";
 const RC_ORG_ID = "org-rental-company";
-const CATEGORY_ID = "category-1";
-const SUBCATEGORY_ID = "subcategory-1";
-const PRODUCT_ID = "product-1";
+const CATEGORY_ID = "00000000-0000-4000-8000-000000000001";
+const SUBCATEGORY_ID = "00000000-0000-4000-8000-000000000002";
+const PRODUCT_ID = "00000000-0000-4000-8000-000000000003";
 
 function fakePermissionService(organizationTypeCode: OrganizationTypeCode = "rental_company") {
   const membershipRepository: MembershipRepositoryPort = {
@@ -200,9 +200,11 @@ function fakeProductRepository(): ProductRepositoryPort {
   ]);
   let nextId = 2;
   return {
-    listAll: async (subcategoryId) =>
+    listAll: async (subcategoryId, includeDisabled) =>
       [...products.values()].filter(
-        (p) => subcategoryId === undefined || p.product_subcategory_id === subcategoryId,
+        (p) =>
+          (subcategoryId === undefined || p.product_subcategory_id === subcategoryId) &&
+          (includeDisabled || !p.disabled_at),
       ),
     findById: async (id) => products.get(id),
     create: async (input) => {
@@ -233,6 +235,7 @@ function fakeProductRepository(): ProductRepositoryPort {
         ...(updates.capacity !== undefined && { capacity: updates.capacity }),
         ...(updates.capacityUnit !== undefined && { capacity_unit: updates.capacityUnit }),
         ...(updates.specifications !== undefined && { specifications: updates.specifications }),
+        ...(updates.disabledAt !== undefined && { disabled_at: updates.disabledAt }),
       };
       products.set(id, updated);
       return updated;
@@ -362,5 +365,50 @@ describe("CatalogueService", () => {
   it("still allows reading the catalogue without any permission", async () => {
     const service = buildService("renter");
     await expect(service.listCategories()).resolves.toHaveLength(1);
+  });
+
+  it("gets a category, subcategory and product by id", async () => {
+    const service = buildService();
+    await expect(service.getCategory(CATEGORY_ID)).resolves.toMatchObject({ id: CATEGORY_ID });
+    await expect(service.getSubcategory(SUBCATEGORY_ID)).resolves.toMatchObject({
+      id: SUBCATEGORY_ID,
+    });
+    await expect(service.getProduct(PRODUCT_ID)).resolves.toMatchObject({
+      id: PRODUCT_ID,
+      disabledAt: null,
+    });
+  });
+
+  it("returns 404 for unknown ids on get-by-id", async () => {
+    const service = buildService();
+    await expect(service.getCategory("nope")).rejects.toThrow(NotFoundError);
+    await expect(service.getSubcategory("nope")).rejects.toThrow(NotFoundError);
+    await expect(service.getProduct("nope")).rejects.toThrow(NotFoundError);
+    await expect(service.getProduct("00000000-0000-4000-8000-00000000dead")).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it("hides a disabled product from the picker list but still resolves it by id", async () => {
+    const service = buildService();
+    const disabled = await service.setProductDisabledAsPlatformAdmin(PRODUCT_ID, true);
+    expect(disabled.disabledAt).not.toBeNull();
+
+    await expect(service.listProducts()).resolves.toHaveLength(0);
+    await expect(service.listProducts(undefined, true)).resolves.toHaveLength(1);
+    await expect(service.getProduct(PRODUCT_ID)).resolves.toMatchObject({
+      disabledAt: disabled.disabledAt,
+    });
+
+    const enabled = await service.setProductDisabled("user-1", RC_ORG_ID, PRODUCT_ID, false);
+    expect(enabled.disabledAt).toBeNull();
+    await expect(service.listProducts()).resolves.toHaveLength(1);
+  });
+
+  it("rejects tenant disable without catalogue.manage", async () => {
+    const service = buildService("renter");
+    await expect(
+      service.setProductDisabled("user-1", RC_ORG_ID, PRODUCT_ID, true),
+    ).rejects.toThrow(ForbiddenError);
   });
 });

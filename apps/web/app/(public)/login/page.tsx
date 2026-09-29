@@ -1,47 +1,89 @@
 "use client";
 
-import { Button, Card, Input } from "@fleetip/ui";
+import { Button, FormBanner, Input } from "@fleetip/ui";
 import Link from "next/link";
-import { type FormEvent, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import type { FormEvent } from "react";
+import { z } from "zod";
 import { apiClient } from "../../../lib/api-client";
+import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
+import { AUTH_LINK, AuthCard } from "../AuthShell";
+import { PasswordInput, emailField } from "../fields";
+import { useStatusCopy } from "../../../components/status-copy";
+import { nextQuery, safeNextPath } from "../next-param";
+
+const schema = z.object({
+  email: emailField(),
+  password: z.string().min(1, "Enter your password."),
+});
+
+const STATUS_COPY = {
+  401: { title: "Email or password is incorrect.", body: "Check both and try again. Passwords are case-sensitive." },
+  403: {
+    title: "This account is suspended",
+    body: "It can't sign in until FleetIP reactivates it. Contact FleetIP support if you think this is a mistake.",
+  },
+  429: { title: "Too many sign-in attempts", body: "For security, wait a minute before trying again." },
+};
 
 export default function LoginPage() {
   const { refresh } = useSession();
-  const [error, setError] = useState<string | null>(null);
+  // Read on every render; the layout does the redirect to it once signed in.
+  const next = safeNextPath(useSearchParams().get("next"));
+  const form = useForm({ schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
+  const status = useStatusCopy(STATUS_COPY);
+  const problem = status.banner ?? form.banner;
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const form = new FormData(event.currentTarget);
-    try {
-      await apiClient.login({
-        email: String(form.get("email")),
-        password: String(form.get("password")),
-      });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    }
-  }
+  const save = form.submit(async (body) => {
+    // The (public) layout sends a signed-in visitor on to ?next= (or the dashboard).
+    await status.guard(() => apiClient.login(body));
+    await refresh();
+  });
+  const handleSubmit = (event: FormEvent) => {
+    status.clear();
+    void save(event);
+  };
+
+  const toInvite = next.startsWith("/invite/");
 
   return (
-    <Card>
-      <h2 className="mb-4 text-lg font-semibold text-ink">Log in</h2>
-      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
-      <form onSubmit={handleSubmit}>
-        <Input label="Email" name="email" type="email" required />
-        <Input label="Password" name="password" type="password" required />
-        <Button type="submit" className="mt-1 w-full">
-          Log in
+    <AuthCard
+      title="Sign in to FleetIP"
+      description={toInvite ? "Sign in to accept your invite with the account you already have." : "Use the email and password for your FleetIP account."}
+      footer={
+        <>
+          New to FleetIP?{" "}
+          <Link href={`/signup${nextQuery(next)}`} className={AUTH_LINK}>
+            Create an account
+          </Link>
+        </>
+      }
+    >
+      <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+        {next !== "/" && !problem && (
+          <FormBanner tone="info" title={toInvite ? "Your invite is waiting" : "Sign in to continue"}>
+            {toInvite
+              ? "After you sign in you'll go back to the invite to join with one click."
+              : "You'll go straight back to the page you were opening."}
+          </FormBanner>
+        )}
+        {problem && (
+          <FormBanner tone="error" title={problem.title}>
+            {problem.body}
+          </FormBanner>
+        )}
+        <Input label="Email" type="email" required autoComplete="email" inputMode="email" {...form.field("email")} />
+        <PasswordInput label="Password" required autoComplete="current-password" {...form.field("password")} />
+        <Button type="submit" busy={form.busy} busyLabel="Signing in…" className="w-full">
+          Sign in
         </Button>
+        <p className="m-0 text-sm leading-[1.5]">
+          <Link href="/forgot-password" className={AUTH_LINK}>
+            Forgot password?
+          </Link>
+        </p>
       </form>
-      <p className="mt-4 text-center text-sm text-meta">
-        Don&apos;t have an account?{" "}
-        <Link href="/signup" className="font-medium text-accent-text hover:underline">
-          Sign up
-        </Link>
-      </p>
-    </Card>
+    </AuthCard>
   );
 }

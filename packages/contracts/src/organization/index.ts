@@ -7,6 +7,8 @@ import { z } from "zod";
  */
 export const organizationTypeCodeSchema = z.enum(["rental_company", "renter"]);
 export type OrganizationTypeCode = z.infer<typeof organizationTypeCodeSchema>;
+/** OrganizationTypeCode.x names each value once; `OrganizationTypeCode` is also the type. */
+export const OrganizationTypeCode = organizationTypeCodeSchema.enum;
 
 export const organizationSchema = z.object({
   id: z.string().uuid(),
@@ -20,6 +22,14 @@ export const organizationSchema = z.object({
   createdAt: z.string().datetime(),
 });
 export type Organization = z.infer<typeof organizationSchema>;
+
+// The one tenant-editable profile field — organizations store nothing else
+// a tenant may change (type, code, status and id are platform-owned).
+// .strict() so an attempt to send any other field is a 400, not a silent drop.
+export const updateOrganizationRequestSchema = z
+  .object({ name: z.string().trim().min(1).max(200) })
+  .strict();
+export type UpdateOrganizationRequest = z.infer<typeof updateOrganizationRequestSchema>;
 
 // Role names are no longer a fixed global enum — every organization gets
 // its own "member" role (and can create further custom roles) with
@@ -97,9 +107,13 @@ export const PERMISSION_ORGANIZATION_TYPES: Record<PermissionCode, OrganizationT
 };
 
 export type PermissionCode = z.infer<typeof permissionCodeSchema>;
+/** PermissionCode.x names each value once; `PermissionCode` is also the type. */
+export const PermissionCode = permissionCodeSchema.enum;
 
 export const membershipStatusSchema = z.enum(["active", "invited", "suspended"]);
 export type MembershipStatus = z.infer<typeof membershipStatusSchema>;
+/** MembershipStatus.x names each value once; `MembershipStatus` is also the type. */
+export const MembershipStatus = membershipStatusSchema.enum;
 
 export const membershipSchema = z.object({
   id: z.string().uuid(),
@@ -142,6 +156,8 @@ export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
 
 export const inviteStatusSchema = z.enum(["pending", "accepted", "revoked"]);
 export type InviteStatus = z.infer<typeof inviteStatusSchema>;
+/** InviteStatus.x names each value once; `InviteStatus` is also the type. */
+export const InviteStatus = inviteStatusSchema.enum;
 
 export const createInviteRequestSchema = z.object({
   roleId: z.string().uuid(),
@@ -153,10 +169,12 @@ export const organizationInviteSchema = z.object({
   organizationId: z.string().uuid(),
   roleName: roleNameSchema,
   status: inviteStatusSchema,
+  // Derived, never stored: a "pending" invite past expiresAt.
+  expired: z.boolean(),
   expiresAt: z.string().datetime(),
   createdAt: z.string().datetime(),
 });
-export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
+export type OrganizationInvite =z.infer<typeof organizationInviteSchema>;
 
 // The raw token is returned exactly once, at creation — never stored in
 // plaintext, never retrievable again (same discipline as a session token).

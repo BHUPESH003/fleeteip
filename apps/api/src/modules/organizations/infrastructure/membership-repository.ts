@@ -1,3 +1,4 @@
+import { MembershipStatus } from "@fleetip/contracts/organization";
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import type { MembershipRepositoryPort } from "../domain/ports.js";
@@ -62,7 +63,7 @@ export class MembershipRepository implements MembershipRepositoryPort {
       .select(["memberships.id as id", "memberships.status as status", "roles.id as role_id"])
       .where("memberships.user_id", "=", userId)
       .where("memberships.organization_id", "=", organizationId)
-      .where("memberships.status", "=", "active")
+      .where("memberships.status", "=", MembershipStatus.active)
       .executeTakeFirst();
   }
 

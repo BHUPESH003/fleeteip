@@ -1,408 +1,685 @@
 "use client";
 
+import type { Product } from "@fleetip/contracts/catalogue";
 import type { Machine } from "@fleetip/contracts/equipment";
-import type { Organization } from "@fleetip/contracts/organization";
-import type { CommercialQuotation, CommercialQuotationStatus, QuotationResponse } from "@fleetip/contracts/quotation";
-import type { Requirement } from "@fleetip/contracts/rfq";
+import { OrganizationTypeCode, type Organization } from "@fleetip/contracts/organization";
+import { CommercialQuotationStatus, type CommercialQuotation, type QuotationResponse } from "@fleetip/contracts/quotation";
+import { RequirementStatus, type Requirement } from "@fleetip/contracts/rfq";
 import {
-  AllocationBar,
-  type AllocationTone,
   AttentionStrip,
   Badge,
   Button,
+  CellStack,
   EmptyState,
   ErrorState,
-  Input,
-  LoadingState,
+  PageBody,
   PageHeader,
-  StatusBadge,
+  Pagination,
+  Select,
   Table,
+  TableFooter,
+  TableSkeleton,
+  TableToolbar,
+  TabPanel,
+  Tabs,
   Tbody,
   Td,
   Th,
   Thead,
   Tr,
+  UILink,
+  cx,
 } from "@fleetip/ui";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ForbiddenPage } from "../../../components/PageStates";
 import { apiClient } from "../../../lib/api-client";
-import { daysUntil, formatCurrencyINR, formatDate } from "../../../lib/format";
+import { useConnection } from "../../../lib/connection";
+import { describeError, OFFLINE_HINT } from "../../../lib/errors";
+import { formatCompactRange, formatDate, formatMoney, formatRate, formatRateUnit, plural, todayIsoDate } from "../../../lib/format";
 import { useSession } from "../../../lib/session-context";
+import { Status, statusLabel, statusOptions } from "../../../lib/status";
+import { optional, useLoad } from "../../../lib/use-load";
+import { auctionRef } from "../auctions/shared";
+import { productName } from "../machines/shared";
+import { ListPageSkeleton, SearchField, compareNumber, directed, pageSlice, PAGE_SIZE, useListState } from "../requirements/list-kit";
+import { equipmentLine, loadSubcategoryIndex, requirementRef, type SubcategoryEntry } from "../requirements/shared";
 import { CreateQuotationDialog } from "./CreateQuotationDialog";
-import { acceptanceLabel, QUOTATION_STATUS_MAP } from "./shared";
+import { acceptanceLabel, isNegotiable, quotationCustomer, quotationValidity } from "./shared";
 
-type Filter = "all" | CommercialQuotationStatus | "requested";
+type Viewer = "renter" | "rental_company";
 
-const STATUS_SEGMENTS: { key: CommercialQuotationStatus; label: string; tone: AllocationTone }[] = [
-  { key: "draft", label: "Draft", tone: "neutral" },
-  { key: "sent", label: "Sent", tone: "on-rent" },
-  { key: "negotiating", label: "Negotiating", tone: "attention" },
-  { key: "awarded", label: "Awarded", tone: "available" },
-  { key: "rejected", label: "Rejected", tone: "out-of-service" },
-  { key: "expired", label: "Expired", tone: "out-of-service" },
-  { key: "withdrawn", label: "Withdrawn", tone: "out-of-service" },
-];
+interface RequestedRow {
+  response: QuotationResponse;
+  /** null when the requirement couldn't be read (it may have closed). */
+  requirement: Requirement | null;
+  equipment: string | null;
+}
 
-interface Loaded {
+interface ListData {
   quotations: CommercialQuotation[];
-  machinesById: Map<string, Machine>;
-  renterNames: Map<string, string>;
-  rentalCompanyNames: Map<string, string>;
-  // Rental-company-only: every "interested" response of ours the Renter has
-  // explicitly asked us to formalize (via "Request quotation"), plus the
-  // Requirement each one is against — so "Requested" doesn't rely on still
-  // having the notification. Empty for a Renter.
-  requestedResponses: QuotationResponse[];
-  requirementsById: Map<string, Requirement>;
+  /** Rental Company with equipment.manage; null otherwise (the Renter gets machineAssetCode/productName on each quotation). */
+  machines: Map<string, Machine> | null;
+  products: Map<string, Product>;
+  renterNames: Map<string, string> | null;
+  companyNames: Map<string, string> | null;
+  /**
+   * Rental Company only: responses the Renter explicitly asked to formalize
+   * ("Request quotation") that no quotation carries yet. null without
+   * rfq.respond.
+   */
+  requested: RequestedRow[] | null;
+}
+
+interface Access {
+  machines: boolean;
+  requested: boolean;
+}
+
+async function loadList(organizationId: string, viewer: Viewer, access: Access): Promise<ListData> {
+  const quotations = (await apiClient.listQuotations(organizationId)) as CommercialQuotation[];
+  if (viewer === "renter") {
+    // listQuotations already hides drafts from the Renter (server-side).
+    const companies = await optional(
+      true,
+      () => apiClient.listRentalCompanyOrganizations(organizationId) as Promise<Organization[]>,
+      null as Organization[] | null,
+    );
+    return {
+      quotations,
+      machines: null,
+      products: new Map(),
+      renterNames: null,
+      companyNames: companies ? new Map(companies.map((o) => [o.id, o.name])) : null,
+      requested: null,
+    };
+  }
+  // Machine names are enrichment, not the point of this page (quotation.manage
+  // is) — a role without equipment.manage still gets a working list.
+  const [machines, products, renters, requestedResponses] = await Promise.all([
+    optional(access.machines, () => apiClient.listMachines(organizationId) as Promise<Machine[]>, null as Machine[] | null),
+    optional(access.machines, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
+    optional(true, () => apiClient.listRenterOrganizations(organizationId) as Promise<Organization[]>, null as Organization[] | null),
+    optional(access.requested, () => apiClient.listRequestedQuotations(organizationId) as Promise<QuotationResponse[]>, null as QuotationResponse[] | null),
+  ]);
+  let requested: RequestedRow[] | null = null;
+  if (requestedResponses) {
+    // A request drops off once any quotation (even a draft) carries its response id.
+    const fulfilled = new Set(quotations.map((q) => q.quotationResponseId).filter((id): id is string => Boolean(id)));
+    const pending = requestedResponses.filter((r) => !fulfilled.has(r.id));
+    const [index, requirements] = await Promise.all([
+      pending.length ? loadSubcategoryIndex() : Promise.resolve(new Map<string, SubcategoryEntry>()),
+      Promise.all(
+        pending.map((r) =>
+          optional(true, () => apiClient.getRequirementForDiscovery(organizationId, r.requirementId) as Promise<Requirement>, null as Requirement | null),
+        ),
+      ),
+    ]);
+    requested = pending.map((response, i) => {
+      const requirement = requirements[i] ?? null;
+      return {
+        response,
+        requirement,
+        equipment: requirement ? equipmentLine(requirement, index.get(requirement.productSubcategoryId)?.subcategory.name) : null,
+      };
+    });
+  }
+  return {
+    quotations,
+    machines: machines ? new Map(machines.map((m) => [m.id, m])) : null,
+    products: new Map(products.map((p) => [p.id, p])),
+    renterNames: renters ? new Map(renters.map((o) => [o.id, o.name])) : null,
+    companyNames: null,
+    requested,
+  };
 }
 
 export default function QuotationsPage() {
   const { currentMembership, hasPermission } = useSession();
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const organizationId = currentMembership?.organizationId;
   const organizationType = currentMembership?.organization.organizationTypeCode;
-  // Machine names are enrichment, not the point of this page (quotation.manage
-  // is) — a role without equipment.manage still gets a fully working page,
-  // just without asset codes resolved (already handled: `machine?.assetCode
-  // ?? "—"`). Gating the fetch itself also skips a request that would 403.
-  const canListMachines = hasPermission("equipment.manage");
-
-  const requirementIdParam = searchParams.get("requirementId");
-  const sourceAuctionIdParam = searchParams.get("sourceAuctionId");
-  const quotationIdParam = searchParams.get("quotationId");
-
-  const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
-  const [search, setSearch] = useState("");
-  const [createOpen, setCreateOpen] = useState(Boolean(requirementIdParam || sourceAuctionIdParam));
-  // Set when opening the dialog from a "Requested" row rather than the URL —
-  // requirementIdParam still wins when present (an actual notification/
-  // dashboard link), this only fills in for the in-page click path.
-  const [manualRequirementId, setManualRequirementId] = useState<string | null>(null);
-  const activeRequirementId = requirementIdParam ?? manualRequirementId;
-
-  // A notification/dashboard link (e.g. "Request quotation") arrives here via
-  // router.push — a same-route, query-only navigation that the App Router
-  // doesn't remount this page for, so the useState initializer above never
-  // re-runs and createOpen stays stuck at whatever it was on first mount.
-  // Mirrors the quotationIdParam redirect effect below, which already gets
-  // this right.
-  useEffect(() => {
-    if (requirementIdParam || sourceAuctionIdParam) setCreateOpen(true);
-  }, [requirementIdParam, sourceAuctionIdParam]);
-
-  async function load(orgId: string, orgType: "renter" | "rental_company") {
-    try {
-      const quotations = (await apiClient.listQuotations(orgId)) as CommercialQuotation[];
-      if (orgType === "rental_company") {
-        const [machines, renterOrgs, requestedResponses] = await Promise.all([
-          canListMachines ? (apiClient.listMachines(orgId) as Promise<Machine[]>) : Promise.resolve([]),
-          apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>,
-          apiClient.listRequestedQuotations(orgId) as Promise<QuotationResponse[]>,
-        ]);
-        // Requirement details (project, capacity, quantity) for whichever
-        // ones are still pending — getRequirementForDiscovery is the same
-        // read the Open Market response dialog already uses.
-        const fulfilledResponseIds = new Set(
-          quotations.filter((q) => q.quotationResponseId).map((q) => q.quotationResponseId as string),
-        );
-        const pending = requestedResponses.filter((r) => !fulfilledResponseIds.has(r.id));
-        const requirements = await Promise.all(
-          pending.map((r) => apiClient.getRequirementForDiscovery(orgId, r.requirementId) as Promise<Requirement>),
-        );
-        setData({
-          quotations,
-          machinesById: new Map(machines.map((m) => [m.id, m])),
-          renterNames: new Map(renterOrgs.map((o) => [o.id, o.name])),
-          rentalCompanyNames: new Map(),
-          requestedResponses: pending,
-          requirementsById: new Map(requirements.map((r) => [r.id, r])),
-        });
-      } else {
-        const rentalCompanyOrgs = (await apiClient.listRentalCompanyOrganizations(
-          orgId,
-        )) as Organization[];
-        setData({
-          quotations,
-          machinesById: new Map(),
-          renterNames: new Map(),
-          rentalCompanyNames: new Map(rentalCompanyOrgs.map((o) => [o.id, o.name])),
-          requestedResponses: [],
-          requirementsById: new Map(),
-        });
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load quotations");
-    }
+  if (!organizationId || !organizationType) return <ListPageSkeleton label="Loading quotations" columns={7} />;
+  const canView = organizationType === OrganizationTypeCode.rental_company ? hasPermission("quotation.manage") : hasPermission("quotation.respond");
+  if (!canView) {
+    return (
+      <ForbiddenPage
+        what="quotations"
+        permissionHint={
+          organizationType === OrganizationTypeCode.rental_company
+            ? "Creating and sending quotations needs the Quotations permission."
+            : "Viewing and answering quotations needs the Quotations permission."
+        }
+      />
+    );
   }
+  return <QuotationsList key={organizationId} organizationId={organizationId} viewer={organizationType} />;
+}
 
-  useEffect(() => {
-    if (organizationId && organizationType) void load(organizationId, organizationType);
-  }, [organizationId, organizationType, canListMachines]);
+interface CreateRequest {
+  requirementId: string | null;
+  sourceAuctionId: string | null;
+  machineIds: string[];
+}
 
+function QuotationsList({ organizationId, viewer }: { organizationId: string; viewer: Viewer }) {
+  const { hasPermission } = useSession();
+  const { online } = useConnection();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isCompany = viewer === "rental_company";
+  const access: Access = { machines: hasPermission("equipment.manage"), requested: hasPermission("rfq.respond") };
+  const list = useListState("quotations", { sort: "created", dir: "desc" });
+  const { get, set, search, activeQuery, sortKey, dir, page, setPage, toggleSort, sortDirection } = list;
+
+  const { data, error, loading, reload } = useLoad(() => loadList(organizationId, viewer, access), [organizationId, viewer, access.machines, access.requested]);
+  const [createRequest, setCreateRequest] = useState<CreateRequest | null>(null);
+
+  // ?quotationId= (older notification links) → the detail page.
+  const quotationIdParam = searchParams.get("quotationId");
   useEffect(() => {
     if (quotationIdParam) router.replace(`/quotations/${quotationIdParam}`);
   }, [quotationIdParam, router]);
 
+  // Deep links that open the create form: ?requirementId= ("Quotation
+  // requested" notification, Open Market), ?sourceAuctionId= (auction win),
+  // and ?create=1 with ?machineId= (Machine detail → "Quote this machine")
+  // or ?machineIds=a,b,c (machines list → bulk "Add to quotation").
+  // A notification arrives via router.push — a query-only navigation the
+  // App Router doesn't remount this page for — so this is an effect keyed
+  // on the params, never a useState initializer (docs/decisions.md). The
+  // params are stripped once read, so the same link opens the form again.
+  const requirementIdParam = searchParams.get("requirementId");
+  const sourceAuctionIdParam = searchParams.get("sourceAuctionId");
+  const createParam = searchParams.get("create");
+  const machineIdParam = searchParams.get("machineId");
+  const machineIdsParam = searchParams.get("machineIds");
+  useEffect(() => {
+    if (!isCompany) return; // Only a Rental Company creates quotations (quotation.manage).
+    if (!requirementIdParam && !sourceAuctionIdParam && createParam !== "1") return;
+    const machineIds = [...new Set([machineIdParam, ...(machineIdsParam ?? "").split(",")].map((id) => (id ?? "").trim()).filter(Boolean))];
+    setCreateRequest({ requirementId: requirementIdParam, sourceAuctionId: sourceAuctionIdParam, machineIds });
+    const next = new URLSearchParams(searchParams.toString());
+    for (const key of ["requirementId", "sourceAuctionId", "create", "machineId", "machineIds"]) next.delete(key);
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [requirementIdParam, sourceAuctionIdParam, createParam, machineIdParam, machineIdsParam]);
+
+  const today = todayIsoDate();
+  const tab = isCompany && get("tab") === "requested" ? "requested" : "quotations";
+  const status = get("status");
+  const acceptance = get("acceptance");
+  const quotations = useMemo(() => data?.quotations ?? [], [data]);
+
+  const acceptanceOptions = isCompany
+    ? [
+        { value: "accepted", label: "Accepted by customer" },
+        { value: "waiting", label: "Waiting for acceptance" },
+        { value: "external", label: "Customer not on FleetIP" },
+      ]
+    : [
+        { value: "accepted", label: "Accepted by you" },
+        { value: "waiting", label: "Not accepted yet" },
+      ];
+  // The Renter never sees drafts, so it isn't offered as a filter.
+  const statusChoices = statusOptions("quotation").filter((o) => isCompany || o.value !== CommercialQuotationStatus.draft);
+
+  const counterparty = (q: CommercialQuotation) =>
+    isCompany
+      ? quotationCustomer(q, data?.renterNames ?? null)
+      : {
+          name: data?.companyNames?.get(q.rentalCompanyOrganizationId) ?? "Rental company",
+          note: data?.companyNames ? "" : "Name needs the Quotations permission",
+        };
+  const machineInfo = (q: CommercialQuotation): { code: string | null; name: string | null } => {
+    if (!isCompany) return { code: q.machineAssetCode, name: q.productName };
+    const machine = data?.machines?.get(q.machineId);
+    return { code: machine?.assetCode ?? null, name: machine ? productName(data?.products.get(machine.productId)) : null };
+  };
+
   const filtered = useMemo(() => {
-    if (!data) return [];
-    const q = search.trim().toLowerCase();
-    return data.quotations.filter((quotation) => {
-      if (filter !== "all" && quotation.status !== filter) return false;
-      if (!q) return true;
-      const machine = data.machinesById.get(quotation.machineId);
-      const counterparty =
-        organizationType === "renter"
-          ? data.rentalCompanyNames.get(quotation.rentalCompanyOrganizationId)
-          : quotation.clientSnapshot?.name ??
-            (quotation.renterOrganizationId && data.renterNames.get(quotation.renterOrganizationId));
-      const haystack = [quotation.referenceNumber, counterparty, machine?.assetCode]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
+    const rows = quotations.filter((q) => {
+      if (status && q.status !== status) return false;
+      if (acceptance === "accepted" && !q.renterAcceptedAt) return false;
+      if (acceptance === "waiting" && !(isNegotiable(q.status) && q.renterOrganizationId && !q.renterAcceptedAt)) return false;
+      if (acceptance === "external" && q.renterOrganizationId) return false;
+      if (activeQuery) {
+        const m = machineInfo(q);
+        const haystack = [
+          q.referenceNumber,
+          counterparty(q).name,
+          m.code,
+          m.name,
+          q.requirementId ? requirementRef(q.requirementId) : null,
+          q.sourceAuctionId ? auctionRef(q.sourceAuctionId) : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(activeQuery)) return false;
+      }
+      return true;
     });
-  }, [data, filter, search, organizationType]);
+    const compare =
+      sortKey === "start"
+        ? (a: CommercialQuotation, b: CommercialQuotation) => a.startDate.localeCompare(b.startDate)
+        : sortKey === "validity"
+          ? (a: CommercialQuotation, b: CommercialQuotation) => a.validityDate.localeCompare(b.validityDate)
+          : sortKey === "rate"
+            ? (a: CommercialQuotation, b: CommercialQuotation) => compareNumber(a.rate, b.rate)
+            : (a: CommercialQuotation, b: CommercialQuotation) => a.createdAt.localeCompare(b.createdAt);
+    return [...rows].sort(directed(compare, dir));
+    // counterparty/machineInfo read `data`, which is in the deps
+  }, [quotations, status, acceptance, activeQuery, sortKey, dir, data]);
 
-  if (!organizationId || !organizationType) return <LoadingState label="Loading…" />;
-  if (error) return <ErrorState message={error} />;
-  if (!data) return <LoadingState label="Loading quotations…" />;
+  const pageView = pageSlice(filtered, page);
+  const filtersOn = Boolean(status || acceptance || activeQuery);
+  const requested = data?.requested ?? null;
 
-  const openValue = data.quotations
-    .filter((q) => q.status === "sent" || q.status === "negotiating")
-    .reduce((sum, q) => sum + q.rate, 0);
-  const awaitingAcceptanceCount = data.quotations.filter(
-    (q) => q.status === "sent" && !q.renterAcceptedAt && q.renterOrganizationId,
-  ).length;
-  const expiringSoonCount = data.quotations.filter(
-    (q) => (q.status === "sent" || q.status === "negotiating") && daysUntil(q.validityDate) <= 7,
-  ).length;
+  const answerable = quotations.filter((q) => isNegotiable(q.status));
+  const readyToAward = answerable.filter((q) => q.renterAcceptedAt).length;
+  const waitingOnRenter = answerable.filter((q) => q.renterOrganizationId && !q.renterAcceptedAt).length;
+  // For the Renter, a lapse only matters until they accept — then awarding is the rental company's move.
+  const lapsing = answerable.filter((q) => {
+    const info = quotationValidity(q, today);
+    return info !== null && info.days >= 0 && info.days <= 3 && (isCompany || !q.renterAcceptedAt);
+  }).length;
+
+  function clearFilters() {
+    search.setValue("");
+    set({ status: null, acceptance: null, q: null });
+  }
+
+  const filterSummary = [
+    activeQuery && `“${get("q")}”`,
+    status && statusLabel("quotation", status),
+    acceptance && acceptanceOptions.find((o) => o.value === acceptance)?.label,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col">
       <PageHeader
         title="Quotations"
-        description={`${formatCurrencyINR(openValue)} of open commercial value`}
+        description={
+          isCompany
+            ? "Formal terms you've drafted or sent. Customers accept, counter or reject; you award once they accept."
+            : "Formal terms rental companies have sent you. Accept, counter or reject each one."
+        }
         actions={
-          organizationType === "rental_company" ? (
-            <Button onClick={() => setCreateOpen(true)}>New quotation</Button>
+          isCompany ? (
+            <Button
+              icon="plus"
+              onClick={() => setCreateRequest({ requirementId: null, sourceAuctionId: null, machineIds: [] })}
+              disabled={!online}
+              title={online ? undefined : OFFLINE_HINT}
+            >
+              New quotation
+            </Button>
           ) : undefined
         }
       />
+      <PageBody>
+        <AttentionStrip
+          items={
+            isCompany
+              ? [
+                  {
+                    key: "requested",
+                    count: requested?.length ?? 0,
+                    text: `${(requested?.length ?? 0) === 1 ? "customer has" : "customers have"} asked you for a quotation`,
+                    onClick: () => set({ tab: "requested" }),
+                  },
+                  {
+                    key: "ready",
+                    count: readyToAward,
+                    text: `accepted by the customer and ready to award`,
+                    onClick: () => set({ tab: null, acceptance: "accepted", status: null }),
+                  },
+                  {
+                    key: "lapsing",
+                    count: lapsing,
+                    text: `${lapsing === 1 ? "quotation lapses" : "quotations lapse"} within 3 days if not awarded`,
+                    onClick: () => set({ tab: null, status: null, sort: "validity", dir: "asc" }),
+                  },
+                ]
+              : [
+                  {
+                    key: "waiting",
+                    count: waitingOnRenter,
+                    text: `${waitingOnRenter === 1 ? "quotation is" : "quotations are"} waiting for your answer`,
+                    onClick: () => set({ acceptance: "waiting", status: null }),
+                  },
+                  {
+                    key: "lapsing",
+                    count: lapsing,
+                    text: `${lapsing === 1 ? "quotation lapses" : "quotations lapse"} within 3 days unless you accept`,
+                    onClick: () => set({ status: null, sort: "validity", dir: "asc" }),
+                  },
+                ]
+          }
+        />
 
-      <AllocationBar
-        total={{ count: data.quotations.length, label: "All quotations" }}
-        segments={STATUS_SEGMENTS.map((s) => ({
-          key: s.key,
-          count: data.quotations.filter((q) => q.status === s.key).length,
-          label: s.label,
-          tone: s.tone,
-        }))}
-        active={filter === "all" || filter === "requested" ? null : filter}
-        onSelect={(key) => setFilter((key ?? "all") as Filter)}
-      />
-
-      <AttentionStrip
-        items={[
-          {
-            key: "requested",
-            count: data.requestedResponses.length,
-            text: `RFQ${data.requestedResponses.length === 1 ? "" : "s"} awaiting your quotation`,
-            onClick: () => setFilter("requested"),
-          },
-          {
-            key: "awaiting-acceptance",
-            count: awaitingAcceptanceCount,
-            text: `sent quotation${awaitingAcceptanceCount === 1 ? "" : "s"} awaiting renter acceptance`,
-            onClick: () => setFilter("sent"),
-          },
-          {
-            key: "expiring-soon",
-            count: expiringSoonCount,
-            text: `quotation${expiringSoonCount === 1 ? "" : "s"} expiring within 7 days`,
-          },
-        ]}
-      />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Input placeholder="Reference, renter, machine…" className="w-64" value={search} onChange={(e) => setSearch(e.target.value)} />
-      </div>
-
-      {filter === "requested" ? (
-        data.requestedResponses.length === 0 ? (
-          <EmptyState
-            title="Nothing waiting on you"
-            description="Requirements the Renter has explicitly asked for a formal quotation on show up here."
-          />
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Requirement</Th>
-                <Th>Your indicative rate</Th>
-                <Th>Requested</Th>
-                <Th />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {data.requestedResponses.map((response) => {
-                const requirement = data.requirementsById.get(response.requirementId);
-                return (
-                  <Tr key={response.id}>
-                    <Td>
-                      <div className="flex flex-col">
-                        <Link
-                          href={`/requirements/${response.requirementId}`}
-                          className="font-mono text-xs text-accent-text"
-                        >
-                          RFQ-{response.requirementId.slice(0, 8).toUpperCase()}
-                        </Link>
-                        <span className="text-xs text-meta">
-                          {requirement
-                            ? [
-                                requirement.capacity
-                                  ? `${requirement.capacity}${requirement.capacityUnit ?? ""}`
-                                  : null,
-                                requirement.projectName,
-                                `qty ${requirement.quantity}`,
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")
-                            : "—"}
-                        </span>
-                      </div>
-                    </Td>
-                    <Td className="font-mono">
-                      {response.indicativeRate ? `${response.indicativeRate} / ${response.indicativeRateUnit}` : "—"}
-                    </Td>
-                    <Td className="text-meta">
-                      {response.quotationRequestedAt ? formatDate(response.quotationRequestedAt) : "—"}
-                    </Td>
-                    <Td>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setManualRequirementId(response.requirementId);
-                          setCreateOpen(true);
-                        }}
-                        className="text-xs font-medium text-accent-text"
-                      >
-                        Create quotation
-                      </button>
-                    </Td>
-                  </Tr>
-                );
-              })}
-            </Tbody>
-          </Table>
-        )
-      ) : filtered.length === 0 ? (
-        <EmptyState title="No quotations match these filters" />
-      ) : (
-        <Table>
-          <Thead>
-            <Tr>
-              <Th>Quotation</Th>
-              <Th>{organizationType === "rental_company" ? "Renter / client" : "From"}</Th>
-              {organizationType === "rental_company" && <Th>Machine</Th>}
-              <Th>Period</Th>
-              <Th>Rate</Th>
-              <Th>Status</Th>
-              <Th>Acceptance</Th>
-              <Th />
-            </Tr>
-          </Thead>
-          <Tbody>
-            {filtered.map((quotation) => {
-              const machine = data.machinesById.get(quotation.machineId);
-              const counterparty =
-                organizationType === "renter"
-                  ? data.rentalCompanyNames.get(quotation.rentalCompanyOrganizationId) ?? "Rental company"
-                  : quotation.clientSnapshot?.name ??
-                    (quotation.renterOrganizationId && data.renterNames.get(quotation.renterOrganizationId)) ??
-                    "Renter";
-              const acceptance = acceptanceLabel(quotation);
-              const source = quotation.sourceAuctionId ? (
-                <span className="text-xs text-meta">
-                  from AU-{quotation.sourceAuctionId.slice(0, 8).toUpperCase()}
-                </span>
-              ) : quotation.requirementId ? (
-                <Link
-                  href={`/requirements/${quotation.requirementId}`}
-                  className="text-xs text-accent-text"
-                >
-                  from RFQ-{quotation.requirementId.slice(0, 8).toUpperCase()}
-                </Link>
-              ) : (
-                <span className="text-xs text-meta">direct</span>
-              );
-              return (
-                <Tr key={quotation.id}>
-                  <Td>
-                    <div className="flex flex-col">
-                      <span className="font-mono text-xs text-ink">{quotation.referenceNumber}</span>
-                      {source}
-                    </div>
-                  </Td>
-                  <Td>
-                    <div className="flex flex-col">
-                      <span className="text-xs text-ink">{counterparty}</span>
-                      <span className="text-xs text-meta">
-                        {organizationType === "rental_company"
-                          ? quotation.renterOrganizationId
-                            ? "Renter organization"
-                            : "External client"
-                          : ""}
-                      </span>
-                    </div>
-                  </Td>
-                  {organizationType === "rental_company" && (
-                    <Td>
-                      <div className="flex flex-col">
-                        <span className="font-mono text-xs">{machine?.assetCode ?? "—"}</span>
-                      </div>
-                    </Td>
+        <section aria-label="Quotations" className="min-w-0 overflow-hidden rounded-panel border border-border-strong bg-surface">
+          {isCompany && (
+            <Tabs
+              variant="card"
+              label="Quotation views"
+              idBase="quotations"
+              active={tab}
+              onChange={(key) => set({ tab: key === "requested" ? "requested" : null })}
+              items={[
+                { key: "quotations", label: "Quotations", count: data ? quotations.length : undefined },
+                {
+                  key: "requested",
+                  label: "Requested by customers",
+                  count: requested ? requested.length : undefined,
+                  disabled: data !== null && requested === null,
+                  title: data !== null && requested === null ? "Needs the Open market permission (rfq.respond)." : undefined,
+                },
+              ]}
+            />
+          )}
+          <MaybeTabPanel enabled={isCompany} tabKey={tab}>
+            {tab === "requested" ? (
+              <RequestedTable
+                rows={requested}
+                loading={loading}
+                online={online}
+                onCreate={(requirementId) => setCreateRequest({ requirementId, sourceAuctionId: null, machineIds: [] })}
+              />
+            ) : (
+              <>
+                <TableToolbar>
+                  <SearchField search={search} label="Search quotations" placeholder={isCompany ? "Reference, customer, machine or requirement" : "Reference, company or machine"} />
+                  <Select
+                    size="sm"
+                    aria-label="Status"
+                    className="w-[160px] max-[760px]:w-full"
+                    placeholder="Any status"
+                    options={statusChoices}
+                    value={status}
+                    onChange={(event) => set({ status: event.target.value || null })}
+                  />
+                  <Select
+                    size="sm"
+                    aria-label="Acceptance"
+                    className="w-[210px] max-[760px]:w-full"
+                    placeholder="Any acceptance"
+                    options={acceptanceOptions}
+                    value={acceptance}
+                    onChange={(event) => set({ acceptance: event.target.value || null })}
+                  />
+                  {filtersOn && (
+                    <Button variant="tertiary" size="sm" onClick={clearFilters}>
+                      Clear filters
+                    </Button>
                   )}
-                  <Td className="font-mono">
-                    {formatDate(quotation.startDate)} → {quotation.endDate ? formatDate(quotation.endDate) : "open"}
-                  </Td>
-                  <Td className="font-mono">
-                    {quotation.rate}/{quotation.rateUnit}
-                  </Td>
-                  <Td>
-                    <StatusBadge status={quotation.status} map={QUOTATION_STATUS_MAP} />
-                  </Td>
-                  <Td>
-                    <Badge tone={acceptance.tone}>{acceptance.text}</Badge>
-                  </Td>
-                  <Td>
-                    <Link href={`/quotations/${quotation.id}`} className="text-xs font-medium text-accent-text">
-                      Open
-                    </Link>
-                  </Td>
-                </Tr>
-              );
-            })}
-          </Tbody>
-        </Table>
-      )}
+                </TableToolbar>
 
-      {organizationType === "rental_company" && (
+                {error ? (
+                  <div className="p-4">
+                    <ErrorState
+                      title="Quotations didn't load"
+                      message={describeError(error).body}
+                      action={
+                        <Button variant="secondary" size="sm" icon="refresh" onClick={() => void reload()}>
+                          Try again
+                        </Button>
+                      }
+                    />
+                  </div>
+                ) : !loading && quotations.length === 0 ? (
+                  <EmptyState
+                    variant="page"
+                    icon="quotation"
+                    title="No quotations yet"
+                    description={
+                      isCompany
+                        ? "Quote a machine for a customer directly, or answer a requirement from the Open Market. Each quotation starts as a draft only you can see."
+                        : "Quotations arrive when a rental company sends one — usually after you ask an interested company from one of your requirements."
+                    }
+                    action={
+                      isCompany ? (
+                        <Button variant="secondary" icon="plus" onClick={() => setCreateRequest({ requirementId: null, sourceAuctionId: null, machineIds: [] })} disabled={!online}>
+                          New quotation
+                        </Button>
+                      ) : (
+                        <UILink href="/requirements" className="text-sm font-medium text-accent-text hover:underline">
+                          Your requirements
+                        </UILink>
+                      )
+                    }
+                  />
+                ) : !loading && filtered.length === 0 ? (
+                  <EmptyState
+                    title="No quotations match these filters"
+                    description={filterSummary}
+                    action={
+                      <Button variant="secondary" size="sm" onClick={clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <Table bare minWidth={1040} caption="Quotations">
+                    <Thead>
+                      <Tr>
+                        <Th className="w-[150px]" onSort={() => toggleSort("created")} sortDirection={sortDirection("created")}>
+                          Quotation
+                        </Th>
+                        <Th>{isCompany ? "Customer" : "Rental company"}</Th>
+                        <Th>Machine</Th>
+                        <Th className="w-[190px]" onSort={() => toggleSort("start")} sortDirection={sortDirection("start")}>
+                          Dates
+                        </Th>
+                        <Th align="right" className="w-[130px]" onSort={() => toggleSort("rate")} sortDirection={sortDirection("rate")}>
+                          Rate
+                        </Th>
+                        <Th className="w-[130px]" onSort={() => toggleSort("validity")} sortDirection={sortDirection("validity")}>
+                          Valid until
+                        </Th>
+                        <Th className="w-[180px]">Status</Th>
+                      </Tr>
+                    </Thead>
+                    {loading ? (
+                      <TableSkeleton columns={7} rows={8} label="Loading quotations" />
+                    ) : (
+                      <Tbody>
+                        {pageView.rows.map((q) => {
+                          const party = counterparty(q);
+                          const machine = machineInfo(q);
+                          const validity = quotationValidity(q, today);
+                          const accepted = acceptanceLabel(q, viewer);
+                          const source = q.sourceAuctionId
+                            ? `from ${auctionRef(q.sourceAuctionId)}`
+                            : q.requirementId
+                              ? `for ${requirementRef(q.requirementId)}`
+                              : "Direct";
+                          return (
+                            <Tr key={q.id}>
+                              <Td>
+                                <div className="flex flex-col gap-0.5">
+                                  <UILink
+                                    href={`/quotations/${q.id}`}
+                                    className="whitespace-nowrap font-mono text-xs font-medium text-accent-text no-underline hover:text-accent-text-hover hover:underline"
+                                  >
+                                    {q.referenceNumber}
+                                  </UILink>
+                                  <span className="whitespace-nowrap font-mono text-[11px] text-meta-light">{source}</span>
+                                </div>
+                              </Td>
+                              <Td>
+                                <CellStack title={party.name} sub={party.note || undefined} />
+                              </Td>
+                              <Td>
+                                {machine.code || machine.name ? (
+                                  <CellStack mono={Boolean(machine.code)} title={machine.code ?? machine.name ?? ""} sub={machine.code ? (machine.name ?? undefined) : undefined} />
+                                ) : (
+                                  <span className="text-xs text-meta-light" title="Machine names need the Equipment permission">
+                                    Not shown for your role
+                                  </span>
+                                )}
+                              </Td>
+                              <Td className="whitespace-nowrap font-mono text-xs">{formatCompactRange(q.startDate, q.endDate)}</Td>
+                              <Td align="right">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="font-mono text-xs font-semibold text-ink">{formatMoney(q.rate)}</span>
+                                  <span className="text-[11px] text-meta-light">{formatRateUnit(q.rateUnit)}</span>
+                                </div>
+                              </Td>
+                              <Td>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-mono text-xs text-ink-strong">{formatDate(q.validityDate)}</span>
+                                  {validity && <span className={cx("text-[11px] leading-tight", validity.className)}>{validity.label}</span>}
+                                </div>
+                              </Td>
+                              <Td>
+                                <div className="flex flex-col items-start gap-1">
+                                  <Status domain="quotation" value={q.status} size="sm" />
+                                  {accepted && (
+                                    <Badge variant="label" tone={accepted.tone} title={accepted.title}>
+                                      {accepted.text}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </Td>
+                            </Tr>
+                          );
+                        })}
+                      </Tbody>
+                    )}
+                  </Table>
+                )}
+
+                {!error && !loading && filtered.length > 0 && (
+                  <TableFooter>
+                    <span className="text-xs text-meta">
+                      {plural(answerable.length, "quotation")} open for an answer
+                      {isCompany ? " · drafts are visible only to you" : ""}
+                    </span>
+                    <Pagination page={pageView.page} pageCount={pageView.pageCount} onPageChange={setPage} total={pageView.total} pageSize={PAGE_SIZE} noun="quotations" />
+                  </TableFooter>
+                )}
+              </>
+            )}
+          </MaybeTabPanel>
+        </section>
+      </PageBody>
+
+      {isCompany && (
         <CreateQuotationDialog
-          open={createOpen}
-          onClose={() => {
-            setCreateOpen(false);
-            setManualRequirementId(null);
-          }}
+          open={createRequest !== null}
+          onClose={() => setCreateRequest(null)}
           organizationId={organizationId}
-          requirementIdParam={activeRequirementId}
-          sourceAuctionIdParam={sourceAuctionIdParam}
-          onCreated={() => void load(organizationId, organizationType)}
+          requirementId={createRequest?.requirementId ?? null}
+          sourceAuctionId={createRequest?.sourceAuctionId ?? null}
+          initialMachineIds={createRequest?.machineIds ?? []}
+          onCreated={() => void reload()}
         />
       )}
     </div>
+  );
+}
+
+/** Tab panel semantics only when there are tabs (the Rental Company); the Renter's list has none. */
+function MaybeTabPanel({ enabled, tabKey, children }: { enabled: boolean; tabKey: string; children: ReactNode }) {
+  if (!enabled) return <>{children}</>;
+  return (
+    <TabPanel idBase="quotations" tabKey={tabKey}>
+      {children}
+    </TabPanel>
+  );
+}
+
+function RequestedTable({
+  rows,
+  loading,
+  online,
+  onCreate,
+}: {
+  rows: RequestedRow[] | null;
+  loading: boolean;
+  online: boolean;
+  onCreate: (requirementId: string) => void;
+}) {
+  if (!loading && rows === null) {
+    return <EmptyState title="Requests aren't visible to your role" description="Seeing which customers asked for a quotation needs the Open market permission." />;
+  }
+  if (!loading && rows && rows.length === 0) {
+    return (
+      <EmptyState
+        title="Nothing waiting on you"
+        description="When a customer asks you to formalize your reply to one of their requirements, it shows up here until a quotation — even a draft — exists for it."
+      />
+    );
+  }
+  return (
+    <Table bare minWidth={900} caption="Requirements where the customer asked you for a quotation">
+      <Thead>
+        <Tr>
+          <Th className="w-[130px]">Requirement</Th>
+          <Th>Equipment and project</Th>
+          <Th align="right" className="w-[160px]">
+            Your indicative rate
+          </Th>
+          <Th className="w-[120px]">Asked on</Th>
+          <Th className="w-[170px]">
+            <span className="sr-only">Actions</span>
+          </Th>
+        </Tr>
+      </Thead>
+      {loading || !rows ? (
+        <TableSkeleton columns={5} rows={8} label="Loading requests" />
+      ) : (
+        <Tbody>
+          {rows.map(({ response, requirement, equipment }) => {
+            const quotable = requirement?.status === RequirementStatus.open;
+            return (
+              <Tr key={response.id}>
+                <Td className="whitespace-nowrap">
+                  <UILink
+                    href={`/requirements/${response.requirementId}`}
+                    className="font-mono text-xs font-medium text-accent-text no-underline hover:text-accent-text-hover hover:underline"
+                  >
+                    {requirementRef(response.requirementId)}
+                  </UILink>
+                </Td>
+                <Td>
+                  <CellStack
+                    title={equipment ?? "Requirement details didn't load"}
+                    sub={requirement ? [requirement.projectName, `Qty ${requirement.quantity}`].filter(Boolean).join(" · ") : undefined}
+                  />
+                </Td>
+                <Td align="right" className="font-mono text-xs">
+                  {response.indicativeRate != null && response.indicativeRateUnit ? formatRate(response.indicativeRate, response.indicativeRateUnit) : "—"}
+                </Td>
+                <Td className="font-mono text-xs">{formatDate(response.quotationRequestedAt)}</Td>
+                <Td>
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => onCreate(response.requirementId)}
+                      disabled={!online || !quotable}
+                      title={
+                        !online
+                          ? "You're offline."
+                          : !quotable
+                            ? `The requirement is ${requirement ? statusLabel("requirement", requirement.status) : "no longer readable"}, so it can't be quoted.`
+                            : "Opens the form with the requirement's customer, dates and rate unit."
+                      }
+                    >
+                      Create quotation
+                    </Button>
+                  </div>
+                </Td>
+              </Tr>
+            );
+          })}
+        </Tbody>
+      )}
+    </Table>
   );
 }

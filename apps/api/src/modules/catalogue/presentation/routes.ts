@@ -22,8 +22,26 @@ export async function catalogueRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.get("/products", async (request) => {
     const query = parseWithSchema(listProductsQuerySchema, request.query);
-    return container.catalogueService.listProducts(query.subcategoryId);
+    return container.catalogueService.listProducts(
+      query.subcategoryId,
+      query.includeDisabled === "true",
+    );
   });
+
+  fastify.get<{ Params: { categoryId: string } }>(
+    "/product-categories/:categoryId",
+    async (request) => container.catalogueService.getCategory(request.params.categoryId),
+  );
+
+  fastify.get<{ Params: { subcategoryId: string } }>(
+    "/product-subcategories/:subcategoryId",
+    async (request) => container.catalogueService.getSubcategory(request.params.subcategoryId),
+  );
+
+  fastify.get<{ Params: { productId: string } }>(
+    "/products/:productId",
+    async (request) => container.catalogueService.getProduct(request.params.productId),
+  );
 
   // --- Platform administration: create/update the shared catalogue,
   // gated by catalogue.manage. :organizationId identifies the caller's own
@@ -115,4 +133,19 @@ export async function catalogueRoutes(fastify: FastifyInstance): Promise<void> {
       );
     },
   );
+
+  for (const action of ["disable", "enable"] as const) {
+    fastify.post<{ Params: { organizationId: string; productId: string } }>(
+      `/organizations/:organizationId/products/:productId/${action}`,
+      async (request) => {
+        const userId = await getAuthenticatedUserId(request);
+        return container.catalogueService.setProductDisabled(
+          userId,
+          request.params.organizationId,
+          request.params.productId,
+          action === "disable",
+        );
+      },
+    );
+  }
 }

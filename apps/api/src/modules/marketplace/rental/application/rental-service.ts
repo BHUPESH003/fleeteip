@@ -2,10 +2,12 @@ import type {
   CheckMachineAvailabilityQuery,
   CreateRentalRequest,
   Rental,
-  RentalStatus,
   UpdateRentalTermsRequest,
 } from "@fleetip/contracts/rental";
+import { ActualDatesVerificationStatus, RentalStatus } from "@fleetip/contracts/rental";
 import { todayIsoDate } from "@fleetip/contracts/shared";
+import { MachineStatus } from "@fleetip/contracts/equipment";
+import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type { MaintenanceRepositoryPort } from "../../../maintenance/domain/ports.js";
@@ -94,7 +96,7 @@ export class RentalService {
     if (machine.organization_id !== rentalCompanyOrganizationId) {
       throw new NotFoundError("Machine not found in this organization");
     }
-    if (machine.status === "retired") {
+    if (machine.status === MachineStatus.retired) {
       throw new ConflictError("Machine is retired and cannot be rented");
     }
 
@@ -106,7 +108,7 @@ export class RentalService {
       const renterOrganization = await this.organizationRepository.findWithTypeById(
         input.renterOrganizationId,
       );
-      if (!renterOrganization || renterOrganization.organization_type_code !== "renter") {
+      if (!renterOrganization || renterOrganization.organization_type_code !== OrganizationTypeCode.renter) {
         throw new ValidationError("renterOrganizationId must reference a Renter organization");
       }
     }
@@ -133,7 +135,7 @@ export class RentalService {
       renterOrganizationId: input.renterOrganizationId,
       clientSnapshot: input.clientSnapshot,
       machineId: input.machineId,
-      status: "confirmed",
+      status: RentalStatus.confirmed,
       projectName: input.projectName,
       projectLocation: input.projectLocation,
       startDate: input.startDate,
@@ -162,7 +164,7 @@ export class RentalService {
   // page for their own rental hit this).
   async getRental(userId: string, organizationId: string, rentalId: string): Promise<Rental> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "renter") {
+    if (organization?.organization_type_code === OrganizationTypeCode.renter) {
       await this.permissionService.requirePermission(userId, organizationId, "rental.respond");
       const record = await this.rentalRepository.findById(rentalId);
       if (!record || record.renter_organization_id !== organizationId) {
@@ -188,7 +190,7 @@ export class RentalService {
 
   async listRentals(userId: string, organizationId: string): Promise<Rental[]> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
-    if (organization?.organization_type_code === "renter") {
+    if (organization?.organization_type_code === OrganizationTypeCode.renter) {
       // A Renter has no equipment.manage/rental.manage permission on the
       // Rental Company's org, so it can never resolve the machine/company
       // itself the way the Rental Company's own list page does — resolve it
@@ -233,7 +235,7 @@ export class RentalService {
     if (existing.rental_company_organization_id !== rentalCompanyOrganizationId) {
       throw new NotFoundError("Rental not found in this organization");
     }
-    if (existing.status !== "confirmed") {
+    if (existing.status !== RentalStatus.confirmed) {
       throw new ConflictError("Terms can only be edited while the rental is confirmed");
     }
 
@@ -263,9 +265,9 @@ export class RentalService {
     if (!canTransition(existing.status, newStatus)) {
       throw new ConflictError(`Cannot transition rental from ${existing.status} to ${newStatus}`);
     }
-    if (newStatus === "active") {
+    if (newStatus === RentalStatus.active) {
       const machine = await this.machineRepository.findById(existing.machine_id);
-      if (!machine || machine.status === "retired") {
+      if (!machine || machine.status === MachineStatus.retired) {
         throw new ConflictError("Machine is retired and cannot be activated");
       }
       const hasConflictingMaintenance = await this.maintenanceRepository.hasOverlappingMaintenance(
@@ -283,22 +285,22 @@ export class RentalService {
     // overridable, same auto-capture-on-transition precedent as Transport's
     // own "delivered" status.
     const resolvedActualDate =
-      newStatus === "active" || newStatus === "off_rent" ? (actualDate ?? todayIsoDate()) : undefined;
+      newStatus === RentalStatus.active || newStatus === RentalStatus.off_rent ? (actualDate ?? todayIsoDate()) : undefined;
     const record = await this.rentalRepository.updateStatus(rentalId, newStatus, resolvedActualDate);
     if (
       record.renter_organization_id &&
-      (newStatus === "active" || newStatus === "off_rent" || newStatus === "completed")
+      (newStatus === RentalStatus.active || newStatus === RentalStatus.off_rent || newStatus === RentalStatus.completed)
     ) {
       const type =
-        newStatus === "active"
+        newStatus === RentalStatus.active
           ? "rental.active"
-          : newStatus === "off_rent"
+          : newStatus === RentalStatus.off_rent
             ? "rental.off_rent"
             : "rental.completed";
       const title =
-        newStatus === "active"
+        newStatus === RentalStatus.active
           ? "Rental is now active"
-          : newStatus === "off_rent"
+          : newStatus === RentalStatus.off_rent
             ? "Rental is off-rent — please verify the actual date"
             : "Rental completed";
       const rentalCompany = await this.organizationRepository.findById(
@@ -306,9 +308,9 @@ export class RentalService {
       );
       const rentalCompanyName = rentalCompany?.name ?? "The Rental Company";
       const message =
-        newStatus === "active"
+        newStatus === RentalStatus.active
           ? `${rentalCompanyName} marked your rental active${resolvedActualDate ? ` on ${resolvedActualDate}` : ""} — please verify the actual date.`
-          : newStatus === "off_rent"
+          : newStatus === RentalStatus.off_rent
             ? `${rentalCompanyName} marked your rental off-rent${resolvedActualDate ? ` on ${resolvedActualDate}` : ""} — please verify the actual date.`
             : `${rentalCompanyName} marked your rental completed.`;
       await this.notify({
@@ -338,10 +340,10 @@ export class RentalService {
     if (!existing || existing.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Rental not found in this organization");
     }
-    if (existing.actual_dates_verification_status !== "pending") {
+    if (existing.actual_dates_verification_status !== ActualDatesVerificationStatus.pending) {
       throw new ConflictError("No actual dates are pending verification on this rental");
     }
-    const record = await this.rentalRepository.setActualDatesVerification(rentalId, "verified");
+    const record = await this.rentalRepository.setActualDatesVerification(rentalId, ActualDatesVerificationStatus.verified);
     await this.notify({
       recipientOrganizationId: record.rental_company_organization_id,
       type: "rental.actual_dates_verified",
@@ -364,12 +366,12 @@ export class RentalService {
     if (!existing || existing.renter_organization_id !== renterOrganizationId) {
       throw new NotFoundError("Rental not found in this organization");
     }
-    if (existing.actual_dates_verification_status !== "pending") {
+    if (existing.actual_dates_verification_status !== ActualDatesVerificationStatus.pending) {
       throw new ConflictError("No actual dates are pending verification on this rental");
     }
     const record = await this.rentalRepository.setActualDatesVerification(
       rentalId,
-      "disputed",
+      ActualDatesVerificationStatus.disputed,
       reason,
     );
     await this.notify({

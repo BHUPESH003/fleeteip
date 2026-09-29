@@ -1,4 +1,4 @@
-import type { BiddingDirection } from "@fleetip/contracts/auction";
+import { BiddingDirection } from "@fleetip/contracts/auction";
 import type { AuctionBidRecord } from "./ports.js";
 
 /**
@@ -14,7 +14,7 @@ export function pickWinningBid(
 ): AuctionBidRecord | undefined {
   if (bids.length === 0) return undefined;
   return [...bids].sort((a, b) => {
-    const diff = direction === "ascending" ? b.amount - a.amount : a.amount - b.amount;
+    const diff = direction === BiddingDirection.ascending ? b.amount - a.amount : a.amount - b.amount;
     if (diff !== 0) return diff;
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
   })[0];
@@ -31,7 +31,7 @@ export function isImprovingBid(
   currentLeader: AuctionBidRecord | undefined,
   direction: BiddingDirection,
 ): boolean {
-  if (direction === "ascending") {
+  if (direction === BiddingDirection.ascending) {
     if (amount < basePrice) return false;
     if (currentLeader && amount <= currentLeader.amount) return false;
     return true;

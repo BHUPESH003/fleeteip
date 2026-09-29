@@ -1,9 +1,9 @@
 import type {
   CreateProjectRequest,
   Project,
-  ProjectStatus,
   UpdateProjectRequest,
 } from "@fleetip/contracts/project";
+import { ProjectStatus } from "@fleetip/contracts/project";
 import { ConflictError, NotFoundError, ValidationError } from "../../../../shared/errors.js";
 import { PermissionService } from "../../../permissions/application/permission-service.js";
 import { canTransition } from "../domain/project-status.js";
@@ -98,7 +98,7 @@ export class ProjectService {
       "project.manage",
     );
     const existing = await this.loadOwned(renterOrganizationId, projectId);
-    if (existing.status !== "active") {
+    if (existing.status !== ProjectStatus.active) {
       throw new ConflictError("Project fields can only be edited while it is active");
     }
     // Cross-field ordering can't be a schema-level refine here — a partial

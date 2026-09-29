@@ -22,10 +22,13 @@ function isUniqueViolation(error: unknown): boolean {
 export class ProductRepository implements ProductRepositoryPort {
   constructor(private readonly db: Kysely<Database>) {}
 
-  listAll(subcategoryId?: string) {
+  listAll(subcategoryId?: string, includeDisabled = false) {
     let query = this.db.selectFrom("products").selectAll();
     if (subcategoryId !== undefined) {
       query = query.where("product_subcategory_id", "=", subcategoryId);
+    }
+    if (!includeDisabled) {
+      query = query.where("disabled_at", "is", null);
     }
     return query.execute();
   }
@@ -68,6 +71,7 @@ export class ProductRepository implements ProductRepositoryPort {
           ...(updates.specifications !== undefined && {
             specifications: JSON.stringify(updates.specifications),
           }),
+          ...(updates.disabledAt !== undefined && { disabled_at: updates.disabledAt }),
         })
         .where("id", "=", id)
         .returningAll()

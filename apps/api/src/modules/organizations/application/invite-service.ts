@@ -5,6 +5,7 @@ import type {
   OrganizationInvite,
   RoleName,
 } from "@fleetip/contracts/organization";
+import { InviteStatus, MembershipStatus } from "@fleetip/contracts/organization";
 import { randomBytes } from "node:crypto";
 import { ConflictError, NotFoundError, ValidationError } from "../../../shared/errors.js";
 import type { AuthResult } from "../../identity/application/auth-service.js";
@@ -20,16 +21,25 @@ import type {
 
 const INVITE_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-function toInvite(record: OrganizationInviteRecord, roleName: RoleName): OrganizationInvite {
+function toInvite(
+  record: Pick<OrganizationInviteRecord, "id" | "organization_id" | "status" | "expires_at" | "created_at">,
+  roleName: RoleName,
+): OrganizationInvite {
+  const status = record.status as "pending" | "accepted" | "revoked";
   return {
     id: record.id,
     organizationId: record.organization_id,
     roleName,
-    status: record.status as "pending" | "accepted" | "revoked",
+    status,
+    expired: status === InviteStatus.pending && new Date(record.expires_at) < new Date(),
     expiresAt: new Date(record.expires_at).toISOString(),
     createdAt: new Date(record.created_at).toISOString(),
   };
 }
+
+// ponytail: newest 100 only — pending ones are what matter and they're
+// always the recent ones; add paging if an org ever mints more.
+const INVITE_LIST_LIMIT = 100;
 
 export interface AcceptInviteResult {
   authResult: AuthResult | null;
@@ -89,6 +99,32 @@ export class InviteService {
     };
   }
 
+  async listInvites(userId: string, organizationId: string): Promise<OrganizationInvite[]> {
+    await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
+    const rows = await this.inviteRepository.listByOrganization(organizationId, INVITE_LIST_LIMIT);
+    return rows.map((row) => toInvite(row, row.role_name));
+  }
+
+  // Only a pending invite can be revoked. An invite of another organization
+  // is a 404 (never a 403) so its existence isn't leaked. accept() already
+  // refuses any non-pending invite, so a revoked link stops working at once.
+  async revokeInvite(
+    userId: string,
+    organizationId: string,
+    inviteId: string,
+  ): Promise<OrganizationInvite> {
+    await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
+    const invite = await this.inviteRepository.findByIdInOrganization(inviteId, organizationId);
+    if (!invite) throw new NotFoundError("Invite not found");
+    if (invite.status !== InviteStatus.pending) {
+      throw new ConflictError(`This invite has already been ${invite.status}`);
+    }
+    const revoked = await this.inviteRepository.markRevoked(invite.id);
+    // Lost a race with accept() between the read and the guarded update.
+    if (!revoked) throw new ConflictError("This invite is no longer pending");
+    return toInvite(revoked, invite.role_name);
+  }
+
   async getPreview(token: string): Promise<InvitePreview> {
     const row = await this.inviteRepository.findWithContextByTokenHash(hashSessionToken(token));
     if (!row) throw new NotFoundError("Invite not found");
@@ -97,7 +133,7 @@ export class InviteService {
       organizationTypeCode: row.organization_type_code as "rental_company" | "renter",
       roleName: row.role_name as RoleName,
       status: row.status as "pending" | "accepted" | "revoked",
-      expired: row.status === "pending" && new Date(row.expires_at) < new Date(),
+      expired: row.status === InviteStatus.pending && new Date(row.expires_at) < new Date(),
     };
   }
 
@@ -112,7 +148,7 @@ export class InviteService {
     const tokenHash = hashSessionToken(token);
     const context = await this.inviteRepository.findWithContextByTokenHash(tokenHash);
     if (!context) throw new NotFoundError("Invite not found");
-    if (context.status !== "pending") {
+    if (context.status !== InviteStatus.pending) {
       throw new ConflictError(`This invite has already been ${context.status}`);
     }
     if (new Date(context.expires_at) < new Date()) {
@@ -151,7 +187,7 @@ export class InviteService {
       userId,
       organizationId: context.organization_id,
       roleId: context.role_id,
-      status: "active",
+      status: MembershipStatus.active,
     });
     await this.inviteRepository.markAccepted(context.id, userId);
 

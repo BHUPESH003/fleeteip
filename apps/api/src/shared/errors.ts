@@ -9,8 +9,17 @@ export class AppError extends Error {
   }
 }
 
+/** One problem with one request field; `path` is dotted ("terms.rate"), empty for the whole request. */
+export interface ValidationIssue {
+  path: string;
+  message: string;
+}
+
 export class ValidationError extends AppError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly issues: ValidationIssue[] = [],
+  ) {
     super(message, 400, "validation_error");
   }
 }
@@ -28,7 +37,11 @@ export class ForbiddenError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor(message: string) {
+  /** `field` names the request field the conflict is about (e.g. "assetCode"), so a form can show it there. */
+  constructor(
+    message: string,
+    public readonly field?: string,
+  ) {
     super(message, 409, "conflict");
   }
 }

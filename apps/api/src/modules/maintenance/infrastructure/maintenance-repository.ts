@@ -1,4 +1,4 @@
-import type { MaintenanceStatus } from "@fleetip/contracts/maintenance";
+import { MaintenanceStatus } from "@fleetip/contracts/maintenance";
 import { sql, type Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import type {
@@ -39,7 +39,7 @@ export class MaintenanceRepository implements MaintenanceRepositoryPort {
         maintenance_type: input.maintenanceType,
         start_date: input.startDate,
         end_date: input.endDate ?? null,
-        status: "scheduled",
+        status: MaintenanceStatus.scheduled,
         notes: input.notes ?? null,
       })
       .returning(MAINTENANCE_COLUMNS)

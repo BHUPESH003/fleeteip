@@ -1,4 +1,4 @@
-import type { MachineStatus } from "@fleetip/contracts/equipment";
+import { MachineStatus } from "@fleetip/contracts/equipment";
 import type { Kysely } from "kysely";
 import type { Database } from "../../../infrastructure/database/types.js";
 import { ConflictError } from "../../../shared/errors.js";
@@ -43,7 +43,7 @@ export class MachineRepository implements MachineRepositoryPort {
           chassis_number: input.chassisNumber ?? null,
           registration_number: input.registrationNumber,
           year_of_manufacture: input.yearOfManufacture ?? null,
-          status: "active",
+          status: MachineStatus.active,
         })
         .returning([
           "id",
@@ -62,6 +62,7 @@ export class MachineRepository implements MachineRepositoryPort {
       if (isUniqueViolation(error)) {
         throw new ConflictError(
           "A machine with this asset code already exists in this organization",
+          "assetCode",
         );
       }
       throw error;
@@ -138,6 +139,7 @@ export class MachineRepository implements MachineRepositoryPort {
       if (isUniqueViolation(error)) {
         throw new ConflictError(
           "A machine with this asset code already exists in this organization",
+          "assetCode",
         );
       }
       throw error;

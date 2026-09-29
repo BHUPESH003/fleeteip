@@ -1,232 +1,461 @@
 "use client";
 
 import type { Product, ProductCategory, ProductSubcategory } from "@fleetip/contracts/catalogue";
-import type { Machine } from "@fleetip/contracts/equipment";
-import type { MaintenanceRecord } from "@fleetip/contracts/maintenance";
+import { MachineStatus, machineStatusSchema, type Machine } from "@fleetip/contracts/equipment";
+import { MaintenanceStatus, type MaintenanceRecord } from "@fleetip/contracts/maintenance";
 import type { Organization } from "@fleetip/contracts/organization";
-import type { Rental } from "@fleetip/contracts/rental";
+import { RentalStatus, type Rental } from "@fleetip/contracts/rental";
 import {
   AllocationBar,
   AttentionStrip,
   AvailabilityLane,
   AvailabilityLaneLegend,
+  BulkBar,
+  BulkBarButton,
   Button,
+  CellStack,
   EmptyState,
   ErrorState,
+  FieldMessage,
+  Icon,
+  IconButton,
   Input,
-  LoadingState,
+  Menu,
+  PageBody,
   PageHeader,
   Pagination,
   Select,
-  StatusBadge,
+  Skeleton,
+  Table,
+  TableFooter,
+  TableSkeleton,
+  TableToolbar,
   Tbody,
   Td,
   Th,
   Thead,
   Tr,
+  UILink,
+  cx,
+  useToast,
+  type AllocationSegment,
+  type AttentionItem,
+  type LaneBlock,
+  type LaneGapLabel,
+  type MenuItem,
+  type SortDirection,
 } from "@fleetip/ui";
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { ForbiddenPage } from "../../../components/PageStates";
 import { apiClient } from "../../../lib/api-client";
+import { categoryIcon } from "../../../lib/category-icon";
+import { useConnection } from "../../../lib/connection";
 import { downloadCsv } from "../../../lib/csv";
-import { daysBetween, formatShortDate, todayIsoDate } from "../../../lib/format";
-import { useSession } from "../../../lib/session-context";
+import { describeError, errorStatus, OFFLINE_HINT } from "../../../lib/errors";
 import {
-  DEPLOYMENT_LABEL,
-  type Deployment,
-  deploymentFor,
-  gapLabelFor,
-  laneBlocksFor,
-  tileCodeFor,
-} from "./lane";
+  daysBetween,
+  formatCompactRange,
+  formatDate,
+  formatMoney,
+  formatRateUnit,
+  formatShortDate,
+  plural,
+  rentalRef,
+  todayIsoDate,
+} from "../../../lib/format";
+import { useSession } from "../../../lib/session-context";
+import { Status, statusLabel, statusOptions, type Deployment } from "../../../lib/status";
+import { useUrlSearch, useUrlState } from "../../../lib/url-state";
+import { optional, useLoad } from "../../../lib/use-load";
+import { CreateRentalDialog } from "../rentals/CreateRentalDialog";
+import { IDLE_DAYS, LANE_DAYS, LANE_LEGEND, gapLabelFor, idleSince, laneBlocksFor, laneMonths, type IdleInfo } from "./lane";
 import { RegisterMachineDialog } from "./RegisterMachineDialog";
-import { MACHINE_STATUS_MAP, currentRentalFor } from "./shared";
+import { capacityLabel, catalogueFor, conflictingMaintenance, currentRentalFor, deploymentFor, productName } from "./shared";
 
-const PAGE_SIZE = 10;
-const LANE_WINDOW_DAYS = 90;
-const LANE_SCALE_MONTHS = 3;
+// ------------------------------------------------------------------ data
 
-interface Loaded {
+interface Access {
+  rentals: boolean;
+  maintenance: boolean;
+  customers: boolean;
+  quotations: boolean;
+}
+
+interface FleetData {
   machines: Machine[];
   rentals: Rental[];
-  maintenanceRecords: MaintenanceRecord[];
+  maintenance: MaintenanceRecord[];
   categories: ProductCategory[];
   productsById: Map<string, Product>;
   subcategoriesById: Map<string, ProductSubcategory>;
-  renterNames: Map<string, string>;
+  categoriesById: Map<string, ProductCategory>;
+  customerNames: Map<string, string>;
+  today: string;
 }
+
+/**
+ * The machines are the point of this page (equipment.manage). Rentals,
+ * workshop jobs and customer names are enrichment behind their own
+ * permissions: a role without rental.manage / maintenance.manage /
+ * quotation.manage still gets a working list, just without "Right now",
+ * the lane's blocks or customer names — each fetch is gated so it never
+ * 403s the page (optional()).
+ */
+async function loadFleet(orgId: string, access: Access): Promise<FleetData> {
+  const [machines, categories, products, rentals, maintenance, renters] = await Promise.all([
+    apiClient.listMachines(orgId) as Promise<Machine[]>,
+    optional(true, () => apiClient.listProductCategories() as Promise<ProductCategory[]>, [] as ProductCategory[]),
+    optional(true, () => apiClient.listProducts() as Promise<Product[]>, [] as Product[]),
+    optional(access.rentals, () => apiClient.listRentals(orgId) as Promise<Rental[]>, [] as Rental[]),
+    optional(access.maintenance, () => apiClient.listMaintenanceRecords(orgId) as Promise<MaintenanceRecord[]>, [] as MaintenanceRecord[]),
+    optional(access.customers, () => apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>, [] as Organization[]),
+  ]);
+  const subcategoryLists = await Promise.all(
+    categories.map((c) =>
+      optional(true, () => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>, [] as ProductSubcategory[]),
+    ),
+  );
+  return {
+    machines,
+    rentals,
+    maintenance,
+    categories,
+    productsById: new Map(products.map((p) => [p.id, p])),
+    subcategoriesById: new Map(subcategoryLists.flat().map((s) => [s.id, s])),
+    categoriesById: new Map(categories.map((c) => [c.id, c])),
+    customerNames: new Map(renters.map((o) => [o.id, o.name])),
+    today: todayIsoDate(),
+  };
+}
+
+// ------------------------------------------------------------------ rows
+
+const ENDING_DAYS = 14;
+const DEPLOYMENTS: Deployment[] = ["on_rent", "booked", "off_rent", "available"];
+const MACHINE_STATUSES: MachineStatus[] = machineStatusSchema.options;
+const PAGE_SIZES = [10, 20];
+const DEFAULT_PAGE_SIZE = 10;
+
+type SortKey = "asset" | "product" | "status";
+type Flag = "ending" | "idle" | "noreturn";
+const FLAGS: Flag[] = ["ending", "idle", "noreturn"];
+
+const FLAG_LABEL: Record<Flag, string> = {
+  ending: `Rental ends within ${ENDING_DAYS} days, nothing booked after`,
+  idle: `Idle longer than ${IDLE_DAYS} days`,
+  noreturn: "Workshop job with no return date",
+};
+
+interface Row {
+  machine: Machine;
+  product: Product | null;
+  subcategory: ProductSubcategory | null;
+  category: ProductCategory | null;
+  /** Null when the stored status already says it (Under maintenance, Retired) or rentals aren't visible. */
+  deployment: Deployment | null;
+  /** Active, else returning, else the next confirmed rental. */
+  current: Rental | null;
+  active: Rental | null;
+  /** The workshop job in progress, if any. */
+  job: MaintenanceRecord | null;
+  blocks: LaneBlock[];
+  gap: LaneGapLabel[];
+  idle: IdleInfo | null;
+  endingSoon: boolean;
+  noReturnJobs: number;
+  search: string;
+}
+
+function customerOf(rental: Rental, names: Map<string, string>): string {
+  if (rental.clientSnapshot) return rental.clientSnapshot.name;
+  if (rental.renterOrganizationId) return names.get(rental.renterOrganizationId) ?? "FleetIP customer";
+  return "Customer not recorded";
+}
+
+function buildRows(data: FleetData, access: Access): Row[] {
+  const { today } = data;
+  return data.machines.map((machine) => {
+    const { product, subcategory, category } = catalogueFor(
+      machine,
+      data.productsById,
+      data.subcategoriesById,
+      data.categoriesById,
+    );
+    const own = data.rentals.filter((r) => r.machineId === machine.id);
+    const jobs = data.maintenance.filter((m) => m.machineId === machine.id);
+    const deployment = access.rentals ? deploymentFor(machine, own) : null;
+    const active = own.find((r) => r.status === RentalStatus.active) ?? null;
+    const blocks = laneBlocksFor(machine.id, own, jobs, (r) => customerOf(r, data.customerNames));
+    const idle = deployment === "available" ? idleSince(machine, own, today) : null;
+    const activeEnd = active?.endDate ?? null;
+    const endingSoon =
+      activeEnd !== null &&
+      daysBetween(today, activeEnd) >= 0 &&
+      daysBetween(today, activeEnd) <= ENDING_DAYS &&
+      !own.some((r) => r.status === RentalStatus.confirmed && r.startDate > activeEnd);
+    return {
+      machine,
+      product,
+      subcategory,
+      category,
+      deployment,
+      current: currentRentalFor(machine.id, own),
+      active,
+      job: jobs.find((m) => m.status === MaintenanceStatus.in_progress) ?? null,
+      blocks,
+      gap: gapLabelFor({ status: machine.status, blocks, windowStart: today, idle, rentalsKnown: access.rentals }),
+      idle,
+      endingSoon,
+      noReturnJobs: jobs.filter((m) => m.status === MaintenanceStatus.in_progress && m.endDate === null).length,
+      search: [machine.assetCode, machine.registrationNumber, machine.chassisNumber, product?.manufacturer, product?.name]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase(),
+    };
+  });
+}
+
+const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
+function compareRows(a: Row, b: Row, key: SortKey): number {
+  const byAsset = collator.compare(a.machine.assetCode, b.machine.assetCode);
+  if (key === "product") {
+    return collator.compare(productName(a.product) ?? "\uffff", productName(b.product) ?? "\uffff") || byAsset;
+  }
+  if (key === "status") {
+    return MACHINE_STATUSES.indexOf(a.machine.status) - MACHINE_STATUSES.indexOf(b.machine.status) || byAsset;
+  }
+  return byAsset;
+}
+
+/** Runs `fn` over `items` with at most `limit` requests in flight. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index] as T);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+// ------------------------------------------------------------------ page
 
 export default function MachinesPage() {
   const { currentMembership, hasPermission } = useSession();
   const organizationId = currentMembership?.organizationId;
-  // Rentals (availability lookups), maintenance records (the "no return
-  // date" attention count) and renter orgs (name display) are enrichment,
-  // not the point of this page (equipment.manage is) — a role without
-  // rental.manage/maintenance.manage/quotation.manage still gets a fully
-  // working page, just without those sections resolved (machines show as
-  // available, the maintenance-derived sub-stats are omitted, renter name
-  // falls back to "—"/"Renter"). Gating the fetch itself also skips a
-  // request that would 403.
-  const canListRentals = hasPermission("rental.manage");
-  const canListRenterOrgs = hasPermission("quotation.manage");
-  const canCheckAvailability = hasPermission("rental.manage");
-  const canListMaintenance = hasPermission("maintenance.manage");
+  const canView = hasPermission("equipment.manage");
+  const access: Access = {
+    rentals: hasPermission("rental.manage"),
+    maintenance: hasPermission("maintenance.manage"),
+    customers: hasPermission("quotation.manage"),
+    quotations: hasPermission("quotation.manage"),
+  };
+  const accessKey = Object.values(access).join(",");
 
-  const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [registerOpen, setRegisterOpen] = useState(false);
-
-  const [search, setSearch] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [deploymentFilter, setDeploymentFilter] = useState<Deployment | null>(null);
-  const [freeFrom, setFreeFrom] = useState("");
-  const [freeTo, setFreeTo] = useState("");
-  const [freeBetweenIds, setFreeBetweenIds] = useState<Set<string> | null>(null);
-  const [freeBetweenError, setFreeBetweenError] = useState<string | null>(null);
-  const [checkingAvailability, setCheckingAvailability] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [page, setPage] = useState(1);
-  const [density, setDensity] = useState<"balanced" | "compact">("balanced");
-
-  const today = todayIsoDate();
-
-  async function load(orgId: string) {
-    try {
-      const [machines, rentals, maintenanceRecords, categories, products, renterOrgs] = await Promise.all([
-        apiClient.listMachines(orgId) as Promise<Machine[]>,
-        canListRentals ? (apiClient.listRentals(orgId) as Promise<Rental[]>) : Promise.resolve([]),
-        canListMaintenance
-          ? (apiClient.listMaintenanceRecords(orgId) as Promise<MaintenanceRecord[]>)
-          : Promise.resolve([]),
-        apiClient.listProductCategories() as Promise<ProductCategory[]>,
-        apiClient.listProducts() as Promise<Product[]>,
-        canListRenterOrgs ? (apiClient.listRenterOrganizations(orgId) as Promise<Organization[]>) : Promise.resolve([]),
-      ]);
-      const subcategoryLists = await Promise.all(
-        categories.map((c) => apiClient.listProductSubcategories(c.id) as Promise<ProductSubcategory[]>),
-      );
-      setData({
-        machines,
-        rentals,
-        maintenanceRecords,
-        categories,
-        productsById: new Map(products.map((p) => [p.id, p])),
-        subcategoriesById: new Map(subcategoryLists.flat().map((s) => [s.id, s])),
-        renterNames: new Map(renterOrgs.map((o) => [o.id, o.name])),
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load machines");
-    }
-  }
-
-  useEffect(() => {
-    if (organizationId) void load(organizationId);
-  }, [organizationId, canListRentals, canListRenterOrgs, canListMaintenance]);
-
-  // "Free between" queries the real checkRentalAvailability endpoint per
-  // candidate machine — a genuinely different endpoint than the client-side
-  // deployment filter above, which is why it gets its own blue-tinted pill
-  // rather than folding into the Deployment select (per the design system's
-  // controls section: "the availability range gets its own blue because it
-  // queries a different endpoint").
-  async function runFreeBetween(orgId: string, machines: Machine[]) {
-    if (!freeFrom) {
-      setFreeBetweenIds(null);
-      setFreeBetweenError(null);
-      return;
-    }
-    setCheckingAvailability(true);
-    setFreeBetweenError(null);
-    try {
-      const results = await Promise.all(
-        machines.map(async (m) => {
-          const res = (await apiClient.checkRentalAvailability(orgId, m.id, freeFrom, freeTo || undefined)) as {
-            available: boolean;
-          };
-          return res.available ? m.id : null;
-        }),
-      );
-      setFreeBetweenIds(new Set(results.filter((id): id is string => id !== null)));
-    } catch (err) {
-      setFreeBetweenError(err instanceof Error ? err.message : "Failed to check availability");
-      setFreeBetweenIds(null);
-    } finally {
-      setCheckingAvailability(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!organizationId || !data || !canCheckAvailability) return;
-    void runFreeBetween(organizationId, data.machines);
-  }, [organizationId, data?.machines.length, freeFrom, freeTo, canCheckAvailability]);
-
-  const filtered = useMemo(() => {
-    if (!data) return [];
-    const q = search.trim().toLowerCase();
-    return data.machines.filter((m) => {
-      const product = data.productsById.get(m.productId);
-      if (q) {
-        const haystack = [m.assetCode, m.registrationNumber, m.chassisNumber, product?.name, product?.manufacturer]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      if (categoryId && product?.productSubcategoryId) {
-        const subcategory = data.subcategoriesById.get(product.productSubcategoryId);
-        if (subcategory?.productCategoryId !== categoryId) return false;
-      }
-      if (deploymentFilter && deploymentFor(m, data.rentals) !== deploymentFilter) return false;
-      if (freeBetweenIds && !freeBetweenIds.has(m.id)) return false;
-      return true;
-    });
-  }, [data, search, categoryId, deploymentFilter, freeBetweenIds]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  useEffect(() => {
-    setPage(1);
-  }, [search, categoryId, deploymentFilter, freeBetweenIds]);
-
-  if (error) return <ErrorState message={error} />;
-  if (!data) return <LoadingState label="Loading machines…" />;
-
-  const { machines, rentals, maintenanceRecords, categories, productsById, subcategoriesById, renterNames } = data;
-
-  const byDeployment = (dep: Deployment) => machines.filter((m) => deploymentFor(m, rentals) === dep);
-  const onRent = byDeployment("on_rent");
-  const available = byDeployment("available");
-  const maintenance = byDeployment("maintenance");
-  const retired = byDeployment("retired");
-  const total = machines.length || 1;
-
-  const committedRate = onRent.reduce((sum, m) => {
-    const r = currentRentalFor(m.id, rentals);
-    return r ? sum + r.rate : sum;
-  }, 0);
-  const idleOver30 = available.filter((m) => {
-    const rental = [...rentals]
-      .filter((r) => r.machineId === m.id && r.endDate && r.status !== "cancelled")
-      .sort((a, b) => (b.endDate ?? "").localeCompare(a.endDate ?? ""))[0];
-    return rental?.endDate ? daysBetween(rental.endDate, today) > 30 : false;
-  }).length;
-  // "Without a return date" — an in-progress maintenance record with no
-  // endDate set, for a machine currently marked under_maintenance. Real
-  // data from listMaintenanceRecords, only resolved when the caller holds
-  // maintenance.manage (canListMaintenance) — 0 otherwise, not fabricated.
-  const maintenanceNoReturn = maintenance.filter((m) =>
-    maintenanceRecords.some(
-      (rec) => rec.machineId === m.id && rec.status === "in_progress" && rec.endDate === null,
-    ),
+  const { data, error, loading, reload } = useLoad(
+    () => loadFleet(organizationId!, access),
+    [organizationId, accessKey],
+    Boolean(organizationId) && canView,
   );
 
-  const endingSoon = onRent.filter((m) => {
-    const rental = currentRentalFor(m.id, rentals);
-    return rental?.endDate ? daysBetween(today, rental.endDate) <= 14 && daysBetween(today, rental.endDate) >= 0 : false;
-  }).length;
+  if ((currentMembership && !canView) || errorStatus(error) === 403) {
+    return <ForbiddenPage what="machines" permissionHint="Viewing fleet records needs the Equipment permission." />;
+  }
 
-  const rowHeight = density === "compact" ? 52 : 64;
+  return (
+    <MachinesList
+      organizationId={organizationId ?? null}
+      access={access}
+      data={loading ? null : data}
+      error={error}
+      reload={reload}
+    />
+  );
+}
+
+function MachinesList({
+  organizationId,
+  access,
+  data,
+  error,
+  reload,
+}: {
+  organizationId: string | null;
+  access: Access;
+  data: FleetData | null;
+  error: unknown;
+  reload: () => Promise<void>;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+  const { online } = useConnection();
+  const { get, set } = useUrlState("machines");
+  const search = useUrlSearch("q", get, set);
+  const today = data?.today ?? todayIsoDate();
+
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [createFor, setCreateFor] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  // ---- URL state, validated (unknown values are ignored, never trusted)
+  const urlQ = get("q").trim().toLowerCase();
+  const q = urlQ.length >= 2 ? urlQ : "";
+  const categoryParam = get("category");
+  const category = data && !data.categoriesById.has(categoryParam) ? "" : categoryParam;
+  const statusParam = get("status");
+  const status = (MACHINE_STATUSES as string[]).includes(statusParam) ? (statusParam as MachineStatus) : null;
+  const nowParam = get("now");
+  const now = access.rentals && (DEPLOYMENTS as string[]).includes(nowParam) ? (nowParam as Deployment) : null;
+  const flagParam = get("flag");
+  const flag = (FLAGS as string[]).includes(flagParam) ? (flagParam as Flag) : null;
+  const from = access.rentals && /^\d{4}-\d{2}-\d{2}$/.test(get("from")) ? get("from") : "";
+  const to = access.rentals && /^\d{4}-\d{2}-\d{2}$/.test(get("to")) ? get("to") : "";
+  const sortParam = get("sort");
+  const sort: SortKey = sortParam === "product" || sortParam === "status" ? sortParam : "asset";
+  const dir: "asc" | "desc" = get("dir") === "desc" ? "desc" : "asc";
+  const size = PAGE_SIZES.includes(Number(get("size"))) ? Number(get("size")) : DEFAULT_PAGE_SIZE;
+  const page = Math.max(1, Math.floor(Number(get("page", "1"))) || 1);
+
+  // ---- "Free between": the real availability endpoint, once per candidate machine
+  const rangeError = from && to && to < from ? "“To” can't be before “From”." : null;
+  const rangeWarning =
+    !rangeError && from && from < today ? "This date has passed. You can check it, but a new rental can't start before today." : null;
+  const rangeKey = from && !rangeError ? `${from}|${to}` : null;
+
+  // ---- rows and the non-date filters
+  const rows = useMemo(() => (data ? buildRows(data, access) : []), [data, access.rentals]);
+  const matching = useMemo(
+    () =>
+      rows.filter((row) => {
+        if (q && !row.search.includes(q)) return false;
+        if (category && row.category?.id !== category) return false;
+        if (status && row.machine.status !== status) return false;
+        if (now && row.deployment !== now) return false;
+        if (flag === "ending" && !row.endingSoon) return false;
+        if (flag === "idle" && !(row.idle && row.idle.days > IDLE_DAYS)) return false;
+        if (flag === "noreturn" && row.noReturnJobs === 0) return false;
+        return true;
+      }),
+    [rows, q, category, status, now, flag],
+  );
+  // Retired machines can't be booked, so they're never checked (and never free).
+  const candidateIds = useMemo(
+    () => matching.filter((r) => r.machine.status !== MachineStatus.retired).map((r) => r.machine.id),
+    [matching],
+  );
+  const candidateKey = candidateIds.join(",");
+
+  // "Free between" queries checkRentalAvailability per candidate machine — a
+  // genuinely different endpoint than the client-side "Right now" filter,
+  // which is why it gets its own blue-tinted pill rather than folding into
+  // that select (design system controls: "the availability range gets its
+  // own blue because it queries a different endpoint"). Only machines that
+  // match the other filters are checked, and answers are kept per date range
+  // (until the page reloads) so changing another filter only checks what's
+  // new. The endpoint counts rentals only (plan §1), so workshop jobs over
+  // the window are checked here in the browser.
+  const [availability, setAvailability] = useState<{
+    key: string;
+    data: FleetData;
+    free: Map<string, boolean>;
+    running: boolean;
+    error: unknown;
+  } | null>(null);
+  const [checkNonce, setCheckNonce] = useState(0);
+  const checkRun = useRef(0);
+
+  useEffect(() => {
+    if (!data || !organizationId || !rangeKey) return;
+    const [checkFrom = "", checkTo = ""] = rangeKey.split("|");
+    const known =
+      availability && availability.key === rangeKey && availability.data === data ? availability.free : new Map<string, boolean>();
+    const missing = candidateIds.filter((id) => !known.has(id));
+    const run = ++checkRun.current;
+    if (missing.length === 0) {
+      setAvailability({ key: rangeKey, data, free: known, running: false, error: null });
+      return;
+    }
+    setAvailability({ key: rangeKey, data, free: known, running: true, error: null });
+    mapPool(missing, 6, async (id): Promise<[string, boolean]> => {
+      const result = await apiClient.checkRentalAvailability(organizationId, id, checkFrom, checkTo || undefined);
+      const jobs = data.maintenance.filter((j) => j.machineId === id);
+      return [id, Boolean(result?.available) && !conflictingMaintenance(jobs, checkFrom, checkTo || null)];
+    })
+      .then((answers) => {
+        if (run !== checkRun.current) return;
+        const free = new Map(known);
+        for (const [id, isFree] of answers) free.set(id, isFree);
+        setAvailability({ key: rangeKey, data, free, running: false, error: null });
+      })
+      .catch((err: unknown) => {
+        if (run === checkRun.current) setAvailability({ key: rangeKey, data, free: known, running: false, error: err });
+      });
+    // `availability` is read as the cache for this run, not a trigger
+  }, [data, organizationId, rangeKey, candidateKey, checkNonce]);
+
+  const rangeState = rangeKey && availability?.key === rangeKey && availability.data === data ? availability : null;
+  const rangeFailed = Boolean(rangeState?.error);
+  const checking = Boolean(rangeKey) && !rangeFailed && (!rangeState || rangeState.running || candidateIds.some((id) => !rangeState.free.has(id)));
+  const freeMap = rangeKey && rangeState && !checking && !rangeFailed ? rangeState.free : null;
+
+  // ---- date range, sort, page
+  const filtered = useMemo(() => {
+    const out = freeMap ? matching.filter((row) => freeMap.get(row.machine.id) === true) : [...matching];
+    out.sort((a, b) => compareRows(a, b, sort) * (dir === "desc" ? -1 : 1));
+    return out;
+  }, [matching, freeMap, sort, dir]);
+  const matchingBeforeRange = matching.length;
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / size));
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = filtered.slice((currentPage - 1) * size, currentPage * size);
+
+  // Selection only ever covers rows that still match the filters.
+  const filteredIds = useMemo(() => new Set(filtered.map((r) => r.machine.id)), [filtered]);
+  useEffect(() => {
+    if (checking) return;
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (filteredIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredIds, checking]);
+
+  const categoryName = data?.categoriesById.get(category)?.name;
+  const filterParts = [
+    categoryName,
+    status ? statusLabel("machine", status) : null,
+    now ? statusLabel("deployment", now) : null,
+    flag ? FLAG_LABEL[flag] : null,
+    freeMap ? `free ${formatShortDate(from)}–${to ? formatShortDate(to) : "open-ended"}` : null,
+    q ? `“${urlQ}”` : null,
+  ].filter((part): part is string => Boolean(part));
+  const hasFilters = Boolean(urlQ || category || status || now || flag || from || to);
+
+  function clearFilters() {
+    search.setValue("");
+    set({ q: null, category: null, status: null, now: null, flag: null, from: null, to: null });
+  }
+
+  /** Attention items and summary segments land on exactly the rows they count. */
+  function applyOnly(updates: Record<string, string | null>) {
+    search.setValue("");
+    set({ q: null, category: null, status: null, now: null, flag: null, from: null, to: null, ...updates });
+  }
+
+  function toggleSort(key: SortKey) {
+    const nextDir = sort === key ? (dir === "asc" ? "desc" : "asc") : "asc";
+    set({ sort: key === "asset" ? null : key, dir: nextDir === "asc" ? null : "desc" });
+  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -237,505 +466,1005 @@ export default function MachinesPage() {
     });
   }
 
-  function toggleAllOnPage() {
+  const pageAllSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.machine.id));
+  const pageSomeSelected = pageRows.some((r) => selected.has(r.machine.id));
+
+  function togglePage() {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allSelected = pageItems.every((m) => next.has(m.id));
-      for (const m of pageItems) {
-        if (allSelected) next.delete(m.id);
-        else next.add(m.id);
+      for (const r of pageRows) {
+        if (pageAllSelected) next.delete(r.machine.id);
+        else next.add(r.machine.id);
       }
       return next;
     });
   }
 
-  async function handleMarkUnderMaintenance() {
-    if (!organizationId) return;
-    await Promise.all(
-      [...selected].map((id) => apiClient.updateMachineStatus(organizationId, id, "under_maintenance")),
+  const selectedRows = rows.filter((r) => selected.has(r.machine.id));
+  const unquotable = selectedRows.filter((r) => r.machine.status !== MachineStatus.active).length;
+
+  function exportSelection() {
+    const names = data?.customerNames ?? new Map<string, string>();
+    const filename = `machines-${today}.csv`;
+    downloadCsv(
+      filename,
+      [
+        "Asset code",
+        "Registration number",
+        "Chassis number",
+        "Year built",
+        "Manufacturer",
+        "Model",
+        "Category",
+        "Subcategory",
+        "Rated capacity",
+        "Status",
+        "Right now",
+        "Current rental",
+        "Customer",
+        "Rental start",
+        "Rental end",
+        "Rate",
+        "Rate unit",
+      ],
+      selectedRows.map((r) => [
+        r.machine.assetCode,
+        r.machine.registrationNumber,
+        r.machine.chassisNumber ?? "",
+        r.machine.yearOfManufacture ?? "",
+        r.product?.manufacturer ?? "",
+        r.product?.name ?? "",
+        r.category?.name ?? "",
+        r.subcategory?.name ?? "",
+        capacityLabel(r.product) ?? "",
+        statusLabel("machine", r.machine.status),
+        r.deployment ? statusLabel("deployment", r.deployment) : "",
+        r.current ? rentalRef(r.current.id) : "",
+        r.current ? customerOf(r.current, names) : "",
+        r.current?.startDate ?? "",
+        r.current ? (r.current.endDate ?? "open-ended") : "",
+        r.current?.rate ?? "",
+        r.current ? formatRateUnit(r.current.rateUnit) : "",
+      ]),
     );
-    setSelected(new Set());
-    await load(organizationId);
+    toast.info({ title: `Exported ${plural(selectedRows.length, "machine")}`, body: `${filename} is downloading.` });
   }
 
-  function handleExportSelection() {
-    const rows = machines
-      .filter((m) => selected.has(m.id))
-      .map((m) => {
-        const product = productsById.get(m.productId);
-        const rental = currentRentalFor(m.id, rentals);
-        return [
-          m.assetCode,
-          product ? `${product.manufacturer} ${product.name}` : "",
-          m.registrationNumber,
-          m.status,
-          rental ? (rental.renterOrganizationId && renterNames.get(rental.renterOrganizationId)) || rental.clientSnapshot?.name || "" : "",
-        ];
+  function addToQuotation() {
+    router.push(`/quotations?create=1&machineIds=${selectedRows.map((r) => r.machine.id).join(",")}`);
+  }
+
+  /** Row click opens the machine; Ctrl/⌘/middle click opens a new tab. Links, buttons and checkboxes keep their own clicks. */
+  function openRow(event: MouseEvent<HTMLElement>, href: string) {
+    const target = event.target as HTMLElement;
+    if (target.closest("a, button, input, select, textarea, label, [role='menu']")) return;
+    if (window.getSelection()?.toString()) return;
+    if (event.metaKey || event.ctrlKey || event.button === 1) {
+      window.open(href, "_blank", "noopener");
+      return;
+    }
+    router.push(href);
+  }
+
+  function rowMenu(row: Row): MenuItem[] {
+    const { machine } = row;
+    const items: MenuItem[] = [
+      {
+        key: "open",
+        label: "Open machine",
+        icon: "external",
+        href: `/machines/${machine.id}`,
+        hint: "Rentals, workshop jobs, transport and invoices.",
+      },
+    ];
+    if (access.rentals) {
+      items.push({
+        key: "rent",
+        label: "Create rental",
+        icon: "rental",
+        disabled: machine.status !== MachineStatus.active || !online,
+        hint: !online ? OFFLINE_HINT : machine.status !== MachineStatus.active ? "Only Active machines can be rented." : "Book this machine for a customer.",
+        onSelect: () => setCreateFor(machine.id),
       });
-    downloadCsv("machines.csv", ["Asset code", "Product", "Registration", "Status", "Current renter"], rows);
+    }
+    if (access.quotations) {
+      items.push(
+        machine.status === MachineStatus.active
+          ? { key: "quote", label: "Quote this machine", icon: "quotation", href: `/quotations?create=1&machineId=${machine.id}`, hint: "Start a quotation with this machine." }
+          : { key: "quote", label: "Quote this machine", icon: "quotation", disabled: true, hint: "Only Active machines can be quoted." },
+      );
+    }
+    if (access.rentals) {
+      items.push({ key: "rentals", label: "Rentals of this machine", icon: "rental", href: `/rentals?machine=${machine.id}` });
+    }
+    return items;
   }
 
-  // 90-day lane window starts today; the month scale spans 3 labels.
-  const windowStart = today;
-  const scaleLabels = Array.from({ length: LANE_SCALE_MONTHS }, (_, i) => {
-    const d = new Date(`${today}T00:00:00Z`);
-    d.setUTCMonth(d.getUTCMonth() + i);
-    return new Intl.DateTimeFormat("en-GB", { month: "short" }).format(d);
-  });
+  const registerButton = (
+    <Button icon="plus" onClick={() => setRegisterOpen(true)} disabled={!online || !organizationId} title={!online ? OFFLINE_HINT : undefined}>
+      Register machine
+    </Button>
+  );
 
-  return (
-    <div className="flex min-w-0 flex-col gap-3.5">
-      <PageHeader
-        title="Machines"
-        description={`${machines.length} registered assets`}
-        actions={
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={handleExportSelection} disabled={selected.size === 0}>
-              Export CSV
-            </Button>
-            <Button onClick={() => setRegisterOpen(true)}>Register machine</Button>
-          </div>
-        }
+  const header = (
+    <PageHeader
+      title="Machines"
+      description={
+        data
+          ? `${plural(data.machines.length, "machine")} in your fleet: their status, where each one is right now and the next ${LANE_DAYS} days.`
+          : `Your fleet: status, where each machine is right now and the next ${LANE_DAYS} days.`
+      }
+      actions={registerButton}
+    />
+  );
+
+  const dialogs = organizationId && (
+    <>
+      <RegisterMachineDialog
+        open={registerOpen}
+        onClose={() => setRegisterOpen(false)}
+        organizationId={organizationId}
+        onRegistered={() => void reload()}
       />
-
-      <AllocationBar
-        total={{ count: machines.length, label: "Total fleet", sub: "All statuses" }}
-        active={deploymentFilter}
-        onSelect={(key) => setDeploymentFilter(key as Deployment | null)}
-        segments={[
-          {
-            key: "on_rent",
-            count: onRent.length,
-            pct: `${Math.round((onRent.length / total) * 100)}%`,
-            grow: onRent.length || 1,
-            label: "On rent",
-            sub: committedRate > 0 ? `₹${(committedRate / 100000).toFixed(1)}L committed this month` : undefined,
-            tone: "on-rent",
-          },
-          {
-            key: "available",
-            count: available.length,
-            pct: `${Math.round((available.length / total) * 100)}%`,
-            grow: available.length || 1,
-            label: "Available",
-            sub: idleOver30 > 0 ? `${idleOver30} idle over 30 days` : undefined,
-            tone: "available",
-          },
-          {
-            key: "maintenance",
-            count: maintenance.length,
-            pct: `${Math.round((maintenance.length / total) * 100)}%`,
-            grow: maintenance.length || 1,
-            label: "Under maintenance",
-            sub: maintenanceNoReturn.length > 0 ? `${maintenanceNoReturn.length} without a return date` : undefined,
-            tone: "attention",
-          },
-          {
-            key: "retired",
-            count: retired.length,
-            pct: `${Math.round((retired.length / total) * 100)}%`,
-            grow: retired.length || 1,
-            label: "Retired",
-            sub: "Excluded from quoting",
-            tone: "out-of-service",
-          },
-        ]}
-      />
-
-      <AttentionStrip
-        items={[
-          {
-            key: "ending-soon",
-            count: endingSoon,
-            text: "rentals end within 14 days — machines returning",
-            onClick: () => setDeploymentFilter("on_rent"),
-          },
-          {
-            key: "idle-30",
-            count: idleOver30,
-            text: "machines idle longer than 30 days",
-            onClick: () => setDeploymentFilter("available"),
-          },
-          {
-            key: "maint-no-return",
-            count: maintenanceNoReturn.length,
-            text: "maintenance job with no return date",
-            onClick: () => setDeploymentFilter("maintenance"),
-          },
-        ]}
-      />
-
-      <div className="rounded-panel border border-border-strong bg-surface">
-        {selected.size === 0 ? (
-          <div className="flex flex-wrap items-center gap-2 border-b border-border-soft bg-surface-sunk px-3.5 py-2.5">
-            <Input
-              placeholder="Filter this list…"
-              className="w-52"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <Select
-              className="w-44"
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              options={[{ value: "", label: "All categories" }, ...categories.map((c) => ({ value: c.id, label: c.name }))]}
-            />
-            <Select
-              className="w-44"
-              value={deploymentFilter ?? ""}
-              onChange={(e) => setDeploymentFilter((e.target.value || null) as Deployment | null)}
-              options={[
-                { value: "", label: "Any deployment" },
-                { value: "on_rent", label: "On rent" },
-                { value: "available", label: "Available" },
-                { value: "maintenance", label: "Maintenance" },
-                { value: "retired", label: "Retired" },
-              ]}
-            />
-            {canCheckAvailability && (
-              <div className="flex items-center gap-1.5 rounded-cell border border-on-rent-lane-edge/40 bg-on-rent-bg px-2.5 py-1">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-on-rent">Free between</span>
-                <input
-                  type="date"
-                  className="w-[110px] bg-transparent font-mono text-xs text-on-rent outline-none"
-                  value={freeFrom}
-                  min={today}
-                  onChange={(e) => setFreeFrom(e.target.value)}
-                />
-                <span className="text-xs text-meta">→</span>
-                <input
-                  type="date"
-                  className="w-[110px] bg-transparent font-mono text-xs text-on-rent outline-none"
-                  value={freeTo}
-                  min={freeFrom || today}
-                  onChange={(e) => setFreeTo(e.target.value)}
-                />
-                {checkingAvailability && (
-                  <span className="h-3 w-3 flex-none animate-spin rounded-full border-2 border-on-rent border-t-transparent" />
-                )}
-                {freeFrom && (
-                  <button
-                    type="button"
-                    className="text-xs text-meta hover:text-ink"
-                    onClick={() => {
-                      setFreeFrom("");
-                      setFreeTo("");
-                      setFreeBetweenIds(null);
-                    }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            )}
-            {(search || categoryId || deploymentFilter || freeFrom) && (
-              <button
-                type="button"
-                className="text-xs font-medium text-accent-text"
-                onClick={() => {
-                  setSearch("");
-                  setCategoryId("");
-                  setDeploymentFilter(null);
-                  setFreeFrom("");
-                  setFreeTo("");
-                  setFreeBetweenIds(null);
-                }}
-              >
-                Clear filters
-              </button>
-            )}
-            <button
-              type="button"
-              className="ml-auto text-xs font-medium text-ink-strong"
-              onClick={() => setDensity((d) => (d === "balanced" ? "compact" : "balanced"))}
-            >
-              {density === "balanced" ? "Compact rows" : "Balanced rows"}
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2.5 border-b border-rail bg-rail px-3.5 py-2.5">
-            <span className="text-xs font-semibold text-white">
-              {selected.size} {selected.size === 1 ? "machine" : "machines"} selected
-            </span>
-            <button type="button" className="text-xs text-rail-muted" onClick={() => setSelected(new Set())}>
-              Clear
-            </button>
-            <span className="h-4.5 w-px bg-rail-control-border" />
-            <Button size="sm" onClick={() => void handleMarkUnderMaintenance()}>
-              Mark under maintenance
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="border-rail-control-border bg-transparent text-white hover:bg-rail-active"
-              onClick={handleExportSelection}
-            >
-              Export selection
-            </Button>
-            <span className="ml-auto text-[11px] leading-tight text-rail-tag">
-              Bulk status change writes one machine at a time — no batch endpoint yet
-            </span>
-          </div>
-        )}
-
-        {freeBetweenError && (
-          <div className="border-b border-border-soft bg-danger-bg px-3.5 py-2 text-xs text-danger">
-            {freeBetweenError}
-          </div>
-        )}
-
-        {filtered.length === 0 ? (
-          <EmptyState
-            title={freeBetweenIds ? "No machine is free in this window" : "No machines match these filters"}
-            description={
-              freeBetweenIds
-                ? "Widen the date range, or check the open market for another rental company's fleet."
-                : "Try clearing filters, or register your first machine."
-            }
-          />
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1040px] border-collapse text-sm">
-                <Thead>
-                  <Tr>
-                    <Th className="w-9">
-                      <input
-                        type="checkbox"
-                        checked={pageItems.length > 0 && pageItems.every((m) => selected.has(m.id))}
-                        onChange={toggleAllOnPage}
-                        aria-label="Select all machines on this page"
-                      />
-                    </Th>
-                    <Th className="w-[240px]">Machine</Th>
-                    <Th className="w-[120px]">Class &amp; capacity</Th>
-                    <Th className="w-[100px]">Status</Th>
-                    <Th className="min-w-[180px]">
-                      <span className="inline-flex items-center gap-1.5">
-                        Deployment
-                        <span className="rounded-xs border border-border-strong px-1 py-px font-mono text-[9px] uppercase tracking-wide text-meta">
-                          derived
-                        </span>
-                      </span>
-                    </Th>
-                    <Th className="w-[200px]">
-                      <div className="flex flex-col gap-1 pb-0.5">
-                        <div className="flex items-center justify-between">
-                          <span>Next 90 days</span>
-                          <span className="font-mono text-[9px] text-meta">{new Date(today).getUTCFullYear()}</span>
-                        </div>
-                        <div className="flex">
-                          {scaleLabels.map((label, i) => (
-                            <span
-                              key={`${label}-${i}`}
-                              className="flex-1 border-l border-border pl-1 font-mono text-[9px] font-normal normal-case tracking-normal text-meta"
-                            >
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </Th>
-                    <Th className="w-[90px] text-right">Rate</Th>
-                    <Th className="w-[60px]" />
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {pageItems.map((machine) => {
-                    const product = productsById.get(machine.productId);
-                    const subcategory = product ? subcategoriesById.get(product.productSubcategoryId) : undefined;
-                    const rental = currentRentalFor(machine.id, rentals);
-                    const dep = deploymentFor(machine, rentals);
-                    const rentalName = rental
-                      ? (rental.renterOrganizationId && renterNames.get(rental.renterOrganizationId)) ||
-                        rental.clientSnapshot?.name ||
-                        "Renter"
-                      : null;
-                    const isSelected = selected.has(machine.id);
-                    return (
-                      <Tr
-                        key={machine.id}
-                        className={isSelected ? "bg-accent-wash" : machine.status === "retired" ? "bg-surface-sunk" : ""}
-                        style={{ height: rowHeight }}
-                      >
-                        <Td>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggle(machine.id)}
-                            aria-label={`Select ${machine.assetCode}`}
-                          />
-                        </Td>
-                        <Td>
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex h-9 w-9 flex-none items-center justify-center rounded-cell border border-border-soft bg-on-rent-bg font-mono text-[11px] font-semibold text-on-rent">
-                              {tileCodeFor(subcategory?.code)}
-                            </div>
-                            <div className="flex min-w-0 flex-col gap-0.5">
-                              <span className="font-mono text-[13px] font-semibold leading-tight text-ink">{machine.assetCode}</span>
-                              <span className="truncate text-[13px] font-medium leading-tight text-ink-strong">
-                                {product ? `${product.manufacturer} ${product.name}` : machine.productId}
-                              </span>
-                              <span className="font-mono text-[11px] leading-none text-meta-light">
-                                {machine.registrationNumber}
-                              </span>
-                            </div>
-                          </div>
-                        </Td>
-                        <Td>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs text-ink-strong">{subcategory?.name ?? "—"}</span>
-                            {product?.capacity && (
-                              <span className="font-mono text-sm font-semibold text-ink">
-                                {product.capacity} <span className="text-[11px] font-normal text-meta">{product.capacityUnit}</span>
-                              </span>
-                            )}
-                          </div>
-                        </Td>
-                        <Td>
-                          <StatusBadge status={machine.status} map={MACHINE_STATUS_MAP} />
-                        </Td>
-                        <Td>
-                          <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-2">
-                              <span className={["text-[11px] font-semibold uppercase tracking-wide", deploymentToneClass(dep)].join(" ")}>
-                                {DEPLOYMENT_LABEL[dep]}
-                              </span>
-                            </div>
-                            <span className="truncate text-[13px] font-medium text-ink-strong">
-                              {dep === "on_rent" && rental ? rentalName : dep === "maintenance" ? "In workshop" : dep === "retired" ? "Off fleet" : "No booking"}
-                            </span>
-                            {dep === "on_rent" && rental && (
-                              <div className="flex items-center gap-1.5 text-[11px]">
-                                <span className="font-mono leading-none text-meta">
-                                  {formatShortDate(rental.startDate)} → {rental.endDate ? formatShortDate(rental.endDate) : "no end date"}
-                                </span>
-                                <Link href={`/rentals/${rental.id}`} className="font-medium text-accent-text">
-                                  RN-{rental.id.slice(0, 8).toUpperCase()}
-                                </Link>
-                              </div>
-                            )}
-                          </div>
-                        </Td>
-                        <Td>
-                          <AvailabilityLane
-                            windowStart={windowStart}
-                            windowDays={LANE_WINDOW_DAYS}
-                            blocks={laneBlocksFor(machine.id, rentals, maintenanceRecords)}
-                            gapLabels={gapLabelFor(machine, rentals, windowStart, LANE_WINDOW_DAYS)}
-                            today={windowStart}
-                          />
-                        </Td>
-                        <Td className="text-right">
-                          {rental ? (
-                            <span className="font-mono text-[13px] font-semibold text-ink">
-                              ₹{rental.rate.toLocaleString("en-IN")}
-                            </span>
-                          ) : (
-                            <span className="font-mono text-[13px] font-semibold text-meta-light">—</span>
-                          )}
-                        </Td>
-                        <Td>
-                          <Link href={`/machines/${machine.id}`} className="text-xs font-medium text-ink-strong hover:text-accent-text">
-                            Open
-                          </Link>
-                        </Td>
-                      </Tr>
-                    );
-                  })}
-                </Tbody>
-              </table>
-            </div>
-            <div className="flex flex-wrap items-center gap-3.5 border-t border-border-soft bg-surface-sunk px-3.5 py-2.5">
-              <span className="text-xs text-meta">
-                Showing {pageItems.length} of {filtered.length} machines
-                {deploymentFilter ? ` · ${DEPLOYMENT_LABEL[deploymentFilter].toLowerCase()}` : ""}
-              </span>
-              <AvailabilityLaneLegend className="ml-auto" />
-              <Pagination page={page} pageCount={pageCount} onPageChange={setPage} />
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Responsive: below sm, the table becomes stacked cards — see EmptyState above for the
-          zero-results case shared by both layouts. */}
-      <div className="sm:hidden">
-        {filtered.length > 0 && pageItems.length > 0 && (
-          <div className="flex flex-col gap-2.5">
-            {pageItems.map((machine) => {
-              const product = productsById.get(machine.productId);
-              const subcategory = product ? subcategoriesById.get(product.productSubcategoryId) : undefined;
-              const dep = deploymentFor(machine, rentals);
-              const rental = currentRentalFor(machine.id, rentals);
-              return (
-                <Link
-                  key={machine.id}
-                  href={`/machines/${machine.id}`}
-                  className={["flex flex-col gap-2 rounded-panel border border-border-strong bg-surface p-3", laneBorderClass(dep)].join(" ")}
-                >
-                  <div className="flex items-start gap-2.5">
-                    <div className="flex h-9 w-9 flex-none items-center justify-center rounded-cell border border-border-soft bg-on-rent-bg font-mono text-[11px] font-semibold text-on-rent">
-                      {tileCodeFor(subcategory?.code)}
-                    </div>
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[13px] font-semibold text-ink">{machine.assetCode}</span>
-                        <span className="font-mono text-[11px] text-meta-light">{machine.registrationNumber}</span>
-                      </div>
-                      <span className="text-sm font-medium text-ink-strong">
-                        {product ? `${product.manufacturer} ${product.name}` : machine.productId}
-                      </span>
-                    </div>
-                    <StatusBadge status={machine.status} map={MACHINE_STATUS_MAP} />
-                  </div>
-                  <div className="flex items-center gap-2 rounded-cell bg-surface-sunk px-2.5 py-1.5">
-                    <span className={["text-[11px] font-semibold uppercase tracking-wide", deploymentToneClass(dep)].join(" ")}>
-                      {DEPLOYMENT_LABEL[dep]}
-                    </span>
-                    {rental && <span className="ml-auto font-mono text-[11px] text-meta">{formatShortDate(rental.startDate)} → {rental.endDate ? formatShortDate(rental.endDate) : "no end date"}</span>}
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {organizationId && (
-        <RegisterMachineDialog
-          open={registerOpen}
-          onClose={() => setRegisterOpen(false)}
+      {access.rentals && (
+        <CreateRentalDialog
+          open={createFor !== null}
+          onClose={() => setCreateFor(null)}
           organizationId={organizationId}
-          onRegistered={() => void load(organizationId)}
+          initialMachineId={createFor ?? undefined}
+          onCreated={() => void reload()}
         />
       )}
+    </>
+  );
+
+  if (error) {
+    return (
+      <div className="flex min-w-0 flex-col">
+        {header}
+        <PageBody>
+          <ErrorState
+            title="Machines didn't load"
+            message={describeError(error).body}
+            action={
+              <Button variant="secondary" size="sm" icon="refresh" onClick={() => void reload()}>
+                Try again
+              </Button>
+            }
+          />
+        </PageBody>
+      </div>
+    );
+  }
+
+  // First run: no machines at all — a different empty from "nothing matches".
+  if (data && data.machines.length === 0) {
+    return (
+      <div className="flex min-w-0 flex-col">
+        {header}
+        <PageBody>
+          <section aria-label="Machines" className="rounded-panel border border-border-strong bg-surface">
+            <EmptyState
+              variant="page"
+              icon="machine"
+              title="No machines yet — register your first"
+              description="Registered machines appear here with their status, where each one is right now and what's booked over the next 90 days."
+              action={registerButton}
+            />
+          </section>
+        </PageBody>
+        {dialogs}
+      </div>
+    );
+  }
+
+  const segments = data ? allocationSegments(rows, access, today) : [];
+  const activeSegment = now && !status ? now : status && !now ? status : null;
+  const attention = data ? attentionItems(rows, access, applyOnly) : [];
+  const showLane = access.rentals || access.maintenance;
+  // Checkbox, machine, class, status and the row menu, plus the permission-gated columns.
+  const columnCount = 5 + (access.rentals ? 2 : 0) + (showLane ? 1 : 0);
+  const months = laneMonths(today);
+  const tableLoading = !data || checking;
+
+  return (
+    <div className="flex min-w-0 flex-col">
+      {header}
+      <PageBody>
+        {data ? (
+          <AllocationBar
+            total={{ count: rows.length, label: "Total fleet", sub: "All statuses" }}
+            segments={segments}
+            active={activeSegment}
+            onSelect={(key) => {
+              if (!key) set({ now: null, status: null });
+              else if ((DEPLOYMENTS as string[]).includes(key)) set({ now: key, status: null });
+              else set({ status: key, now: null });
+            }}
+          />
+        ) : (
+          <div aria-hidden="true" className="flex h-[92px] gap-px overflow-hidden rounded-panel border border-border-soft bg-surface">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="flex flex-1 flex-col gap-2.5 px-4 py-3.5">
+                <Skeleton className="h-6 w-12" />
+                <Skeleton className="h-2.5 w-3/5" />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <AttentionStrip items={attention} />
+
+        {/* No overflow-hidden on the card, so the stacked cards' row menus aren't clipped by it (the table keeps its own scroll box). */}
+        <section aria-label="Machines" className="min-w-0 rounded-panel border border-border-strong bg-surface">
+          {selected.size > 0 ? (
+            <BulkBar
+              className="rounded-t-[5px]"
+              count={selected.size}
+              noun="machines"
+              context={
+                <>
+                  {filterParts.length
+                    ? `of ${filtered.length} matching “${filterParts.join(" · ")}”`
+                    : `of ${plural(filtered.length, "machine")}`}
+                  {selected.size < filtered.length && (
+                    <button
+                      type="button"
+                      onClick={() => setSelected(new Set(filtered.map((r) => r.machine.id)))}
+                      className="ml-2.5 border-0 bg-transparent p-0 text-xs font-medium text-accent-on-dark underline-offset-2 hover:underline focus-visible:!outline-focus-on-dark"
+                    >
+                      Select all {filtered.length} matching
+                    </button>
+                  )}
+                </>
+              }
+              actions={
+                <>
+                  <BulkBarButton onClick={exportSelection}>Export CSV</BulkBarButton>
+                  {access.quotations && (
+                    <>
+                      {unquotable > 0 && (
+                        <span className="text-xs text-rail-tag">
+                          {unquotable} of {selected.size} selected can&apos;t be quoted
+                        </span>
+                      )}
+                      <BulkBarButton
+                        primary
+                        disabled={unquotable > 0}
+                        title={unquotable > 0 ? "Only Active machines can be quoted. Deselect the others." : undefined}
+                        onClick={addToQuotation}
+                      >
+                        Add to quotation
+                      </BulkBarButton>
+                    </>
+                  )}
+                </>
+              }
+              onClear={() => setSelected(new Set())}
+            />
+          ) : (
+            <TableToolbar className="rounded-t-[5px]">
+              <Input
+                type="search"
+                size="sm"
+                aria-label="Search machines"
+                placeholder="Asset code, registration, chassis, product"
+                enterKeyHint="search"
+                className="w-[300px] max-[759px]:w-full"
+                prefix={<Icon name="search" size={13} />}
+                suffix={search.pending && search.value.trim().length >= 2 ? "Searching…" : undefined}
+                value={search.value}
+                onChange={(e) => search.setValue(e.target.value)}
+              />
+              {urlQ.length === 1 && <span className="text-[11px] text-meta-light">Type at least 2 characters to search.</span>}
+              <Select
+                size="sm"
+                aria-label="Category"
+                placeholder="All categories"
+                options={(data?.categories ?? []).map((c) => ({ value: c.id, label: c.name }))}
+                value={category}
+                onChange={(e) => set({ category: e.target.value || null })}
+                className="w-44"
+              />
+              <Select
+                size="sm"
+                aria-label="Machine status"
+                placeholder="Any status"
+                options={statusOptions("machine")}
+                value={status ?? ""}
+                onChange={(e) => set({ status: e.target.value || null })}
+                className="w-44"
+              />
+              {access.rentals && (
+                <Select
+                  size="sm"
+                  aria-label="Right now"
+                  placeholder="Right now: any"
+                  options={DEPLOYMENTS.map((d) => ({ value: d, label: statusLabel("deployment", d) }))}
+                  value={now ?? ""}
+                  onChange={(e) => set({ now: e.target.value || null })}
+                  className="w-40"
+                />
+              )}
+              {access.rentals && (
+                <FreeBetween
+                  from={from}
+                  to={to}
+                  error={rangeError}
+                  warning={rangeWarning}
+                  checking={checking}
+                  failure={rangeFailed ? `${describeError(rangeState?.error, "The availability check didn't run").body} The list isn't filtered by these dates.` : null}
+                  onRetry={() => setCheckNonce((n) => n + 1)}
+                  onChange={(next) => set(next)}
+                />
+              )}
+              {flag && <FilterChip label={FLAG_LABEL[flag]} onRemove={() => set({ flag: null })} />}
+              {hasFilters && (
+                <Button variant="tertiary" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              )}
+            </TableToolbar>
+          )}
+
+          {!tableLoading && filtered.length === 0 ? (
+            freeMap && matchingBeforeRange > 0 ? (
+              <EmptyState
+                title="No machine is free in this window"
+                description={`Every machine that matches is booked or in the workshop at some point between ${formatDate(from)} and ${to ? formatDate(to) : "an open end"}. Try shorter dates, or clear the range.`}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => set({ from: null, to: null })}>
+                    Clear dates
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                title={`No machines match ${filterParts.join(" · ") || "these filters"}.`}
+                description="Change or clear the filters to see more of your fleet."
+                action={
+                  <Button variant="secondary" size="sm" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                }
+              />
+            )
+          ) : (
+            <>
+              <div className="max-[759px]:hidden">
+                <Table bare minWidth={access.rentals ? 1180 : 860} caption="Machines" aria-busy={tableLoading || undefined}>
+                  <Thead>
+                    <Tr>
+                      <Th className="w-10 pr-0">
+                        <SelectAllBox
+                          checked={pageAllSelected}
+                          indeterminate={!pageAllSelected && pageSomeSelected}
+                          disabled={tableLoading || pageRows.length === 0}
+                          onChange={togglePage}
+                          label="Select all machines on this page"
+                        />
+                      </Th>
+                      <Th
+                        className="min-w-[250px]"
+                        aria-sort={sort === "asset" || sort === "product" ? (dir === "asc" ? "ascending" : "descending") : "none"}
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <SortButton label="Asset code" direction={sort === "asset" ? dir : null} onClick={() => toggleSort("asset")} />
+                          <span aria-hidden="true" className="text-separator-text">
+                            ·
+                          </span>
+                          <SortButton label="Product" direction={sort === "product" ? dir : null} onClick={() => toggleSort("product")} />
+                        </span>
+                      </Th>
+                      <Th className="w-[150px]">Class &amp; capacity</Th>
+                      <Th className="w-[140px]" onSort={() => toggleSort("status")} sortDirection={sort === "status" ? dir : null}>
+                        Status
+                      </Th>
+                      {access.rentals && <Th className="w-[230px]">Right now</Th>}
+                      {showLane && (
+                        <Th className="w-[220px]">
+                          <span className="flex flex-col gap-1">
+                            <span>Next {LANE_DAYS} days</span>
+                            <span aria-hidden="true" className="relative block h-3 font-mono text-[9px] font-normal normal-case tracking-normal text-meta">
+                              <span className="absolute left-0 top-0">Today</span>
+                              {months.map((m) => (
+                                <span
+                                  key={m.date}
+                                  className="absolute top-0 whitespace-nowrap border-l border-border-header pl-1"
+                                  style={{ left: `${m.left}%` }}
+                                >
+                                  {m.label}
+                                </span>
+                              ))}
+                            </span>
+                          </span>
+                        </Th>
+                      )}
+                      {access.rentals && (
+                        <Th align="right" className="w-[120px]">
+                          Rate
+                        </Th>
+                      )}
+                      <Th className="w-12 pl-0">
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    </Tr>
+                  </Thead>
+                  {tableLoading ? (
+                    <TableSkeleton columns={columnCount} rows={8} label={checking ? "Checking availability" : "Loading machines"} />
+                  ) : (
+                    <Tbody>
+                      {pageRows.map((row) => {
+                        const href = `/machines/${row.machine.id}`;
+                        const isSelected = selected.has(row.machine.id);
+                        return (
+                          <Tr
+                            key={row.machine.id}
+                            interactive
+                            selected={isSelected}
+                            className={cx("cursor-pointer", row.machine.status === MachineStatus.retired && !isSelected && "bg-surface-sunk")}
+                            onClick={(e) => openRow(e, href)}
+                            onAuxClick={(e) => {
+                              if (e.button === 1) openRow(e, href);
+                            }}
+                          >
+                            <Td className="w-10 pr-0">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggle(row.machine.id)}
+                                aria-label={`Select ${row.machine.assetCode}`}
+                                className="h-4 w-4 cursor-pointer accent-accent"
+                              />
+                            </Td>
+                            <Td>
+                              <MachineCell row={row} href={href} />
+                            </Td>
+                            <Td>
+                              <CellStack
+                                title={row.subcategory?.name ?? row.category?.name ?? "Not specified"}
+                                sub={capacityLabel(row.product) ? <span className="font-mono">{capacityLabel(row.product)}</span> : undefined}
+                              />
+                            </Td>
+                            <Td>
+                              <Status domain="machine" value={row.machine.status} size="sm" />
+                            </Td>
+                            {access.rentals && (
+                              <Td>
+                                <RightNowCell row={row} names={data.customerNames} access={access} />
+                              </Td>
+                            )}
+                            {showLane && (
+                              <Td>
+                                <AvailabilityLane
+                                  windowStart={today}
+                                  windowDays={LANE_DAYS}
+                                  blocks={row.blocks}
+                                  gapLabels={row.gap}
+                                  height={24}
+                                  showLabels={false}
+                                />
+                              </Td>
+                            )}
+                            {access.rentals && (
+                              <Td align="right">
+                                <RateCell rental={row.current} />
+                              </Td>
+                            )}
+                            <Td className="w-12 pl-0">
+                              <Menu label={`More actions for ${row.machine.assetCode}`} triggerSize="sm" triggerVariant="ghost" items={rowMenu(row)} width={284} />
+                            </Td>
+                          </Tr>
+                        );
+                      })}
+                    </Tbody>
+                  )}
+                </Table>
+              </div>
+
+              {/* Below 760px the table becomes stacked cards with the same information. */}
+              {tableLoading ? (
+                <div aria-busy="true" aria-label="Loading machines" className="flex flex-col gap-3 px-3.5 py-3.5 min-[760px]:hidden">
+                  {Array.from({ length: 4 }, (_, i) => (
+                    <Skeleton key={i} className="h-16 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <ul className="m-0 list-none p-0 min-[760px]:hidden">
+                  {pageRows.map((row) => (
+                    <MachineCard
+                      key={row.machine.id}
+                      row={row}
+                      access={access}
+                      showLane={showLane}
+                      names={data.customerNames}
+                      today={today}
+                      selected={selected.has(row.machine.id)}
+                      onToggle={() => toggle(row.machine.id)}
+                      menu={rowMenu(row)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+
+          <TableFooter className="rounded-b-[5px]">
+            {showLane && (
+              <AvailabilityLaneLegend
+                items={access.rentals ? LANE_LEGEND : LANE_LEGEND.filter((item) => item.kind.startsWith("workshop"))}
+                todayLabel=""
+                className="mr-auto"
+              />
+            )}
+            {!access.rentals && (
+              <span className="text-[11px] text-meta">Your role can&apos;t view rentals, so where each machine is right now isn&apos;t shown.</span>
+            )}
+            <span className="flex items-center gap-1.5 text-xs text-meta">
+              <span aria-hidden="true">Per page</span>
+              <Select
+                size="sm"
+                aria-label="Machines per page"
+                options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+                value={String(size)}
+                onChange={(e) => set({ size: Number(e.target.value) === DEFAULT_PAGE_SIZE ? null : e.target.value })}
+                className="w-[68px]"
+              />
+            </span>
+            <Pagination
+              page={currentPage}
+              pageCount={pageCount}
+              onPageChange={(p) => set({ page: p === 1 ? null : p })}
+              total={tableLoading ? undefined : filtered.length}
+              pageSize={size}
+              noun="machines"
+            />
+          </TableFooter>
+        </section>
+      </PageBody>
+      {dialogs}
     </div>
   );
 }
 
-function deploymentToneClass(dep: Deployment): string {
-  switch (dep) {
-    case "on_rent":
-      return "text-on-rent";
-    case "available":
-      return "text-available";
-    case "maintenance":
-      return "text-attention";
-    case "retired":
-      return "text-out-of-service";
+// ------------------------------------------------------------------ summary + attention
+
+function allocationSegments(rows: Row[], access: Access, today: string): AllocationSegment[] {
+  const total = rows.length || 1;
+  const segment = (key: string, list: Row[], label: string, tone: AllocationSegment["tone"], sub?: string): AllocationSegment => ({
+    key,
+    count: list.length,
+    pct: `${Math.round((list.length / total) * 100)}%`,
+    grow: list.length || 1,
+    label,
+    tone,
+    sub,
+  });
+  const inWorkshop = rows.filter((r) => r.machine.status === MachineStatus.under_maintenance);
+  const retired = rows.filter((r) => r.machine.status === MachineStatus.retired);
+  const noReturn = inWorkshop.filter((r) => r.job && r.job.endDate === null).length;
+  const nextBack = inWorkshop
+    .map((r) => r.job?.endDate)
+    .filter((d): d is string => Boolean(d) && (d ?? "") >= today)
+    .sort()[0];
+  const workshopSub = !access.maintenance
+    ? "Job dates need the Maintenance permission"
+    : noReturn
+      ? `${noReturn} without a return date`
+      : nextBack
+        ? `Next back ${formatShortDate(nextBack)}`
+        : undefined;
+  const workshop = segment(MachineStatus.under_maintenance, inWorkshop, "Under maintenance", "attention", workshopSub);
+  const out = segment(MachineStatus.retired, retired, "Retired", "out-of-service", "Excluded from quoting and rentals");
+
+  if (!access.rentals) {
+    const active = rows.filter((r) => r.machine.status === MachineStatus.active);
+    return [segment(MachineStatus.active, active, "Active", "available", "Where they are needs the Rentals permission"), workshop, out];
   }
+
+  const onRent = rows.filter((r) => r.deployment === "on_rent");
+  const ending = onRent.filter((r) => {
+    const end = r.active?.endDate;
+    return end ? daysBetween(today, end) >= 0 && daysBetween(today, end) <= ENDING_DAYS : false;
+  }).length;
+  const openEnded = onRent.filter((r) => r.active && r.active.endDate === null).length;
+  const booked = rows.filter((r) => r.deployment === "booked");
+  const lateStarts = booked.filter((r) => r.current && r.current.startDate < today).length;
+  const nextStart = booked
+    .map((r) => r.current?.startDate)
+    .filter((d): d is string => Boolean(d) && (d ?? "") >= today)
+    .sort()[0];
+  const returning = rows.filter((r) => r.deployment === "off_rent");
+  const oldestOffRent = returning
+    .map((r) => r.current?.actualEndDate ?? r.current?.endDate)
+    .filter((d): d is string => Boolean(d))
+    .sort()[0];
+  const available = rows.filter((r) => r.deployment === "available");
+  const idle = available.filter((r) => r.idle && r.idle.days > IDLE_DAYS).length;
+
+  return [
+    segment(
+      "on_rent",
+      onRent,
+      "On rent",
+      "on-rent",
+      ending ? `${ending} end within ${ENDING_DAYS} days` : openEnded ? `${openEnded} with no end date` : onRent.length ? `None end in the next ${ENDING_DAYS} days` : undefined,
+    ),
+    segment(
+      "booked",
+      booked,
+      "Booked",
+      "on-rent",
+      lateStarts ? `${lateStarts} past the planned start` : nextStart ? `Next starts ${formatShortDate(nextStart)}` : undefined,
+    ),
+    segment("off_rent", returning, "Returning", "attention", oldestOffRent ? `Off rent since ${formatShortDate(oldestOffRent)} at the earliest` : undefined),
+    segment(
+      "available",
+      available,
+      "Available",
+      "available",
+      idle ? `${idle} idle over ${IDLE_DAYS} days` : available.length ? `None idle over ${IDLE_DAYS} days` : undefined,
+    ),
+    workshop,
+    out,
+  ];
 }
 
-function laneBorderClass(dep: Deployment): string {
-  switch (dep) {
-    case "on_rent":
-      return "border-l-[3px] border-l-on-rent";
-    case "available":
-      return "border-l-[3px] border-l-available";
-    case "maintenance":
-      return "border-l-[3px] border-l-attention-lane-edge";
-    case "retired":
-      return "border-l-[3px] border-l-out-of-service";
+function attentionItems(rows: Row[], access: Access, applyOnly: (updates: Record<string, string | null>) => void): AttentionItem[] {
+  const items: AttentionItem[] = [];
+  if (access.rentals) {
+    const ending = rows.filter((r) => r.endingSoon).length;
+    items.push({
+      key: "ending",
+      count: ending,
+      text: `${ending === 1 ? "rental ends" : "rentals end"} within ${ENDING_DAYS} days with nothing booked after`,
+      onClick: () => applyOnly({ flag: "ending" }),
+    });
+    const idle = rows.filter((r) => r.idle && r.idle.days > IDLE_DAYS).length;
+    items.push({
+      key: "idle",
+      count: idle,
+      text: `${idle === 1 ? "machine" : "machines"} idle longer than ${IDLE_DAYS} days`,
+      onClick: () => applyOnly({ flag: "idle" }),
+    });
   }
+  if (access.maintenance) {
+    const jobs = rows.reduce((sum, r) => sum + r.noReturnJobs, 0);
+    items.push({
+      key: "noreturn",
+      count: jobs,
+      text: `workshop ${jobs === 1 ? "job has" : "jobs have"} no return date`,
+      onClick: () => applyOnly({ flag: "noreturn" }),
+    });
+  }
+  return items;
+}
+
+// ------------------------------------------------------------------ cells
+
+function MachineCell({ row, href }: { row: Row; href: string }) {
+  const registration = <span className="font-mono">{row.machine.registrationNumber}</span>;
+  return (
+    <div className="flex items-start gap-2.5">
+      <span title={row.category?.name ?? "Category not found"} className="mt-0.5 flex-none text-tile-icon">
+        <Icon name={categoryIcon(row.category)} size={16} />
+      </span>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <UILink
+          href={href}
+          className="self-start whitespace-nowrap font-mono text-[13px] font-semibold leading-tight text-ink no-underline hover:text-accent-text hover:underline"
+        >
+          {row.machine.assetCode}
+        </UILink>
+        <CellStack title={productName(row.product) ?? "Catalogue product not found"} sub={registration} />
+      </div>
+    </div>
+  );
+}
+
+function RightNowCell({ row, names, access }: { row: Row; names: Map<string, string>; access: Access }) {
+  const { deployment, current, machine } = row;
+  if (!deployment) {
+    if (machine.status === MachineStatus.under_maintenance) {
+      return (
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-xs text-ink-strong">
+            {row.job ? `In the workshop since ${formatShortDate(row.job.startDate)}` : "In the workshop"}
+          </span>
+          <span className={cx("text-[11px] leading-tight", row.job && !row.job.endDate ? "text-destructive" : "text-meta-light")}>
+            {!access.maintenance
+              ? "Job dates need the Maintenance permission"
+              : !row.job
+                ? "No job in progress is recorded"
+                : row.job.endDate
+                  ? `Back ${formatShortDate(row.job.endDate)}`
+                  : "No return date"}
+          </span>
+          {row.active && (
+            <UILink href={`/rentals/${row.active.id}`} className="text-[11px] font-medium text-attention no-underline hover:underline">
+              {rentalRef(row.active.id)} is still Active
+            </UILink>
+          )}
+        </div>
+      );
+    }
+    return (
+      <span className="text-xs text-disabled-text">
+        —<span className="sr-only">Retired machines aren&apos;t deployed</span>
+      </span>
+    );
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <Status domain="deployment" value={deployment} />
+        {current && (
+          <UILink
+            href={`/rentals/${current.id}`}
+            className="whitespace-nowrap font-mono text-[11px] font-medium text-accent-text no-underline hover:text-accent-text-hover hover:underline"
+          >
+            {rentalRef(current.id)}
+          </UILink>
+        )}
+      </span>
+      {current ? (
+        <CellStack
+          title={customerOf(current, names)}
+          sub={
+            <span className="font-mono">
+              {deployment === "off_rent"
+                ? `off rent since ${formatShortDate(current.actualEndDate ?? current.endDate)}`
+                : formatCompactRange(current.startDate, current.endDate)}
+            </span>
+          }
+        />
+      ) : row.idle ? (
+        <span className={cx("text-[11px] leading-tight", row.idle.days > IDLE_DAYS ? "text-attention" : "text-meta-light")}>
+          {row.idle.reason === "returned"
+            ? `No rental since ${formatShortDate(row.idle.since)} · ${plural(row.idle.days, "day")}`
+            : `Not rented yet · registered ${formatShortDate(row.idle.since)}`}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function RateCell({ rental }: { rental: Rental | null }) {
+  if (!rental) {
+    return (
+      <span className="text-xs text-disabled-text">
+        —<span className="sr-only">No current rental</span>
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className="font-mono text-[13px] font-semibold leading-tight text-ink">{formatMoney(rental.rate)}</span>
+      <span className="text-[11px] leading-tight text-meta-light">{formatRateUnit(rental.rateUnit)}</span>
+    </div>
+  );
+}
+
+function MachineCard({
+  row,
+  access,
+  showLane,
+  names,
+  today,
+  selected,
+  onToggle,
+  menu,
+}: {
+  row: Row;
+  access: Access;
+  showLane: boolean;
+  names: Map<string, string>;
+  today: string;
+  selected: boolean;
+  onToggle: () => void;
+  menu: MenuItem[];
+}) {
+  const href = `/machines/${row.machine.id}`;
+  const capacity = capacityLabel(row.product);
+  return (
+    <li className={cx("flex flex-col gap-2.5 border-b border-border px-3.5 py-3 last:border-0", selected && "bg-accent-wash")}>
+      <div className="flex items-start gap-2.5">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          aria-label={`Select ${row.machine.assetCode}`}
+          className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-accent"
+        />
+        <div className="min-w-0 flex-1">
+          <MachineCell row={row} href={href} />
+        </div>
+        <Status domain="machine" value={row.machine.status} size="sm" />
+        <Menu label={`More actions for ${row.machine.assetCode}`} triggerSize="sm" triggerVariant="ghost" items={menu} width={284} />
+      </div>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 pl-[26px] text-xs text-meta">
+        <span>{[row.subcategory?.name ?? row.category?.name, capacity].filter(Boolean).join(" · ") || "Class not specified"}</span>
+        {access.rentals && <RateCell rental={row.current} />}
+      </div>
+      {access.rentals && (
+        <div className="pl-[26px]">
+          <RightNowCell row={row} names={names} access={access} />
+        </div>
+      )}
+      {showLane && (
+        <div className="pl-[26px]">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-meta">Next {LANE_DAYS} days</span>
+          <AvailabilityLane windowStart={today} windowDays={LANE_DAYS} blocks={row.blocks} gapLabels={row.gap} height={22} showLabels={false} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+// ------------------------------------------------------------------ toolbar parts
+
+function FreeBetween({
+  from,
+  to,
+  error,
+  warning,
+  checking,
+  failure,
+  onRetry,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  error: string | null;
+  warning: string | null;
+  checking: boolean;
+  failure: string | null;
+  onRetry: () => void;
+  onChange: (updates: Record<string, string | null>) => void;
+}) {
+  const messageId = "machines-free-between-msg";
+  const inputClass =
+    "h-6 w-[128px] rounded-xs border border-border-control bg-surface px-1.5 font-mono text-xs text-ink outline-none focus:border-accent";
+  return (
+    <div className="flex flex-col gap-1">
+      <div
+        role="group"
+        aria-label="Free between"
+        className={cx(
+          "flex flex-wrap items-center gap-1.5 rounded-cell border bg-on-rent-bg px-2 py-[3px]",
+          error ? "border-danger-edge" : "border-on-rent/20",
+        )}
+      >
+        <Icon name="calendar_check" size={13} className="text-on-rent" />
+        <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-on-rent">Free between</span>
+        <label className="sr-only" htmlFor="machines-free-from">
+          Free from
+        </label>
+        <input
+          id="machines-free-from"
+          type="date"
+          className={inputClass}
+          value={from}
+          onChange={(e) => onChange({ from: e.target.value || null, ...(e.target.value ? {} : { to: null }) })}
+          aria-describedby={error || warning || failure ? messageId : undefined}
+        />
+        <span className="text-xs text-meta">to</span>
+        <label className="sr-only" htmlFor="machines-free-to">
+          Free until (optional)
+        </label>
+        <input
+          id="machines-free-to"
+          type="date"
+          className={cx(inputClass, error && "border-danger-edge")}
+          value={to}
+          min={from || undefined}
+          disabled={!from}
+          onChange={(e) => onChange({ to: e.target.value || null })}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error || warning || failure ? messageId : undefined}
+        />
+        {checking && (
+          <span role="status" className="text-[11px] font-medium text-on-rent">
+            Checking…
+          </span>
+        )}
+        {(from || to) && (
+          <IconButton
+            icon="close"
+            label="Clear dates"
+            variant="ghost"
+            size="sm"
+            iconSize={12}
+            className="!h-6 !w-6"
+            onClick={() => onChange({ from: null, to: null })}
+          />
+        )}
+      </div>
+      {error ? (
+        <FieldMessage id={messageId} tone="error">
+          {error}
+        </FieldMessage>
+      ) : failure ? (
+        <FieldMessage id={messageId} tone="error">
+          {failure}{" "}
+          <button type="button" onClick={onRetry} className="border-0 bg-transparent p-0 font-medium text-accent-text underline">
+            Try again
+          </button>
+        </FieldMessage>
+      ) : warning ? (
+        <FieldMessage id={messageId} tone="warning">
+          {warning}
+        </FieldMessage>
+      ) : null}
+    </div>
+  );
+}
+
+function FilterChip({ label, onRemove }: { label: ReactNode; onRemove: () => void }) {
+  return (
+    <span className="inline-flex h-7 items-center gap-1 rounded-cell border border-accent-wash-border bg-accent-wash pl-2.5 pr-0.5 text-xs font-medium text-ink-strong">
+      {label}
+      <IconButton
+        icon="close"
+        label={`Remove filter: ${typeof label === "string" ? label : "this filter"}`}
+        variant="ghost"
+        size="sm"
+        iconSize={12}
+        noTooltip
+        className="!h-6 !w-6"
+        onClick={onRemove}
+      />
+    </span>
+  );
+}
+
+function SortButton({ label, direction, onClick }: { label: string; direction: SortDirection; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Sort by ${label.toLowerCase()}${direction ? `, ${direction === "asc" ? "ascending" : "descending"}` : ""}`}
+      className={cx(
+        "inline-flex items-center gap-1 border-0 bg-transparent p-0 text-[10px] font-semibold uppercase tracking-[0.1em] hover:text-ink",
+        direction ? "text-ink" : "text-meta",
+      )}
+    >
+      {label}
+      <Icon
+        name="chevron_down"
+        size={11}
+        className={cx("transition-transform", direction === "asc" && "rotate-180", !direction && "opacity-35")}
+      />
+    </button>
+  );
+}
+
+function SelectAllBox({
+  checked,
+  indeterminate,
+  disabled,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      aria-label={label}
+      className="h-4 w-4 cursor-pointer accent-accent disabled:cursor-not-allowed"
+    />
+  );
 }
