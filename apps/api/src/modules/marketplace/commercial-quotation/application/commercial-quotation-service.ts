@@ -215,6 +215,13 @@ export class CommercialQuotationService {
           "renterOrganizationId must match the Requirement's renter organization",
         );
       }
+      // The requirement names the equipment type; a machine of another type
+      // can't answer it.
+      const product = await this.productRepository.findById(machine.product_id);
+      if (product?.product_subcategory_id !== requirement.product_subcategory_id) {
+        const message = `${machine.asset_code} isn't the equipment type this requirement asks for.`;
+        throw new ValidationError(message, [{ path: "machineId", message }]);
+      }
     }
 
     if (input.quotationResponseId) {

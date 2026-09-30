@@ -1045,6 +1045,18 @@ describe("CommercialQuotationService", () => {
     expect(quotation.quotationResponseId).toBe(RESPONSE_ID);
   });
 
+  it("refuses a machine whose equipment type isn't the one the requirement asks for", async () => {
+    const service = buildService([machine()], [requirement({ product_subcategory_id: "subcategory-other" })]);
+    await expect(
+      service.createQuotation("user-1", RC_ORG_ID, {
+        ...pathBInput,
+        clientSnapshot: undefined,
+        renterOrganizationId: RENTER_ORG_ID,
+        requirementId: OPEN_REQUIREMENT_ID,
+      }),
+    ).rejects.toMatchObject({ issues: [{ path: "machineId" }] });
+  });
+
   it("locks the quotation's rate unit to the requirement's own expectedDurationUnit, ignoring the caller's choice", async () => {
     const service = buildService([machine()], [requirement({ expected_duration_unit: "month" })]);
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {

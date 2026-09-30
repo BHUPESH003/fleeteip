@@ -358,8 +358,18 @@ export function CreateQuotationDialog({
   const today = todayIsoDate();
 
   const machineList = useMemo(() => machines ?? [], [machines]);
-  // Only Active machines can be quoted (retired ones are refused by the API; under-maintenance ones aren't offered).
-  const activeMachines = useMemo(() => machineList.filter((m) => m.status === MachineStatus.active), [machineList]);
+  // Only Active machines can be quoted (retired ones are refused by the API;
+  // under-maintenance ones aren't offered). Against a requirement, only
+  // machines of the equipment type it asks for — the API refuses others too.
+  const activeMachines = useMemo(
+    () =>
+      machineList.filter(
+        (m) =>
+          m.status === MachineStatus.active &&
+          (!requirement || products.get(m.productId)?.productSubcategoryId === requirement.productSubcategoryId),
+      ),
+    [machineList, requirement, products],
+  );
   const activeIds = useMemo(() => new Set(activeMachines.map((m) => m.id)), [activeMachines]);
 
   const lockedRenterId = isFromRequirement ? (requirement?.renterOrganizationId ?? "") : null;
@@ -505,13 +515,12 @@ export function CreateQuotationDialog({
   const unquotable = machineList.filter((m) => selected.has(m.id) && m.status !== MachineStatus.active);
   const missing = machines === null ? [] : initialMachineIds.filter((id) => !machineList.some((m) => m.id === id));
   const selectedActive = activeMachines.filter((m) => selected.has(m.id));
-  const matchesRequirement = (m: Machine) => Boolean(requirement && products.get(m.productId)?.productSubcategoryId === requirement.productSubcategoryId);
   const visibleMachines = useMemo(() => {
     const q = machineFilter.trim().toLowerCase();
     return activeMachines
       .filter((m) => !q || `${m.assetCode} ${m.registrationNumber} ${productName(products.get(m.productId)) ?? ""}`.toLowerCase().includes(q))
-      .sort((a, b) => Number(matchesRequirement(b)) - Number(matchesRequirement(a)) || a.assetCode.localeCompare(b.assetCode));
-  }, [activeMachines, machineFilter, products, requirement]);
+      .sort((a, b) => a.assetCode.localeCompare(b.assetCode));
+  }, [activeMachines, machineFilter, products]);
 
   // Warnings never block; they show when errors would.
   const periodUnitWarning =
@@ -682,9 +691,16 @@ export function CreateQuotationDialog({
           {loading && canListMachines && !machinesFailed ? (
             <LoadingState label={loadingContext ? "Loading the requirement…" : loadingAuctionPrefill ? "Loading your last bid…" : "Loading machines…"} />
           ) : noMachines ? (
-            <FormBanner tone="info" title="No machine can be quoted right now">
-              Only Active machines can be quoted. Register a machine, or bring one back from the workshop, first.
-            </FormBanner>
+            requirement ? (
+              <FormBanner tone="info" title={`No machine of this type to quote${requirementEquipment ? `: ${requirementEquipment}` : ""}`}>
+                {requirementRef(requirement.id)} asks for equipment your fleet has no Active machine of. Register one, or bring one back from
+                the workshop, to quote it.
+              </FormBanner>
+            ) : (
+              <FormBanner tone="info" title="No machine can be quoted right now">
+                Only Active machines can be quoted. Register a machine, or bring one back from the workshop, first.
+              </FormBanner>
+            )
           ) : canListMachines && !machinesFailed ? (
             <>
               {requirement && (
@@ -755,7 +771,6 @@ export function CreateQuotationDialog({
                           description={[
                             productName(products.get(machine.productId)),
                             machine.registrationNumber,
-                            matchesRequirement(machine) ? "matches the requirement's equipment type" : null,
                           ]
                             .filter(Boolean)
                             .join(" · ")}
@@ -764,7 +779,7 @@ export function CreateQuotationDialog({
                     )}
                   </div>
                   <span id="quote-machines-msg" className={cx("text-[11px] leading-[1.4]", form.errors.machines ? "text-destructive" : "text-meta-light")}>
-                    {form.errors.machines ?? `${plural(selectedActive.length, "machine")} selected. Only Active machines are listed.`}
+                    {form.errors.machines ?? `${plural(selectedActive.length, "machine")} selected. ${requirement ? "Only Active machines of the requested type are listed." : "Only Active machines are listed."}`}
                   </span>
                   {unquotable.length > 0 && (
                     <FormBanner tone="warning" title={`${plural(unquotable.length, "preselected machine")} can't be quoted`}>
