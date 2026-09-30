@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button, IconButton } from "./Button";
 import { cx } from "./cx";
 import { Icon, type IconName } from "./Icon";
@@ -56,6 +57,7 @@ export function Menu({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLElement | null>>([]);
   const menuId = useId();
 
@@ -63,24 +65,64 @@ export function Menu({
     const count = items.length;
     if (count === 0) return;
     const next = ((index % count) + count) % count;
-    itemRefs.current[next]?.focus();
+    itemRefs.current[next]?.focus({ preventScroll: true });
   }
 
   useEffect(() => {
     if (!open) return;
-    const firstEnabled = items.findIndex((item) => !item.disabled);
-    focusItem(firstEnabled >= 0 ? firstEnabled : 0);
     function handleClick(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!containerRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-    // focusItem reads refs only
+  }, [open]);
+
+  // The panel is portalled out (position: fixed) so a table's or
+  // card's overflow can't clip it. Placed under the trigger, flipped above
+  // when there's no room below, and kept inside the viewport.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !panel) return;
+    function place() {
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      if (!trigger || !panel) return;
+      const gap = 6;
+      const edge = 12;
+      const panelWidth = Math.min(width, window.innerWidth - edge * 2);
+      panel.style.width = `${panelWidth}px`;
+      const height = panel.offsetHeight;
+      const below = trigger.bottom + gap;
+      const above = trigger.top - gap - height;
+      const preferred = align === "right" ? trigger.right - panelWidth : trigger.left;
+      panel.style.top = `${below + height > window.innerHeight - edge && above >= edge ? above : below}px`;
+      panel.style.left = `${Math.min(Math.max(preferred, edge), window.innerWidth - panelWidth - edge)}px`;
+    }
+    place();
+    // Follow the trigger when the page or a table scrolls, or the window resizes.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    const firstEnabled = items.findIndex((item) => !item.disabled);
+    focusItem(firstEnabled >= 0 ? firstEnabled : 0);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+    // focusItem reads refs only; items are read once when the menu opens.
+  }, [open, align, width]);
+
+  // Focus goes back after the re-render: the trigger's tooltip wrapper
+  // changes with `open`, so the element focused before may be replaced.
+  const returnFocusRef = useRef(false);
+  useEffect(() => {
+    if (open || !returnFocusRef.current) return;
+    returnFocusRef.current = false;
+    triggerRef.current?.focus();
   }, [open]);
 
   function close(returnFocus = true) {
+    returnFocusRef.current = returnFocus;
     setOpen(false);
-    if (returnFocus) triggerRef.current?.focus();
   }
 
   function onMenuKeyDown(event: React.KeyboardEvent) {
@@ -137,17 +179,14 @@ export function Menu({
           {...triggerProps}
         />
       )}
-      {open && (
+      {open && createPortal(
         <div
+          ref={panelRef}
           id={menuId}
           role="menu"
           aria-label={label}
           onKeyDown={onMenuKeyDown}
-          style={{ width }}
-          className={cx(
-            "absolute top-[calc(100%+6px)] z-30 max-w-[calc(100vw-24px)] rounded-panel border border-border-control bg-surface py-[5px] shadow-menu animate-fip-in",
-            align === "right" ? "right-0" : "left-0",
-          )}
+          className="fixed z-50 rounded-panel border border-border-control bg-surface py-[5px] shadow-menu animate-fip-in"
         >
           {items.map((item, index) => {
             const itemClass = cx(
@@ -211,7 +250,10 @@ export function Menu({
               </div>
             );
           })}
-        </div>
+        </div>,
+        // Inside a modal (native <dialog> top layer, or a drawer's focus
+        // scope) the panel must stay in it, or it would be inert/behind it.
+        triggerRef.current?.closest<HTMLElement>('dialog, [role="dialog"]') ?? document.body,
       )}
     </div>
   );
