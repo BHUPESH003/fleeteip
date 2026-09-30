@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDate } from "../shared/dates.js";
 import { clientSnapshotSchema, operatorScopeSchema, rateUnitSchema } from "../rental/index.js";
 import { responsiblePartySchema } from "../quotation/index.js";
 
@@ -27,8 +28,8 @@ export const workOrderSchema = z.object({
   // customer) — a Project only exists on the Renter side of a Requirement.
   projectId: z.string().uuid().nullable(),
   machineId: z.string().uuid(),
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   rate: z.number().positive(),
   rateUnit: rateUnitSchema,
   mobilizationCharge: z.number().nonnegative().nullable(),

@@ -2,6 +2,7 @@
 
 import { useToast, type ToastInput } from "@fleetip/ui";
 import { useCallback, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { isoDate } from "@fleetip/contracts/shared";
 import type { ZodType, ZodTypeDef } from "zod";
 import { useConnection } from "./connection";
 import { OFFLINE_HINT, toFormFailure, type StatusCopy } from "./errors";
@@ -19,6 +20,8 @@ import { OFFLINE_HINT, toFormFailure, type StatusCopy } from "./errors";
  * after the first submit; a server message stays until that field changes.
  * API failures are mapped by toFormFailure — no try/catch in the form.
  */
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 type Errors<V> = Partial<Record<keyof V & string, string>>;
 type Banner = { title: string; body: string } | null;
@@ -58,6 +61,15 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
       ruleErrors[key] ??= issue.message;
     }
   }
+  // Every date field gets the API's range rule (current year ± 50) here,
+  // once, instead of in each form's schema. Date inputs always hold
+  // "YYYY-MM-DD", so that shape is how a date field is recognised.
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value !== "string" || !ISO_DATE.test(value)) continue;
+    const range = isoDate().safeParse(value);
+    if (!range.success) ruleErrors[key as keyof V & string] ??= range.error.issues[0]?.message;
+  }
+  const valid = parsed.success && Object.keys(ruleErrors).length === 0;
 
   /** Whether this field's problems should show yet (touched, submitted once, or eager). */
   const shown = (name: keyof V & string): boolean => eager || tried || Boolean(touched[name]);
@@ -108,8 +120,8 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
       setTried(true);
       setBanner(null);
       if (busyRef.current) return false;
-      if (!parsed.success) {
-        const first = parsed.error.issues[0]?.path[0];
+      if (!parsed.success || !valid) {
+        const first = parsed.success ? Object.keys(ruleErrors)[0] : parsed.error.issues[0]?.path[0];
         const target =
           (first !== undefined && document.querySelector<HTMLElement>(`[name="${String(first)}"]`)) ||
           document.querySelector<HTMLElement>('[aria-invalid="true"]');
@@ -161,7 +173,7 @@ export function useForm<V extends Record<string, unknown>, Body>(options: UseFor
     dirty,
     online,
     /** True when the current values pass the schema (enable the submit button on it if you like). */
-    valid: parsed.success,
+    valid,
     errors: Object.fromEntries(Object.keys(values).map((key) => [key, errorOf(key as keyof V & string)])) as Errors<V>,
   };
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDate } from "../shared/dates.js";
 
 // A Project is the Renter's own grouping of everything tied to one
 // site/engagement (Requirements, Quotations, Rentals, Work Orders,
@@ -21,8 +22,8 @@ export const projectSchema = z.object({
   siteLocation: z.string().min(1).max(200),
   state: z.string().min(1).max(100).nullable(),
   district: z.string().min(1).max(100).nullable(),
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   status: projectStatusSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -36,8 +37,8 @@ export const createProjectRequestSchema = z
     siteLocation: z.string().min(1).max(200),
     state: z.string().min(1).max(100).optional(),
     district: z.string().min(1).max(100).optional(),
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
   })
   // No "not in the past" rule for startDate — unlike Rental/Requirement,
   // backfilling a Project that's already underway is a normal case.
@@ -57,8 +58,8 @@ export const updateProjectRequestSchema = z
     siteLocation: z.string().min(1).max(200).optional(),
     state: z.string().min(1).max(100).optional(),
     district: z.string().min(1).max(100).optional(),
-    startDate: z.string().date().optional(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate().optional(),
+    endDate: isoDate().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "Provide at least one field to update",

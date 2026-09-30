@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isFutureIsoDate } from "../shared/dates.js";
+import { isFutureIsoDate, isoDate } from "../shared/dates.js";
 
 export const transportLegSchema = z.enum(["mobilization", "demobilization"]);
 export type TransportLeg = z.infer<typeof transportLegSchema>;
@@ -17,8 +17,8 @@ export const transportRecordSchema = z.object({
   leg: transportLegSchema,
   pickupLocation: z.string().min(1).max(300).nullable(),
   destination: z.string().min(1).max(300).nullable(),
-  plannedDate: z.string().date().nullable(),
-  actualDate: z.string().date().nullable(),
+  plannedDate: isoDate().nullable(),
+  actualDate: isoDate().nullable(),
   status: transportStatusSchema,
   transportDetails: z.string().min(1).max(1000).nullable(),
   charges: z.number().nonnegative().nullable(),
@@ -32,7 +32,7 @@ export const createTransportRequestSchema = z.object({
   leg: transportLegSchema,
   pickupLocation: z.string().min(1).max(300).optional(),
   destination: z.string().min(1).max(300).optional(),
-  plannedDate: z.string().date().optional(),
+  plannedDate: isoDate().optional(),
   transportDetails: z.string().min(1).max(1000).optional(),
   charges: z.number().nonnegative().optional(),
   notes: z.string().min(1).max(2000).optional(),
@@ -45,8 +45,8 @@ export const updateTransportRequestSchema = z
   .object({
     pickupLocation: z.string().min(1).max(300).nullable().optional(),
     destination: z.string().min(1).max(300).nullable().optional(),
-    plannedDate: z.string().date().nullable().optional(),
-    actualDate: z.string().date().optional(),
+    plannedDate: isoDate().nullable().optional(),
+    actualDate: isoDate().optional(),
     status: transportStatusSchema.optional(),
     transportDetails: z.string().min(1).max(1000).nullable().optional(),
     charges: z.number().nonnegative().nullable().optional(),

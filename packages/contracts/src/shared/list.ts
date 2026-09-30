@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDate } from "./dates.js";
 import { invoiceStatusSchema } from "../billing/index.js";
 import { machineStatusSchema } from "../equipment/index.js";
 import { maintenanceStatusSchema, maintenanceTypeSchema } from "../maintenance/index.js";
@@ -42,7 +43,7 @@ function listQuerySchema<const S extends readonly [string, ...string[]]>(
 
 const q = z.string().trim().min(1).max(100).optional();
 const id = z.string().uuid().optional();
-const date = z.string().date().optional();
+const date = isoDate().optional();
 
 export const machineListQuerySchema = listQuerySchema(["createdAt", "assetCode"], "createdAt").extend({
   status: machineStatusSchema.optional(),

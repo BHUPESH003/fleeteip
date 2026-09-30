@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { rateUnitSchema } from "../rental/index.js";
-import { isPastIsoDate } from "../shared/dates.js";
+import { isPastIsoDate, isoDate } from "../shared/dates.js";
 
 export const requirementStatusSchema = z.enum(["open", "closed", "cancelled"]);
 export type RequirementStatus = z.infer<typeof requirementStatusSchema>;
@@ -35,7 +35,7 @@ export const requirementSchema = z.object({
   quantity: z.number().int().positive(),
   projectName: z.string().min(1).max(200).nullable(),
   projectLocation: z.string().min(1).max(200).nullable(),
-  requestedStartDate: z.string().date(),
+  requestedStartDate: isoDate(),
   // Reuses Rental's rate-unit vocabulary so "3 months needed" and "billed
   // monthly" speak the same unit — see docs/marketplace-core-loop-design.md §4.
   expectedDurationValue: z.number().int().positive().nullable(),
@@ -43,7 +43,7 @@ export const requirementSchema = z.object({
   shiftPattern: shiftPatternSchema.nullable(),
   crewRequirement: crewRequirementSchema.nullable(),
   shiftRequirement: z.string().min(1).max(500).nullable(),
-  validityDate: z.string().date(),
+  validityDate: isoDate(),
   status: requirementStatusSchema,
   notes: z.string().min(1).max(2000).nullable(),
   createdAt: z.string().datetime(),
@@ -67,13 +67,13 @@ export const createRequirementRequestSchema = z
     // is the single source of truth for both; the service snapshots them from
     // the resolved Project record itself rather than trusting free text the
     // caller would otherwise have to retype. See docs/decisions.md.
-    requestedStartDate: z.string().date(),
+    requestedStartDate: isoDate(),
     expectedDurationValue: z.number().int().positive().optional(),
     expectedDurationUnit: rateUnitSchema.optional(),
     shiftPattern: shiftPatternSchema.optional(),
     crewRequirement: crewRequirementSchema.optional(),
     shiftRequirement: z.string().min(1).max(500).optional(),
-    validityDate: z.string().date(),
+    validityDate: isoDate(),
     notes: z.string().min(1).max(2000).optional(),
   })
   .refine((data) => !isPastIsoDate(data.requestedStartDate), {
@@ -115,13 +115,13 @@ export const updateRequirementRequestSchema = z
     quantity: z.number().int().positive().optional(),
     projectName: z.string().min(1).max(200).optional(),
     projectLocation: z.string().min(1).max(200).optional(),
-    requestedStartDate: z.string().date().optional(),
+    requestedStartDate: isoDate().optional(),
     expectedDurationValue: z.number().int().positive().optional(),
     expectedDurationUnit: rateUnitSchema.optional(),
     shiftPattern: shiftPatternSchema.optional(),
     crewRequirement: crewRequirementSchema.optional(),
     shiftRequirement: z.string().min(1).max(500).optional(),
-    validityDate: z.string().date().optional(),
+    validityDate: isoDate().optional(),
     notes: z.string().min(1).max(2000).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {

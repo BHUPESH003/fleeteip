@@ -137,6 +137,12 @@ export function FieldShell({ id, label, required, hideOptional, hint, error, war
 
 // ---------------------------------------------------------------- Input
 
+/** Date inputs default to current year ± 50 (matches the API's date rule). */
+const DATE_YEARS_RANGE = 50;
+function yearBound(offset: number, monthDay: string): string {
+  return `${new Date().getFullYear() + offset}-${monthDay}`;
+}
+
 export interface InputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "size" | "prefix">,
     FieldStateProps {
@@ -202,6 +208,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
             inputClassName,
           )}
           {...props}
+          min={props.type === "date" ? (props.min ?? yearBound(-DATE_YEARS_RANGE, "01-01")) : props.min}
+          max={props.type === "date" ? (props.max ?? yearBound(DATE_YEARS_RANGE, "12-31")) : props.max}
         />
         {suffix && (
           <span className="flex flex-none items-center border-l border-border-soft bg-[#f7f8fa] px-2.5 text-xs text-meta">

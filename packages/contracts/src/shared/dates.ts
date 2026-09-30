@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // Calendar-date ("YYYY-MM-DD", z.string().date()'s format) comparisons.
 // Plain string comparison sorts these correctly with no Date-object /
 // timezone parsing needed — every caller here already works in that format.
@@ -42,4 +44,28 @@ export function addDuration(
   else if (unit === "month") date.setUTCMonth(date.getUTCMonth() + value);
   else date.setUTCDate(date.getUTCDate() + value); // day/shift: 1-day granularity
   return date.toISOString().slice(0, 10);
+}
+
+// Dates any form accepts: current year ± DATE_YEARS_RANGE. Catches typos
+// like 0202, 1926 or 20266 for 2026; covers every real rental, validity and
+// due date.
+export const DATE_YEARS_RANGE = 50;
+
+export function earliestIsoDate(): string {
+  return `${Number(todayIsoDate().slice(0, 4)) - DATE_YEARS_RANGE}-01-01`;
+}
+
+export function latestIsoDate(): string {
+  return `${Number(todayIsoDate().slice(0, 4)) + DATE_YEARS_RANGE}-12-31`;
+}
+
+// A "YYYY-MM-DD" calendar date within DATE_YEARS_RANGE years of this year.
+export function isoDate() {
+  return z
+    .string()
+    .date()
+    .refine(
+      (date) => date >= earliestIsoDate() && date <= latestIsoDate(),
+      () => ({ message: `Enter a date between ${earliestIsoDate().slice(0, 4)} and ${latestIsoDate().slice(0, 4)}.` }),
+    );
 }

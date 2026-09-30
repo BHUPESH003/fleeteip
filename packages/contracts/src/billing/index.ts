@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDate } from "../shared/dates.js";
 
 export const invoiceStatusSchema = z.enum(["draft", "issued", "paid", "overdue", "cancelled"]);
 export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
@@ -27,7 +28,7 @@ export const paymentSchema = z.object({
   id: z.string().uuid(),
   invoiceId: z.string().uuid(),
   amount: z.number().positive(),
-  paidDate: z.string().date(),
+  paidDate: isoDate(),
   method: z.string().min(1).max(100).nullable(),
   reference: z.string().min(1).max(200).nullable(),
   notes: z.string().min(1).max(1000).nullable(),
@@ -37,7 +38,7 @@ export type Payment = z.infer<typeof paymentSchema>;
 
 export const recordPaymentRequestSchema = z.object({
   amount: z.number().positive(),
-  paidDate: z.string().date(),
+  paidDate: isoDate(),
   method: z.string().min(1).max(100).optional(),
   reference: z.string().min(1).max(200).optional(),
   notes: z.string().min(1).max(1000).optional(),
@@ -49,14 +50,14 @@ export const invoiceSchema = z.object({
   rentalCompanyOrganizationId: z.string().uuid(),
   rentalId: z.string().uuid(),
   invoiceNumber: z.string(),
-  billingPeriodStart: z.string().date(),
-  billingPeriodEnd: z.string().date(),
+  billingPeriodStart: isoDate(),
+  billingPeriodEnd: isoDate(),
   status: invoiceStatusSchema,
   subtotal: z.number().nonnegative(),
   taxAmount: z.number().nonnegative(),
   adjustmentAmount: z.number(),
   totalAmount: z.number(),
-  dueDate: z.string().date(),
+  dueDate: isoDate(),
   notes: z.string().min(1).max(2000).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -71,7 +72,7 @@ export const invoiceListItemSchema = invoiceSchema.extend({
   // issued -> overdue status flip has run yet.
   overdue: z.boolean(),
   // Latest payment date once fully paid; null while a balance remains.
-  paidAt: z.string().date().nullable(),
+  paidAt: isoDate().nullable(),
 });
 export type InvoiceListItem = z.infer<typeof invoiceListItemSchema>;
 
@@ -87,9 +88,9 @@ export type InvoiceDetail = z.infer<typeof invoiceDetailSchema>;
 export const createInvoiceRequestSchema = z
   .object({
     rentalId: z.string().uuid(),
-    billingPeriodStart: z.string().date(),
-    billingPeriodEnd: z.string().date(),
-    dueDate: z.string().date(),
+    billingPeriodStart: isoDate(),
+    billingPeriodEnd: isoDate(),
+    dueDate: isoDate(),
     taxAmount: z.number().nonnegative().optional(),
     adjustmentAmount: z.number().optional(),
     notes: z.string().min(1).max(2000).optional(),

@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { isoDate } from "../shared/dates.js";
 
 export const logsheetSchema = z.object({
   id: z.string().uuid(),
   rentalId: z.string().uuid(),
   machineId: z.string().uuid(),
-  logDate: z.string().date(),
+  logDate: isoDate(),
   shift: z.string().min(1).max(200).nullable(),
   operatingHours: z.number().nonnegative().nullable(),
   idleHours: z.number().nonnegative().nullable(),
@@ -22,7 +23,7 @@ export type Logsheet = z.infer<typeof logsheetSchema>;
 // Upsert-shaped, like QuotationResponse — one logsheet per (rental, date),
 // resubmitting the same date corrects it rather than duplicating.
 export const submitLogsheetRequestSchema = z.object({
-  logDate: z.string().date(),
+  logDate: isoDate(),
   shift: z.string().min(1).max(200).optional(),
   operatingHours: z.number().nonnegative().optional(),
   idleHours: z.number().nonnegative().optional(),

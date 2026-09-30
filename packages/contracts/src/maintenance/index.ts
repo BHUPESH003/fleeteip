@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { machineStatusSchema } from "../equipment/index.js";
-import { isFutureIsoDate } from "../shared/dates.js";
+import { isFutureIsoDate, isoDate } from "../shared/dates.js";
 
 export const maintenanceTypeSchema = z.enum(["scheduled", "breakdown", "inspection", "other"]);
 export type MaintenanceType = z.infer<typeof maintenanceTypeSchema>;
@@ -21,8 +21,8 @@ export const maintenanceRecordSchema = z.object({
   id: z.string().uuid(),
   machineId: z.string().uuid(),
   maintenanceType: maintenanceTypeSchema,
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   status: maintenanceStatusSchema,
   notes: z.string().min(1).max(2000).nullable(),
   /** The rental this job was logged against (e.g. a breakdown on site), if any. */
@@ -36,8 +36,8 @@ export const createMaintenanceRequestSchema = z
   .object({
     machineId: z.string().uuid(),
     maintenanceType: maintenanceTypeSchema,
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
     notes: z.string().min(1).max(2000).optional(),
     /** Link the job to a rental of the same machine; that rental's dates don't block it. */
     rentalId: z.string().uuid().optional(),

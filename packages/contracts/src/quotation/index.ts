@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { clientSnapshotSchema, operatorScopeSchema, rateUnitSchema } from "../rental/index.js";
-import { isPastIsoDate } from "../shared/dates.js";
+import { isPastIsoDate, isoDate } from "../shared/dates.js";
 
 // --- QuotationResponse: a Rental Company's lightweight reply to a Requirement ---
 
@@ -86,8 +86,8 @@ export const commercialQuotationSchema = z.object({
   sourceAuctionId: z.string().uuid().nullable(),
   referenceNumber: z.string(),
   machineId: z.string().uuid(),
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   rate: z.number().positive(),
   rateUnit: rateUnitSchema,
   mobilizationCharge: z.number().nonnegative().nullable(),
@@ -111,7 +111,7 @@ export const commercialQuotationSchema = z.object({
   // commercial *term* ("GST extra @18%", "GST inclusive"), not an invoice.
   gstTerms: z.string().min(1).max(500).nullable(),
   noticePeriodDays: z.number().int().nonnegative().nullable(),
-  validityDate: z.string().date(),
+  validityDate: isoDate(),
   // Special/site conditions — kept distinct from companyTerms below.
   commercialNotes: z.string().min(1).max(2000).nullable(),
   // Company-specific/custom T&Cs — the flexible bucket for wording that
@@ -129,8 +129,8 @@ export const commercialQuotationSchema = z.object({
   // creation time (see commercial-quotation-service.ts::createQuotation) —
   // QuotationOffer's own startDate/endDate no longer move independently.
   // The Rental Company proposes; the Renter must explicitly accept/reject.
-  proposedAlternateStartDate: z.string().date().nullable(),
-  proposedAlternateEndDate: z.string().date().nullable(),
+  proposedAlternateStartDate: isoDate().nullable(),
+  proposedAlternateEndDate: isoDate().nullable(),
   alternateDateStatus: alternateDateStatusSchema,
   alternateDateReason: z.string().min(1).max(500).nullable(),
   createdAt: z.string().datetime(),
@@ -152,8 +152,8 @@ export const createCommercialQuotationRequestSchema = z
     quotationResponseId: z.string().uuid().optional(),
     sourceAuctionId: z.string().uuid().optional(),
     machineId: z.string().uuid(),
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
     rate: z.number().positive(),
     rateUnit: rateUnitSchema,
     mobilizationCharge: z.number().nonnegative().optional(),
@@ -173,7 +173,7 @@ export const createCommercialQuotationRequestSchema = z
     minimumRentalPeriodUnit: rateUnitSchema.optional(),
     gstTerms: z.string().min(1).max(500).optional(),
     noticePeriodDays: z.number().int().nonnegative().optional(),
-    validityDate: z.string().date(),
+    validityDate: isoDate(),
     commercialNotes: z.string().min(1).max(2000).optional(),
     companyTerms: z.string().min(1).max(2000).optional(),
   })
@@ -276,8 +276,8 @@ export const quotationOfferSchema = z.object({
   offeredByOrganizationId: z.string().uuid(),
   rate: z.number().positive(),
   rateUnit: rateUnitSchema,
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   notes: z.string().min(1).max(1000).nullable(),
   status: quotationOfferStatusSchema,
   createdAt: z.string().datetime(),
@@ -288,8 +288,8 @@ export const createQuotationOfferRequestSchema = z
   .object({
     rate: z.number().positive(),
     rateUnit: rateUnitSchema,
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
     notes: z.string().min(1).max(1000).optional(),
   })
   // No "not in the past" check on startDate here — unlike the initial
@@ -309,8 +309,8 @@ export type CreateQuotationOfferRequest = z.infer<typeof createQuotationOfferReq
 
 export const proposeAlternateDatesRequestSchema = z
   .object({
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
     reason: z.string().min(1).max(500).optional(),
   })
   .refine((data) => !data.endDate || data.endDate >= data.startDate, {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isFutureIsoDate, isPastIsoDate } from "../shared/dates.js";
+import { isFutureIsoDate, isPastIsoDate, isoDate } from "../shared/dates.js";
 
 // FleetIP recommendation, not extracted from legacy — the source schema has
 // no reliable status vocabulary (every status-like legacy column is a bare
@@ -48,8 +48,8 @@ export type ClientSnapshot = z.infer<typeof clientSnapshotSchema>;
 // A change to the planned dates the Rental Company proposed and the Renter
 // hasn't answered yet (one at a time). endDate null = open-ended.
 export const rentalDateChangeSchema = z.object({
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   reason: z.string().min(1).max(500).nullable(),
   proposedAt: z.string().datetime(),
 });
@@ -67,8 +67,8 @@ export const rentalSchema = z.object({
   // Calendar dates, no time component — deliberately `.date()`, not
   // `.datetime()` like createdAt/updatedAt below. Inclusive on both ends;
   // endDate: null means open-ended. See docs/rental-domain-design.md §6/§9.
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
   rate: z.number().positive(),
   rateUnit: rateUnitSchema,
   mobilizationCharge: z.number().nonnegative().nullable(),
@@ -87,8 +87,8 @@ export const rentalSchema = z.object({
   // verified or disputed by the Renter — modeled after QuotationOffer's
   // pending/accepted/rejected shape, not another silent self-attested
   // boolean like Logsheet's customerConfirmed.
-  actualStartDate: z.string().date().nullable(),
-  actualEndDate: z.string().date().nullable(),
+  actualStartDate: isoDate().nullable(),
+  actualEndDate: isoDate().nullable(),
   actualDatesVerificationStatus: actualDatesVerificationStatusSchema.nullable(),
   actualDatesDisputeReason: z.string().min(1).max(500).nullable(),
   pendingDateChange: rentalDateChangeSchema.nullable(),
@@ -112,8 +112,8 @@ export const createRentalRequestSchema = z
     clientSnapshot: clientSnapshotSchema.optional(),
     projectName: z.string().min(1).max(200).optional(),
     projectLocation: z.string().min(1).max(200).optional(),
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
     rate: z.number().positive(),
     rateUnit: rateUnitSchema,
     mobilizationCharge: z.number().nonnegative().optional(),
@@ -171,7 +171,7 @@ export const updateRentalStatusRequestSchema = z
     // "off_rent" (-> actualEndDate); ignored for any other transition.
     // Optional and overridable — defaults to today when omitted, same
     // auto-capture-on-transition precedent as Transport's own actualDate.
-    actualDate: z.string().date().optional(),
+    actualDate: isoDate().optional(),
   })
   .refine((data) => !data.actualDate || !isFutureIsoDate(data.actualDate), {
     message: "Actual date cannot be in the future",
@@ -190,8 +190,8 @@ export type DisputeActualDatesRequest = z.infer<typeof disputeActualDatesRequest
 // directly when the customer isn't a FleetIP organization.
 export const proposeRentalDateChangeRequestSchema = z
   .object({
-    startDate: z.string().date().optional(),
-    endDate: z.string().date().nullable(),
+    startDate: isoDate().optional(),
+    endDate: isoDate().nullable(),
     reason: z.string().trim().min(1).max(500).optional(),
   })
   .refine((data) => !data.startDate || !isPastIsoDate(data.startDate), {
@@ -213,8 +213,8 @@ export type RespondToRentalDateChangeRequest = z.infer<typeof respondToRentalDat
 // back to "pending" for the Renter to verify or dispute again.
 export const correctActualDatesRequestSchema = z
   .object({
-    actualStartDate: z.string().date(),
-    actualEndDate: z.string().date().optional(),
+    actualStartDate: isoDate(),
+    actualEndDate: isoDate().optional(),
   })
   .refine((data) => !isFutureIsoDate(data.actualStartDate), {
     message: "Actual start date cannot be in the future",
@@ -265,8 +265,8 @@ export type RentalEvent = z.infer<typeof rentalEventSchema>;
 
 export const checkMachineAvailabilityQuerySchema = z.object({
   machineId: z.string().uuid(),
-  startDate: z.string().date(),
-  endDate: z.string().date().optional(),
+  startDate: isoDate(),
+  endDate: isoDate().optional(),
 });
 export type CheckMachineAvailabilityQuery = z.infer<typeof checkMachineAvailabilityQuerySchema>;
 
@@ -282,8 +282,8 @@ export const availabilityConflictSchema = z.object({
   kind: availabilityConflictKindSchema,
   id: z.string().uuid(),
   reference: z.string(),
-  startDate: z.string().date(),
-  endDate: z.string().date().nullable(),
+  startDate: isoDate(),
+  endDate: isoDate().nullable(),
 });
 export type AvailabilityConflict = z.infer<typeof availabilityConflictSchema>;
 
@@ -298,8 +298,8 @@ export type MachineAvailability = z.infer<typeof machineAvailabilitySchema>;
 export const checkMachinesAvailabilityRequestSchema = z
   .object({
     machineIds: z.array(z.string().uuid()).min(1).max(1000),
-    startDate: z.string().date(),
-    endDate: z.string().date().optional(),
+    startDate: isoDate(),
+    endDate: isoDate().optional(),
   })
   .refine((data) => !data.endDate || data.endDate >= data.startDate, {
     message: "End date cannot be before the start date",
