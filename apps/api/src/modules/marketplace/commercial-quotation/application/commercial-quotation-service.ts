@@ -685,6 +685,15 @@ export class CommercialQuotationService {
     if (existing.status !== CommercialQuotationStatus.sent && existing.status !== CommercialQuotationStatus.negotiating) {
       throw new ConflictError("A quotation must be sent before it can be negotiated");
     }
+    // An accepted counter-offer is the agreed rate: negotiation is over, and
+    // what's left is the customer accepting or rejecting the quotation.
+    const offers = await this.offerRepository.listByQuotation(quotationId);
+    const agreed = offers.find((offer) => offer.status === QuotationOfferStatus.accepted);
+    if (agreed) {
+      throw new ConflictError(
+        `A rate of ₹${Number(agreed.rate).toLocaleString("en-IN")} per ${agreed.rate_unit} is already agreed on this quotation, so it can't be countered. The customer can accept or reject the quotation.`,
+      );
+    }
 
     await this.offerRepository.supersedePending(quotationId);
     const offer = await this.offerRepository.create({

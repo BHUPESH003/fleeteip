@@ -125,6 +125,8 @@ export function QuotationView({
   // while one is still pending it's stale — the pending offer's own rate is
   // the number actually on the table right now.
   const pendingOffer = offers.find((o) => o.status === QuotationOfferStatus.pending) ?? null;
+  // An accepted counter-offer is the agreed rate; the API refuses further counters.
+  const agreedOffer = offers.find((o) => o.status === QuotationOfferStatus.accepted) ?? null;
   const pendingFromCounterparty = pendingOffer !== null && pendingOffer.offeredByOrganizationId !== organizationId;
   const pendingFromMe = pendingOffer !== null && pendingOffer.offeredByOrganizationId === organizationId;
   const decisionRate = pendingFromCounterparty && pendingOffer ? pendingOffer.rate : q.rate;
@@ -158,7 +160,9 @@ export function QuotationView({
       ? "The customer isn't on FleetIP, so there's no one to answer a counter-offer."
       : !isOwner && q.renterAcceptedAt
         ? `You've accepted these terms. Ask ${counterparty} if something needs to change.`
-        : null;
+        : agreedOffer
+          ? `${formatRate(agreedOffer.rate, agreedOffer.rateUnit)} is already agreed, so it can't be countered.`
+          : null;
   const proposeBlocker = !negotiable
     ? q.status === CommercialQuotationStatus.draft
       ? "Send it first — new dates can be proposed on a sent quotation."

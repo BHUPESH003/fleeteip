@@ -1242,6 +1242,13 @@ describe("CommercialQuotationService", () => {
     );
     expect(accepted.rate).toBe(4800);
     expect(accepted.status).toBe("negotiating");
+
+    // The accepted rate is agreed: neither side can counter it any more.
+    for (const [user, org] of [["user-1", RC_ORG_ID], ["user-2", RENTER_ORG_ID]] as const) {
+      await expect(
+        service.makeOffer(user, org, quotation.id, { rate: 5000, rateUnit: "day", startDate: "2026-03-01" }),
+      ).rejects.toThrow(/already agreed/);
+    }
   });
 
   // Regression: acceptQuotation used to just flag the quotation's own
