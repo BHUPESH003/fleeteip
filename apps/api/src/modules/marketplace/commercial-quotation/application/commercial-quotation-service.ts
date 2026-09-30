@@ -695,6 +695,8 @@ export class CommercialQuotationService {
       );
     }
 
+    this.assertConverging(existing, offers, organizationId, input);
+
     await this.offerRepository.supersedePending(quotationId);
     const offer = await this.offerRepository.create({
       quotationId,
@@ -732,6 +734,38 @@ export class CommercialQuotationService {
       });
     }
     return toOffer(offer);
+  }
+
+  // Counter-offers converge: the Rental Company can only come down from its
+  // current ask (its last counter, else the quoted rate) and stay above the
+  // Renter's latest counter; the Renter can only go up from its own last
+  // counter and stay below that ask. Matching the other side's number is
+  // accepting their offer, not a new one. Rates in another unit aren't
+  // comparable, so they don't bound.
+  private assertConverging(
+    quotation: CommercialQuotationRecord,
+    offers: QuotationOfferRecord[],
+    organizationId: string,
+    input: CreateQuotationOfferRequest,
+  ): void {
+    const sameUnit = offers.filter((offer) => offer.rate_unit === input.rateUnit);
+    const lastBy = (fromCompany: boolean) =>
+      sameUnit.filter((offer) => (offer.offered_by_organization_id === quotation.rental_company_organization_id) === fromCompany).at(-1);
+    const companyOffer = lastBy(true);
+    const renterOffer = lastBy(false);
+    const ask = companyOffer ? Number(companyOffer.rate) : quotation.rate_unit === input.rateUnit ? Number(quotation.rate) : null;
+    const bid = renterOffer ? Number(renterOffer.rate) : null;
+    const rupees = (value: number) => `₹${value.toLocaleString("en-IN")}`;
+    const fail = (message: string) => {
+      throw new ValidationError(message, [{ path: "rate", message }]);
+    };
+    if (organizationId === quotation.rental_company_organization_id) {
+      if (ask !== null && input.rate >= ask) fail(`Offer less than your current rate of ${rupees(ask)}.`);
+      if (bid !== null && input.rate <= bid) fail(`Offer more than the customer's counter of ${rupees(bid)}, or accept their offer instead.`);
+    } else {
+      if (bid !== null && input.rate <= bid) fail(`Offer more than your last counter of ${rupees(bid)}.`);
+      if (ask !== null && input.rate >= ask) fail(`Offer less than the current rate of ${rupees(ask)}, or accept the quotation instead.`);
+    }
   }
 
   async listOffers(

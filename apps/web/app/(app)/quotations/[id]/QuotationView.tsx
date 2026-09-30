@@ -64,7 +64,7 @@ import {
   rateDelta,
 } from "../shared";
 import type { QuotationDetailData } from "./data";
-import { ActionConfirm, CounterOfferDialog, ProposeDatesDialog, ProposedDates } from "./dialogs";
+import { ActionConfirm, CounterOfferDialog, ProposeDatesDialog, ProposedDates, type CounterRange } from "./dialogs";
 import { ScopeItemsCard } from "./ScopeItemsCard";
 
 const LINK_PRIMARY =
@@ -131,6 +131,19 @@ export function QuotationView({
   const pendingFromMe = pendingOffer !== null && pendingOffer.offeredByOrganizationId === organizationId;
   const decisionRate = pendingFromCounterparty && pendingOffer ? pendingOffer.rate : q.rate;
   const decisionUnit = pendingFromCounterparty && pendingOffer ? pendingOffer.rateUnit : q.rateUnit;
+  // Counters converge (the API enforces it): above the Renter's latest
+  // counter, below the Rental Company's current ask, in the unit offered.
+  const counterRange = ((): CounterRange => {
+    const inUnit = offers.filter((o) => o.rateUnit === decisionUnit);
+    const lastCompany = inUnit.filter((o) => o.offeredByOrganizationId === q.rentalCompanyOrganizationId).at(-1);
+    const lastRenter = inUnit.filter((o) => o.offeredByOrganizationId !== q.rentalCompanyOrganizationId).at(-1);
+    const ask = lastCompany?.rate ?? (q.rateUnit === decisionUnit ? q.rate : null);
+    return {
+      unit: decisionUnit,
+      min: lastRenter ? { rate: lastRenter.rate, label: isOwner ? "the customer's counter" : "your last counter" } : null,
+      max: ask != null ? { rate: ask, label: isOwner ? "your current rate" : "the current rate" } : null,
+    };
+  })();
 
   const needsAcceptance = needsRenterAcceptance(q);
   const canAccept = !isOwner && viewer === "renter" && negotiable && needsAcceptance && !pendingFromMe;
@@ -669,6 +682,7 @@ export function QuotationView({
         pendingFromCounterparty={pendingFromCounterparty}
         decisionRate={decisionRate}
         decisionUnit={decisionUnit}
+        counterRange={counterRange}
         canWorkOrders={canWorkOrders}
         reload={reload}
         patch={patch}
@@ -758,6 +772,7 @@ function QuotationDialogs({
   pendingFromCounterparty,
   decisionRate,
   decisionUnit,
+  counterRange,
   canWorkOrders,
   reload,
   patch,
@@ -772,6 +787,7 @@ function QuotationDialogs({
   pendingFromCounterparty: boolean;
   decisionRate: number;
   decisionUnit: CommercialQuotation["rateUnit"];
+  counterRange: CounterRange;
   canWorkOrders: boolean;
   reload: () => Promise<void>;
   patch: (update: (data: QuotationDetailData) => QuotationDetailData) => void;
@@ -1025,6 +1041,7 @@ function QuotationDialogs({
         quotation={q}
         defaultUnit={decisionUnit}
         otherParty={counterparty}
+        range={counterRange}
         onDone={done}
       />
       <ProposeDatesDialog open={dialog?.kind === "propose"} onClose={onClose} organizationId={organizationId} quotation={q} customer={counterparty} onDone={done} />

@@ -122,7 +122,27 @@ export function ActionConfirm({
 // ------------------------------------------------------------------ counter-offer
 
 /** Dates carry forward from the quotation; the offer itself is price and notes. */
-function counterOfferSchema(quotation: CommercialQuotation) {
+/**
+ * Where a new counter-offer may land, in `unit` (the API enforces the same):
+ * strictly above the Renter's latest counter and below the Rental
+ * Company's current ask. Labels say whose number each bound is.
+ */
+export interface CounterRange {
+  unit: RateUnit;
+  min: { rate: number; label: string } | null;
+  max: { rate: number; label: string } | null;
+}
+
+function rangeHint(range: CounterRange): string | undefined {
+  const { min, max } = range;
+  const money = (rate: number) => `₹${rate.toLocaleString("en-IN")}`;
+  if (min && max) return `Between ${money(min.rate)} (${min.label}) and ${money(max.rate)} (${max.label}).`;
+  if (max) return `Below ${money(max.rate)} (${max.label}).`;
+  if (min) return `Above ${money(min.rate)} (${min.label}).`;
+  return undefined;
+}
+
+function counterOfferSchema(quotation: CommercialQuotation, range: CounterRange) {
   return z
     .object({
       rate: z
@@ -132,6 +152,12 @@ function counterOfferSchema(quotation: CommercialQuotation) {
         .refine((raw) => Number(raw) > 0, "Enter a rate above ₹0."),
       rateUnit: z.string().min(1, "Choose what the rate is per."),
       notes: z.string().trim().max(1000, "Notes are up to 1,000 characters."),
+    })
+    .superRefine((values, ctx) => {
+      const rate = Number(values.rate);
+      if (values.rateUnit !== range.unit || !(rate > 0)) return;
+      const outside = (range.max && rate >= range.max.rate) || (range.min && rate <= range.min.rate);
+      if (outside) ctx.addIssue({ code: "custom", path: ["rate"], message: `Offer a rate ${rangeHint(range)?.replace(/^./, (c) => c.toLowerCase())}` });
     })
     .transform(
       (values): CreateQuotationOfferRequest => ({
@@ -159,6 +185,7 @@ export function CounterOfferDialog({
   quotation,
   defaultUnit,
   otherParty,
+  range,
   onDone,
 }: {
   open: boolean;
@@ -167,11 +194,12 @@ export function CounterOfferDialog({
   quotation: CommercialQuotation;
   defaultUnit: RateUnit;
   otherParty: string;
+  range: CounterRange;
   onDone: () => void;
 }) {
   const toast = useToast();
   const initial = { rate: "", rateUnit: defaultUnit as string, notes: "" };
-  const schema = useMemo(() => counterOfferSchema(quotation), [quotation]);
+  const schema = useMemo(() => counterOfferSchema(quotation, range), [quotation, range]);
   const form = useForm({ schema, initial, failTitle: "The counter-offer wasn't sent" });
   const { busy, online, reset } = form;
 
@@ -217,7 +245,15 @@ export function CounterOfferDialog({
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div data-field="rate">
-          <Input label="Rate" required prefix="₹" mono inputMode="decimal" {...form.field("rate")} />
+          <Input
+            label="Rate"
+            required
+            prefix="₹"
+            mono
+            inputMode="decimal"
+            {...form.field("rate")}
+            hint={form.values.rateUnit === range.unit ? rangeHint(range) : undefined}
+          />
         </div>
         <div data-field="rateUnit">
           <Select label="Rate is" required options={RATE_UNIT_OPTIONS} {...form.field("rateUnit")} />

@@ -1251,6 +1251,32 @@ describe("CommercialQuotationService", () => {
     }
   });
 
+  it("keeps counter-offers between the Rental Company's ask and the Renter's counter", async () => {
+    const service = buildService();
+    const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
+      ...pathBInput,
+      clientSnapshot: undefined,
+      renterOrganizationId: RENTER_ORG_ID,
+      rate: 5000,
+      rateUnit: "day",
+    });
+    await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+    const offer = (user: string, org: string, rate: number) =>
+      service.makeOffer(user, org, quotation.id, { rate, rateUnit: "day", startDate: "2026-03-01" });
+
+    await expect(offer("user-2", RENTER_ORG_ID, 5000)).rejects.toMatchObject({ issues: [{ path: "rate" }] });
+    await offer("user-2", RENTER_ORG_ID, 4000);
+    // Rental Company: below its 5000 ask, above the Renter's 4000.
+    await expect(offer("user-1", RC_ORG_ID, 5200)).rejects.toThrow(/less than your current rate of ₹5,000/);
+    await expect(offer("user-1", RC_ORG_ID, 4000)).rejects.toThrow(/more than the customer's counter of ₹4,000/);
+    await offer("user-1", RC_ORG_ID, 4600);
+    // Renter: above its own 4000, below the new 4600 ask.
+    await expect(offer("user-2", RENTER_ORG_ID, 3900)).rejects.toThrow(/more than your last counter of ₹4,000/);
+    await expect(offer("user-2", RENTER_ORG_ID, 4600)).rejects.toThrow(/less than the current rate of ₹4,600/);
+    const last = await offer("user-2", RENTER_ORG_ID, 4300);
+    expect(last.rate).toBe(4300);
+  });
+
   // Regression: acceptQuotation used to just flag the quotation's own
   // (possibly stale) rate field as accepted, ignoring a still-pending
   // counter-offer entirely — a Renter clicking "Accept" while a Rental
