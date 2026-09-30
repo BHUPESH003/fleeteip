@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cx } from "./cx";
 import { controlStateClasses, FieldShell, type FieldStateProps } from "./Field";
 import { Icon } from "./Icon";
@@ -88,6 +88,38 @@ export function SearchSelect({
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
   }, [open]);
+
+  // The list is position: fixed next to the box, so a dialog's or card's
+  // overflow can't clip it (it stays in this DOM subtree, so outside-click
+  // and focus behave as before). Opens below, or above when there's more
+  // room there, capped to the space available; follows scrolling.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!open || !list) return;
+    function place() {
+      const box = containerRef.current?.getBoundingClientRect();
+      if (!box || !list) return;
+      const gap = 4;
+      const edge = 12;
+      const below = window.innerHeight - box.bottom - gap - edge;
+      const above = box.top - gap - edge;
+      list.style.maxHeight = "";
+      const wanted = Math.min(list.scrollHeight, 256);
+      const downward = below >= wanted || below >= above;
+      const height = Math.min(wanted, downward ? below : above);
+      list.style.left = `${box.left}px`;
+      list.style.width = `${box.width}px`;
+      list.style.maxHeight = `${Math.max(height, 80)}px`;
+      list.style.top = downward ? `${box.bottom + gap}px` : `${box.top - gap - Math.max(height, 80)}px`;
+    }
+    place();
+    // animationend: a dialog's open animation (a transform) shifts fixed children until it ends.
+    const events = ["scroll", "resize", "animationend"] as const;
+    for (const name of events) window.addEventListener(name, place, true);
+    return () => {
+      for (const name of events) window.removeEventListener(name, place, true);
+    };
+  }, [open, filtered.length]);
 
   useEffect(() => {
     if (!open || !listRef.current) return;
@@ -180,7 +212,7 @@ export function SearchSelect({
             id={listId}
             role="listbox"
             aria-label={typeof label === "string" ? label : undefined}
-            className="absolute left-0 right-0 top-[calc(100%+4px)] z-40 m-0 max-h-64 list-none overflow-y-auto rounded-panel border border-border-control bg-surface p-1 shadow-menu"
+            className="fixed z-50 m-0 max-h-64 list-none overflow-y-auto rounded-panel border border-border-control bg-surface p-1 shadow-menu"
           >
             {filtered.length === 0 ? (
               <li className="px-2.5 py-2 text-xs text-meta">{loading ? "Loading…" : emptyText}</li>
