@@ -60,10 +60,19 @@ export class QuotationResponseService {
     // Submitting is upsert-shaped (a Rental Company may revise its reply) —
     // only notify on the first response, not every revision, to avoid
     // spamming the Renter on the same event.
-    const isFirstResponse = !(await this.quotationResponseRepository.findByRequirementAndOrganization(
+    const existing = await this.quotationResponseRepository.findByRequirementAndOrganization(
       requirementId,
       rentalCompanyOrganizationId,
-    ));
+    );
+    // Once the Renter has asked for a formal quotation on this reply, the
+    // reply is what they acted on: it's frozen, and changes go into the
+    // quotation instead.
+    if (existing?.quotation_requested_at) {
+      throw new ConflictError(
+        "The customer has asked for a formal quotation on this response, so it can't be changed. Put any new rate or terms in the quotation.",
+      );
+    }
+    const isFirstResponse = !existing;
 
     const record = await this.quotationResponseRepository.submit({
       requirementId,

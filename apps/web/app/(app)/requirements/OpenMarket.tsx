@@ -162,7 +162,12 @@ export function OpenMarket({ organizationId }: { organizationId: string }) {
   useEffect(() => {
     if (!requirementIdParam || !data) return;
     const found = data.requirements.find((r) => r.id === requirementIdParam);
-    if (found) setRespondingId(found.id);
+    if (found && data.responses.get(found.id)?.quotationRequestedAt) {
+      toast.info({
+        title: `Your response to ${requirementRef(found.id)} is locked`,
+        body: "The customer asked for a formal quotation on it. Put any new rate or terms in the quotation.",
+      });
+    } else if (found) setRespondingId(found.id);
     else
       toast.info({
         title: `${requirementRef(requirementIdParam)} isn't open for responses`,
@@ -237,12 +242,20 @@ export function OpenMarket({ organizationId }: { organizationId: string }) {
     const response = data?.responses.get(r.id);
     const auction = data?.auctions.get(r.id);
     const respondLabel = response ? "Update response" : "Respond";
+    // Frozen once the customer asks for a quotation on it (the API refuses changes).
+    const locked = Boolean(response?.quotationRequestedAt);
     const respondItem: MenuItem = {
       key: "respond",
       label: respondLabel,
       icon: "edit",
-      disabled: !online,
-      hint: !online ? "You're offline." : response ? "Change your answer or rate. The customer sees the latest." : "Interested or not, with an indicative rate.",
+      disabled: !online || locked,
+      hint: !online
+        ? "You're offline."
+        : locked
+          ? "Locked: the customer asked for a quotation on it. Put any new rate or terms in the quotation."
+          : response
+            ? "Change your answer or rate. The customer sees the latest."
+            : "Interested or not, with an indicative rate.",
       onSelect: () => setRespondingId(r.id),
     };
     const auctionItem: MenuItem | null = auction
@@ -266,9 +279,26 @@ export function OpenMarket({ organizationId }: { organizationId: string }) {
         </UILink>
       );
       menu.push(respondItem);
+    } else if (locked && access.quotations) {
+      visible = (
+        <UILink
+          href={`/quotations?requirementId=${r.id}`}
+          className="inline-flex h-7 items-center whitespace-nowrap rounded-cell border border-border-control bg-surface px-[11px] text-xs font-medium text-ink-strong no-underline hover:bg-surface-hover"
+        >
+          Create quotation
+        </UILink>
+      );
+      menu.push(respondItem);
+      if (auctionItem) menu.push(auctionItem);
     } else {
       visible = (
-        <Button size="sm" variant="secondary" onClick={() => setRespondingId(r.id)} disabled={!online} title={!online ? "You're offline." : undefined}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setRespondingId(r.id)}
+          disabled={!online || locked}
+          title={!online ? "You're offline." : locked ? respondItem.hint : undefined}
+        >
           {respondLabel}
         </Button>
       );

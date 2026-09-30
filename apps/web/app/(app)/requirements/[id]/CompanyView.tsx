@@ -78,7 +78,16 @@ export function RentalCompanyRequirementView({
   const canCreateQuotation = requirement.status === RequirementStatus.open && canQuote;
   const offline = !online;
   const quotedAlready = (myQuotations ?? []).length > 0;
-  const askedForQuotation = Boolean(myResponse?.quotationRequestedAt) && !quotedAlready;
+  // Once the customer asks for a quotation on it, the response is frozen (the API refuses changes).
+  const responseLocked = Boolean(myResponse?.quotationRequestedAt);
+  const askedForQuotation = responseLocked && !quotedAlready;
+  const respondHint = offline
+    ? OFFLINE_HINT
+    : responseLocked
+      ? "Locked: the customer asked for a quotation on it. Put any new rate or terms in the quotation."
+      : canRespond
+        ? "Change your answer or indicative rate."
+        : "It's no longer taking responses.";
   const quoteHref = `/quotations?requirementId=${requirement.id}`;
   const auctionHref = auction ? `/auctions?requirementId=${requirement.id}&auctionId=${auction.id}` : null;
 
@@ -95,7 +104,7 @@ export function RentalCompanyRequirementView({
         Create quotation
       </UILink>
     );
-  } else if (canRespond) {
+  } else if (canRespond && !responseLocked) {
     primary = (
       <Button icon={myResponse ? "edit" : "requirement"} onClick={() => setRespondOpen(true)} disabled={offline} title={offline ? OFFLINE_HINT : undefined}>
         {myResponse ? "Update response" : "Respond"}
@@ -109,8 +118,8 @@ export function RentalCompanyRequirementView({
       key: "respond",
       label: myResponse ? "Update response" : "Respond",
       icon: "edit",
-      disabled: !canRespond || offline,
-      hint: offline ? OFFLINE_HINT : canRespond ? "Change your answer or indicative rate." : "It's no longer taking responses.",
+      disabled: !canRespond || responseLocked || offline,
+      hint: respondHint,
       onSelect: () => setRespondOpen(true),
     });
   } else if (canQuote) {

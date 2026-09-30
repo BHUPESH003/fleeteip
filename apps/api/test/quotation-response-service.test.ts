@@ -511,6 +511,36 @@ describe("QuotationResponseService", () => {
       expect(response.quotationRequestedAt).not.toBeNull();
     });
 
+    it("freezes the response once the Renter has asked for a quotation on it", async () => {
+      const responseRepository = fakeQuotationResponseRepository();
+      const requirementRepository = fakeRequirementRepository();
+      const make = (role?: "renter") =>
+        new QuotationResponseService(
+          responseRepository,
+          requirementRepository,
+          fakePermissionService(role),
+          role ? fakeNotificationServiceCapturing().service : fakeNotificationService(),
+          fakeOrgRepo(),
+        );
+      const rcService = make();
+      await rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+        status: "interested",
+        indicativeRate: 1200,
+        indicativeRateUnit: "day",
+      });
+      await make("renter").requestQuotation("user-2", RENTER_ORG_ID, OPEN_REQUIREMENT_ID, RC_ORG_ID);
+
+      await expect(
+        rcService.submitResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID, {
+          status: "interested",
+          indicativeRate: 900,
+          indicativeRateUnit: "day",
+        }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      const response = await rcService.getMyResponse("user-1", RC_ORG_ID, OPEN_REQUIREMENT_ID);
+      expect(response.indicativeRate).toBe(1200);
+    });
+
     it("rejects requesting a quotation from a company that hasn't responded", async () => {
       const service = new QuotationResponseService(
         fakeQuotationResponseRepository(),
