@@ -576,6 +576,7 @@ function QuotationsList({ organizationId, viewer }: { organizationId: string; vi
           requirementId={createRequest?.requirementId ?? null}
           sourceAuctionId={createRequest?.sourceAuctionId ?? null}
           initialMachineIds={createRequest?.machineIds ?? []}
+          onRequirementChange={(id) => setCreateRequest((request) => (request ? { ...request, requirementId: id } : request))}
           onCreated={() => void reload()}
         />
       )}

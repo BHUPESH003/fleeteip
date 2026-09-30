@@ -25,6 +25,7 @@ import {
   LoadingState,
   RadioGroup,
   SearchSelect,
+  type SearchSelectOption,
   Select,
   Textarea,
   UILink,
@@ -65,6 +66,8 @@ export interface CreateQuotationDialogProps {
   sourceAuctionId: string | null;
   /** Machines preselected (?machineId= / ?machineIds=, from Machine detail or the machines list). */
   initialMachineIds: string[];
+  /** Offers a requirement picker on a plain "New quotation": the parent switches `requirementId`. */
+  onRequirementChange?: (requirementId: string | null) => void;
   onCreated: () => void;
 }
 
@@ -311,6 +314,7 @@ export function CreateQuotationDialog({
   sourceAuctionId,
   initialMachineIds,
   onCreated,
+  onRequirementChange,
 }: CreateQuotationDialogProps) {
   const { hasPermission } = useSession();
   const toast = useToast();
@@ -324,6 +328,8 @@ export function CreateQuotationDialog({
   const [renters, setRenters] = useState<Organization[] | null>(null);
   const [rentersFailed, setRentersFailed] = useState(false);
   const [requirement, setRequirement] = useState<Requirement | null>(null);
+  // Open requirements to quote against, for the picker on a plain "New quotation".
+  const [openRequirements, setOpenRequirements] = useState<SearchSelectOption[] | null>(null);
   const [requirementEquipment, setRequirementEquipment] = useState<string | null>(null);
   // This company's own "interested" response to the requirement, if any —
   // recorded on the created quotation as quotationResponseId so the
@@ -460,6 +466,33 @@ export function CreateQuotationDialog({
       cancelled = true;
     };
   }, [open, organizationId, requirementId]);
+
+  const offerRequirementPicker = Boolean(onRequirementChange) && !sourceAuctionId;
+  useEffect(() => {
+    if (!open || !offerRequirementPicker || openRequirements) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [list, index] = await Promise.all([
+          apiClient.discoverRequirements(organizationId) as Promise<Requirement[]>,
+          loadSubcategoryIndex(),
+        ]);
+        if (cancelled) return;
+        setOpenRequirements(
+          list.map((r) => ({
+            value: r.id,
+            label: `${requirementRef(r.id)} · ${equipmentLine(r, index.get(r.productSubcategoryId)?.subcategory.name)}`,
+            description: `${r.projectName} · ${r.projectLocation} · needed from ${formatDate(r.requestedStartDate)}`,
+          })),
+        );
+      } catch {
+        if (!cancelled) setOpenRequirements([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, offerRequirementPicker, organizationId, openRequirements]);
 
   useEffect(() => {
     if (!open || !sourceAuctionId) {
@@ -695,6 +728,11 @@ export function CreateQuotationDialog({
               <FormBanner tone="info" title={`No machine of this type to quote${requirementEquipment ? `: ${requirementEquipment}` : ""}`}>
                 {requirementRef(requirement.id)} asks for equipment your fleet has no Active machine of. Register one, or bring one back from
                 the workshop, to quote it.
+                {offerRequirementPicker && (
+                  <Button variant="tertiary" size="sm" className="mt-1.5 !h-auto !px-0 !text-accent-text hover:underline" onClick={() => onRequirementChange?.(null)}>
+                    Quote without a requirement
+                  </Button>
+                )}
               </FormBanner>
             ) : (
               <FormBanner tone="info" title="No machine can be quoted right now">
@@ -703,6 +741,18 @@ export function CreateQuotationDialog({
             )
           ) : canListMachines && !machinesFailed ? (
             <>
+              {offerRequirementPicker && !requirementId && (
+                <SearchSelect
+                  label="Requirement"
+                  options={openRequirements ?? []}
+                  loading={openRequirements === null}
+                  value=""
+                  onChange={(id) => id && onRequirementChange?.(id)}
+                  placeholder="Not for a requirement"
+                  emptyText="No open requirement matches."
+                  hint="Quoting a customer's requirement? Pick it: customer, dates and rate unit come from it, and only machines of its type are listed."
+                />
+              )}
               {requirement && (
                 <Alert tone="info" icon="requirement" title={`Quoting against ${requirementRef(requirement.id)} — this quotation stays tied to it`}>
                   <DescriptionList
@@ -720,6 +770,11 @@ export function CreateQuotationDialog({
                     ]}
                   />
                   {requirement.notes && <p className="m-0 mt-1.5 text-xs text-ink-body">Notes: {requirement.notes}</p>}
+                  {offerRequirementPicker && (
+                    <Button variant="tertiary" size="sm" className="mt-1.5 !h-auto !px-0 !text-accent-text hover:underline" onClick={() => onRequirementChange?.(null)}>
+                      Quote without a requirement
+                    </Button>
+                  )}
                 </Alert>
               )}
               {sourceAuctionId && (
