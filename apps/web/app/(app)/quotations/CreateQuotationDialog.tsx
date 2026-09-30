@@ -4,11 +4,12 @@ import type { AuctionDetail } from "@fleetip/contracts/auction";
 import type { Product } from "@fleetip/contracts/catalogue";
 import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { Organization } from "@fleetip/contracts/organization";
-import type {
-  CommercialQuotation,
-  CreateCommercialQuotationRequest,
-  QuotationResponse,
-  ResponsibleParty,
+import {
+  CommercialQuotationStatus,
+  type CommercialQuotation,
+  type CreateCommercialQuotationRequest,
+  type QuotationResponse,
+  type ResponsibleParty,
 } from "@fleetip/contracts/quotation";
 import type { OperatorScope, RateUnit } from "@fleetip/contracts/rental";
 import type { Requirement } from "@fleetip/contracts/rfq";
@@ -306,6 +307,14 @@ const num = (raw: string) => (raw.trim() === "" ? undefined : Number(raw));
  * created reference or the reason it failed. Never reports success for a
  * machine that failed.
  */
+// Quotations still in play for their requirement (the API allows one per machine).
+const LIVE_STATUSES = new Set<string>([
+  CommercialQuotationStatus.draft,
+  CommercialQuotationStatus.sent,
+  CommercialQuotationStatus.negotiating,
+  CommercialQuotationStatus.awarded,
+]);
+
 export function CreateQuotationDialog({
   open,
   onClose,
@@ -328,6 +337,8 @@ export function CreateQuotationDialog({
   const [renters, setRenters] = useState<Organization[] | null>(null);
   const [rentersFailed, setRentersFailed] = useState(false);
   const [requirement, setRequirement] = useState<Requirement | null>(null);
+  // Machines with a live quotation on this requirement already (machine id → reference); the API refuses a second.
+  const [quotedOnRequirement, setQuotedOnRequirement] = useState<Map<string, string>>(new Map());
   // Open requirements to quote against, for the picker on a plain "New quotation".
   const [openRequirements, setOpenRequirements] = useState<SearchSelectOption[] | null>(null);
   const [requirementEquipment, setRequirementEquipment] = useState<string | null>(null);
@@ -372,9 +383,10 @@ export function CreateQuotationDialog({
       machineList.filter(
         (m) =>
           m.status === MachineStatus.active &&
-          (!requirement || products.get(m.productId)?.productSubcategoryId === requirement.productSubcategoryId),
+          (!requirement ||
+            (products.get(m.productId)?.productSubcategoryId === requirement.productSubcategoryId && !quotedOnRequirement.has(m.id))),
       ),
-    [machineList, requirement, products],
+    [machineList, requirement, products, quotedOnRequirement],
   );
   const activeIds = useMemo(() => new Set(activeMachines.map((m) => m.id)), [activeMachines]);
 
@@ -428,6 +440,7 @@ export function CreateQuotationDialog({
   useEffect(() => {
     if (!open || !requirementId) {
       setRequirement(null);
+      setQuotedOnRequirement(new Map());
       return;
     }
     // This dialog stays mounted (only `open` toggles) — a notification for a
@@ -440,9 +453,19 @@ export function CreateQuotationDialog({
     let cancelled = false;
     void (async () => {
       try {
-        const req = (await apiClient.getRequirementForDiscovery(organizationId, requirementId)) as Requirement;
-        const index = await loadSubcategoryIndex();
+        const [req, index, ownQuotations] = await Promise.all([
+          apiClient.getRequirementForDiscovery(organizationId, requirementId) as Promise<Requirement>,
+          loadSubcategoryIndex(),
+          optional(true, () => apiClient.listQuotations(organizationId) as Promise<CommercialQuotation[]>, [] as CommercialQuotation[]),
+        ]);
         if (cancelled) return;
+        setQuotedOnRequirement(
+          new Map(
+            ownQuotations
+              .filter((q) => q.requirementId === requirementId && LIVE_STATUSES.has(q.status))
+              .map((q) => [q.machineId, q.referenceNumber]),
+          ),
+        );
         setRequirement(req);
         setRequirementEquipment(equipmentLine(req, index.get(req.productSubcategoryId)?.subcategory.name));
         // Best-effort — creating a quotation without ever having submitted
@@ -726,8 +749,9 @@ export function CreateQuotationDialog({
           ) : noMachines ? (
             requirement ? (
               <FormBanner tone="info" title={`No machine of this type to quote${requirementEquipment ? `: ${requirementEquipment}` : ""}`}>
-                {requirementRef(requirement.id)} asks for equipment your fleet has no Active machine of. Register one, or bring one back from
-                the workshop, to quote it.
+                {quotedOnRequirement.size > 0
+                  ? `Every matching Active machine is already quoted on ${requirementRef(requirement.id)} (${[...quotedOnRequirement.values()].join(", ")}). Open that quotation to change it.`
+                  : `${requirementRef(requirement.id)} asks for equipment your fleet has no Active machine of. Register one, or bring one back from the workshop, to quote it.`}
                 {offerRequirementPicker && (
                   <Button variant="tertiary" size="sm" className="mt-1.5 !h-auto !px-0 !text-accent-text hover:underline" onClick={() => onRequirementChange?.(null)}>
                     Quote without a requirement
@@ -836,6 +860,16 @@ export function CreateQuotationDialog({
                   <span id="quote-machines-msg" className={cx("text-[11px] leading-[1.4]", form.errors.machines ? "text-destructive" : "text-meta-light")}>
                     {form.errors.machines ?? `${plural(selectedActive.length, "machine")} selected. ${requirement ? "Only Active machines of the requested type are listed." : "Only Active machines are listed."}`}
                   </span>
+                  {requirement && quotedOnRequirement.size > 0 && (
+                    <span className="text-[11px] leading-[1.4] text-meta-light">
+                      Already quoted on {requirementRef(requirement.id)}, so not listed:{" "}
+                      {machineList
+                        .filter((m) => quotedOnRequirement.has(m.id))
+                        .map((m) => `${m.assetCode} (${quotedOnRequirement.get(m.id)})`)
+                        .join(", ")}
+                      .
+                    </span>
+                  )}
                   {unquotable.length > 0 && (
                     <FormBanner tone="warning" title={`${plural(unquotable.length, "preselected machine")} can't be quoted`}>
                       Only Active machines can be quoted:{" "}

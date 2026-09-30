@@ -140,6 +140,14 @@ function toScopeItem(record: QuotationScopeItemRecord): QuotationScopeItem {
 // what the Renter accepted is what was sent.
 const EDITABLE_STATUSES = new Set<string>([CommercialQuotationStatus.draft]);
 
+// Quotations still in play for their requirement (not rejected, expired or withdrawn).
+const LIVE_QUOTATION_STATUSES = new Set<string>([
+  CommercialQuotationStatus.draft,
+  CommercialQuotationStatus.sent,
+  CommercialQuotationStatus.negotiating,
+  CommercialQuotationStatus.awarded,
+]);
+
 export class CommercialQuotationService {
   constructor(
     private readonly quotationRepository: CommercialQuotationRepositoryPort,
@@ -221,6 +229,21 @@ export class CommercialQuotationService {
       if (product?.product_subcategory_id !== requirement.product_subcategory_id) {
         const message = `${machine.asset_code} isn't the equipment type this requirement asks for.`;
         throw new ValidationError(message, [{ path: "machineId", message }]);
+      }
+      // One live quotation per machine per requirement: a second one for
+      // the same machine would offer it to the customer twice.
+      // ponytail: scans the company's quotations; add a by-requirement query if that list grows large.
+      const duplicate = (await this.quotationRepository.listByRentalCompany(rentalCompanyOrganizationId)).find(
+        (quotation) =>
+          quotation.requirement_id === requirement!.id &&
+          quotation.machine_id === machine.id &&
+          LIVE_QUOTATION_STATUSES.has(quotation.status),
+      );
+      if (duplicate) {
+        throw new ConflictError(
+          `${machine.asset_code} is already quoted on this requirement (${duplicate.reference_number}). Change or withdraw that quotation instead.`,
+          "machineId",
+        );
       }
     }
 

@@ -1057,6 +1057,15 @@ describe("CommercialQuotationService", () => {
     ).rejects.toMatchObject({ issues: [{ path: "machineId" }] });
   });
 
+  it("allows one live quotation per machine per requirement", async () => {
+    const service = buildService();
+    const input = { ...pathBInput, clientSnapshot: undefined, renterOrganizationId: RENTER_ORG_ID, requirementId: OPEN_REQUIREMENT_ID };
+    const first = await service.createQuotation("user-1", RC_ORG_ID, input);
+    await expect(service.createQuotation("user-1", RC_ORG_ID, input)).rejects.toMatchObject({ field: "machineId" });
+    await service.withdrawQuotation("user-1", RC_ORG_ID, first.id);
+    await expect(service.createQuotation("user-1", RC_ORG_ID, input)).resolves.toMatchObject({ requirementId: OPEN_REQUIREMENT_ID });
+  });
+
   it("locks the quotation's rate unit to the requirement's own expectedDurationUnit, ignoring the caller's choice", async () => {
     const service = buildService([machine()], [requirement({ expected_duration_unit: "month" })]);
     const quotation = await service.createQuotation("user-1", RC_ORG_ID, {
