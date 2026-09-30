@@ -374,17 +374,11 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
       </FormSection>
 
       <FormSection title="Schedule" className="border-t border-border pt-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* Two dates on one row, duration + unit on the next: labels stay one
+            line each, so the boxes in a row line up and hints sit under them. */}
+        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
           <div data-field="requestedStartDate">
             <Input label="Needed on site from" required type="date" mono min={today} {...bind("requestedStartDate")} hint="Today or later." />
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-2">
-            <div data-field="expectedDurationValue">
-              <Input label="Expected duration" mono inputMode="numeric" {...bind("expectedDurationValue")} />
-            </div>
-            <div data-field="expectedDurationUnit">
-              <Select label="Unit" placeholder="Not specified" options={DURATION_UNIT_OPTIONS} {...bind("expectedDurationUnit")} />
-            </div>
           </div>
           <div data-field="validityDate">
             <Input
@@ -395,14 +389,25 @@ export function PostRequirementDialog({ open, onClose, organizationId, initialPr
               min={today}
               max={values.requestedStartDate || undefined}
               {...bind("validityDate")}
-              hint="The validity date: after it, the requirement leaves the Open Market. On or before the start date."
+              hint="After this date the requirement leaves the Open Market. On or before the start date."
             />
           </div>
-          <p className="m-0 self-center text-xs leading-[1.5] text-meta">
-            {values.expectedDurationUnit
-              ? `Responses and quotations will be priced ${formatRateUnit(values.expectedDurationUnit)}, so they compare like for like.`
-              : "The duration unit, when given, becomes the rate unit on every response and quotation."}
-          </p>
+          <div data-field="expectedDurationValue">
+            <Input label="Expected duration" mono inputMode="numeric" {...bind("expectedDurationValue")} />
+          </div>
+          <div data-field="expectedDurationUnit">
+            <Select
+              label="Duration unit"
+              placeholder="Not specified"
+              options={DURATION_UNIT_OPTIONS}
+              {...bind("expectedDurationUnit")}
+              hint={
+                values.expectedDurationUnit
+                  ? `Responses and quotations will be priced ${formatRateUnit(values.expectedDurationUnit)}, so they compare like for like.`
+                  : "When given, it becomes the rate unit on every response and quotation."
+              }
+            />
+          </div>
         </div>
       </FormSection>
 
