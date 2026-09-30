@@ -77,6 +77,11 @@ export function useLoad<T>(loader: () => Promise<T>, deps: DependencyList, enabl
     if (enabled) void reload();
   }, [enabled, reload]);
   useReloadOnReconnect(onReconnect);
+  useEffect(() => {
+    if (!enabled) return;
+    window.addEventListener(REFRESH_EVENT, onReconnect);
+    return () => window.removeEventListener(REFRESH_EVENT, onReconnect);
+  }, [enabled, onReconnect]);
 
   const setData = useCallback((updater: T | ((previous: T | null) => T | null)) => {
     setDataState((previous) =>
@@ -85,6 +90,17 @@ export function useLoad<T>(loader: () => Promise<T>, deps: DependencyList, enabl
   }, []);
 
   return { data, error, loading: enabled ? loading : true, refreshing, reload, setData };
+}
+
+const REFRESH_EVENT = "fleetip:refresh-page-data";
+
+/**
+ * Re-fetches every useLoad on screen, keeping the data shown meanwhile.
+ * For links that land on the page already open (router.push to the same
+ * path doesn't remount it, so nothing would reload otherwise).
+ */
+export function refreshPageData(): void {
+  window.dispatchEvent(new Event(REFRESH_EVENT));
 }
 
 /** Run an optional enrichment call; a failure (e.g. missing permission) yields the fallback instead of failing the page. */

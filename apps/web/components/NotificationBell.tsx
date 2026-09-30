@@ -9,6 +9,7 @@ import { formatRelativeTime } from "../lib/format";
 import { ROUTE_BY_RESOURCE_TYPE } from "../lib/navigation";
 import { useSession } from "../lib/session-context";
 import { useInterval } from "../lib/use-interval";
+import { refreshPageData } from "../lib/use-load";
 
 const UNREAD_POLL_INTERVAL_MS = 25_000;
 
@@ -51,7 +52,12 @@ export function NotificationBell({ tone = "light" }: { tone?: "light" | "dark" }
       }
     }
     const buildPath = notification.relatedResourceType && ROUTE_BY_RESOURCE_TYPE[notification.relatedResourceType];
-    if (buildPath && notification.relatedResourceId) router.push(buildPath(notification.relatedResourceId));
+    if (!buildPath || !notification.relatedResourceId) return;
+    const target = buildPath(notification.relatedResourceId);
+    router.push(target);
+    // Already on that page: the push doesn't remount it, so reload its data
+    // to show what the notification is about.
+    if (new URL(target, window.location.origin).pathname === window.location.pathname) refreshPageData();
   }
 
   async function handleMarkAllRead() {
