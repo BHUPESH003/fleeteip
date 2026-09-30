@@ -47,7 +47,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <TopBar onMenuClick={() => setMobileNavOpen(true)} />
         <Header />
         <OfflineBanner />
-        <main id="main" tabIndex={-1} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden focus:outline-none">
+        {/* relative: absolute children (sr-only headings) are placed and clipped
+            in this scroll area; otherwise they hang off the page root and make
+            the whole window scroll. */}
+        <main id="main" tabIndex={-1} className="relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden focus:outline-none">
           <Suspense fallback={<LoadingState label="Loading…" />}>{children}</Suspense>
         </main>
       </div>
