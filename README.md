@@ -32,7 +32,7 @@ WITH KNOWN RISKS** — see [Known limitations](#known-limitations) below.
 | Contracts     | Zod schemas in `packages/contracts` — the single source of truth for shapes |
 | Auth          | Hashed passwords (`scrypt`) + DB-backed cookie sessions, no OTP/JWT         |
 | Monorepo      | pnpm workspaces                                                             |
-| Deployment    | `apps/api` → Render (see `render.yaml`); `apps/web` → Vercel                  |
+| Deployment    | `apps/api` → Render (see `render.yaml`); DB → Neon; `apps/web` → Vercel       |
 
 Deliberately **not** used: an ORM, microservices, MongoDB, Kafka, Kubernetes, Redis (unless a
 measured need appears), or any generic workflow/permission-builder engine. See
@@ -153,7 +153,9 @@ pnpm migrate:down           # roll back the last migration
 ## Deployment
 
 `apps/api` deploys to Render via `render.yaml` (Blueprint import) — migrations run automatically as
-part of the start command. `apps/web` deploys separately to Vercel (Root Directory: `apps/web`).
+part of the start command. Postgres is on Neon: set the API's `DATABASE_URL` in the Render dashboard
+to the Neon connection string (with `?sslmode=require`). `apps/web` deploys separately to Vercel
+(Root Directory: `apps/web`).
 `WEB_ORIGIN` (API) and `NEXT_PUBLIC_API_URL` (web) must point at each other's real deployed URLs.
 
 ## Testing & quality

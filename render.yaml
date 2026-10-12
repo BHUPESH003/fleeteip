@@ -9,11 +9,8 @@
 #
 # apps/web (Next.js) is NOT deployed from here — it goes to Vercel
 # separately (Root Directory: apps/web in the Vercel dashboard).
-
-databases:
-  - name: fleetip-db
-    plan: free
-    region: oregon
+#
+# The database is on Neon, not Render (Render's free Postgres expires).
 
 services:
   - type: web
@@ -38,9 +35,7 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: DATABASE_URL
-        fromDatabase:
-          name: fleetip-db
-          property: connectionString
+        sync: false # Neon connection string (direct, not -pooler), must include ?sslmode=require
       - key: SESSION_COOKIE_SECRET
         generateValue: true
       - key: SESSION_COOKIE_NAME
