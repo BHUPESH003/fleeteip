@@ -15,6 +15,7 @@ import {
 import { MembershipStatus } from "@fleetip/contracts/organization";
 import {
   ConflictError,
+  EmailNotVerifiedError,
   ForbiddenError,
   NotFoundError,
   UnauthorizedError,
@@ -52,6 +53,8 @@ export interface AuthResult {
   user: User;
   token: string;
   expiresAt: Date;
+  /** Set (with an empty token) when the account must verify its email before it can sign in. */
+  verificationRequired?: boolean;
 }
 
 function toContractUser(row: PublicUserRecord): User {
@@ -70,6 +73,8 @@ export class AuthService {
     private readonly organizationRepository: OrganizationRepositoryPort,
     private readonly membershipRepository: MembershipRepositoryPort,
     private readonly roleRepository: RoleRepositoryPort,
+    /** Present only when email verification is enforced (a real mailer is configured). */
+    private readonly emailVerification?: { sendVerification(user: PublicUserRecord): Promise<void> },
   ) {}
 
   async signup(request: SignupRequest, meta: SessionMeta = {}): Promise<AuthResult> {
@@ -109,6 +114,10 @@ export class AuthService {
       permissionCodes: [],
     });
 
+    if (this.emailVerification) {
+      await this.emailVerification.sendVerification(user);
+      return { user: toContractUser(user), token: "", expiresAt: new Date(0), verificationRequired: true };
+    }
     return this.issueSession(user, meta);
   }
 
@@ -122,7 +131,9 @@ export class AuthService {
     password: string;
     displayName: string;
   }): Promise<AuthResult> {
+    // The invite link went to this address, so redeeming it proves ownership.
     const user = await this.createAccount(input);
+    await this.userRepository.markEmailVerified(user.id);
     return this.issueSession(user);
   }
 
@@ -161,6 +172,7 @@ export class AuthService {
     if (user.status === "suspended") {
       throw new ForbiddenError("This account has been suspended");
     }
+    if (this.emailVerification && !user.email_verified_at) throw new EmailNotVerifiedError();
     return this.issueSession(user, meta);
   }
 
@@ -180,6 +192,7 @@ export class AuthService {
     const user = await this.userRepository.findById(session.user_id);
     // Suspending deletes the sessions too; this also covers any row created in between.
     if (!user || user.status === "suspended") return null;
+    if (this.emailVerification && !user.email_verified_at) return null;
 
     if (Date.now() - new Date(session.last_seen_at).getTime() > LAST_SEEN_WRITE_INTERVAL_MS) {
       await this.sessionRepository.touch(session.id);

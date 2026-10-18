@@ -26,8 +26,9 @@ import {
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ForbiddenPage, PageLoadError } from "../../../../components/PageStates";
-import { ApiError, apiClient } from "../../../../lib/api-client";
+import { ApiError, apiClient, documentPaths } from "../../../../lib/api-client";
 import { useConnection } from "../../../../lib/connection";
+import { useDownload } from "../../../../lib/use-download";
 import { OFFLINE_HINT } from "../../../../lib/errors";
 import { rentalRef, todayIsoDate } from "../../../../lib/format";
 import { useListBackHref } from "../../../../lib/list-state";
@@ -217,6 +218,7 @@ function RentalDetailView({
   const { rental, access } = data;
   const ref = rentalRef(rental.id);
   const offline = !online;
+  const { download } = useDownload();
 
   const [dialog, setDialog] = useState<DialogKey | null>(null);
   const [logDate, setLogDate] = useState<string | null>(null);
@@ -293,6 +295,24 @@ function RentalDetailView({
       href: `/billing?create=1&rentalId=${rental.id}`,
       hint: "Opens Billing with this rental chosen. Lines are entered by hand.",
     });
+  }
+  {
+    // Monthly timesheet for the customer to certify: this month and the one before.
+    const now = new Date();
+    const months = [0, 1].map((back) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
+    for (const month of months) {
+      menuItems.push({
+        key: `timesheet-${month}`,
+        label: `Download timesheet ${month}`,
+        icon: "export",
+        disabled: offline,
+        hint: offline ? OFFLINE_HINT : "Daily logsheets and totals for the month, ready to sign.",
+        onSelect: () => void download(documentPaths.timesheet(organizationId, rental.id, month), "The timesheet PDF"),
+      });
+    }
   }
   if (data.machine) {
     menuItems.push({

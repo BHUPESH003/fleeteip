@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { FormEvent } from "react";
 import { z } from "zod";
-import { apiClient } from "../../../lib/api-client";
+import { useState } from "react";
+import { ApiError, apiClient } from "../../../lib/api-client";
 import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
 import { AUTH_LINK, AuthCard } from "../AuthShell";
 import { PasswordInput, emailField } from "../fields";
 import { nextQuery, safeNextPath } from "../next-param";
+import { VerifyEmailNotice } from "../VerifyEmailNotice";
 
 const schema = z.object({
   email: emailField(),
@@ -32,10 +34,20 @@ export default function LoginPage() {
   const next = safeNextPath(useSearchParams().get("next"));
   const form = useForm({ statusCopy: STATUS_COPY, schema, initial: { email: "", password: "" }, failTitle: "You weren't signed in" });
   const problem = form.banner;
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
 
   const save = form.submit(async (body) => {
     // The (public) layout sends a signed-in visitor on to ?next= (or the dashboard).
-    await apiClient.login(body);
+    try {
+      await apiClient.login(body);
+    } catch (error) {
+      // The password was right but the email isn't verified yet: offer the link again.
+      if (error instanceof ApiError && error.code === "email_not_verified") {
+        setUnverifiedEmail(body.email);
+        return;
+      }
+      throw error;
+    }
     await refresh();
   });
   const handleSubmit = (event: FormEvent) => {
@@ -43,6 +55,8 @@ export default function LoginPage() {
   };
 
   const toInvite = next.startsWith("/invite/");
+
+  if (unverifiedEmail) return <VerifyEmailNotice email={unverifiedEmail} onBack={() => setUnverifiedEmail(null)} />;
 
   return (
     <AuthCard

@@ -43,7 +43,11 @@ export class PasswordResetTokenRepository implements PasswordResetTokenRepositor
       if (!claimed) return false;
       await trx
         .updateTable("users")
-        .set({ password_hash: input.passwordHash })
+        // Following the emailed link also proves the address is theirs.
+        .set((eb) => ({
+          password_hash: input.passwordHash,
+          email_verified_at: eb.fn.coalesce("email_verified_at", eb.val(new Date())),
+        }))
         .where("id", "=", input.userId)
         .execute();
       return true;

@@ -46,11 +46,14 @@ Related: `docs/risk-register.md` (why each item matters),
 ## 2. Database
 
 - [ ] `pnpm migrate` has run against production, and every migration up to
-  the latest (currently 0040) is listed in `kysely_migration`.
+  the latest (currently 0043) is listed in `kysely_migration`.
   0038 makes `machines.registration_number` nullable, 0039 seeds the
   construction-equipment taxonomy (10 categories, 51 subcategories) beside the
   old 0005 starter categories, and 0040 adds `organization_profiles` and
-  `organization_contacts`.
+  `organization_contacts`; 0041 lets a commercial quotation carry a catalogue
+  product instead of a machine (`machine_id` nullable, new `product_id`); 0042 adds `users.email_verified_at`
+  (every existing user is marked verified) and `email_verification_tokens`; 0043 adds the customer's own work order number and date
+  to `work_orders`.
 - [ ] After 0039, the category/subcategory pickers show the new taxonomy.
   Decide whether the old starter categories (Excavator, Crane, Loader,
   Generator, Compactor) stay visible or are disabled. Check production for
@@ -63,6 +66,20 @@ Related: `docs/risk-register.md` (why each item matters),
 - [ ] Connection limits suit the host, pool size included.
 - [ ] Timezone: date-only business rules use Asia/Kolkata (`shared/business-date.ts`),
   whatever the server clock's zone.
+
+- [ ] **Email is configured.** `MAIL_PROVIDER=resend`, `RESEND_API_KEY` and
+  `MAIL_FROM` are set, and the sending domain is verified with the provider.
+  With `MAIL_PROVIDER=log` (the default) password-reset links only appear in
+  the logs and email verification is off. To change provider later: add an
+  adapter in `apps/api/src/infrastructure/mail/`, one case in
+  `create-mailer.ts`, its keys in `env.ts`, and set `MAIL_PROVIDER`.
+- [ ] Accounts created while `MAIL_PROVIDER=log` (verification off) have no
+  verification stamp, so they are refused sign-in once verification is on. Turn
+  on `MAIL_PROVIDER=resend` in the same deploy as migration 0042, or run
+  `UPDATE users SET email_verified_at = now() WHERE email_verified_at IS NULL;`
+  first (only when you trust those addresses).
+- [ ] Send a test signup: the verification email arrives, the link works once,
+  an unverified login is refused with a "resend" option.
 
 ## 3. Security
 

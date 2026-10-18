@@ -29,8 +29,9 @@ import {
   type MenuItem,
 } from "@fleetip/ui";
 import { useRef, useState, type ReactNode } from "react";
-import { apiClient } from "../../../../lib/api-client";
+import { apiClient, documentPaths } from "../../../../lib/api-client";
 import { useConnection } from "../../../../lib/connection";
+import { useDownload } from "../../../../lib/use-download";
 import { OFFLINE_HINT } from "../../../../lib/errors";
 import {
   daysBetween,
@@ -64,7 +65,7 @@ import {
   rateDelta,
 } from "../shared";
 import type { QuotationDetailData } from "./data";
-import { ActionConfirm, CounterOfferDialog, ProposeDatesDialog, ProposedDates, type CounterRange } from "./dialogs";
+import { ActionConfirm, AssignMachineDialog, CounterOfferDialog, ProposeDatesDialog, ProposedDates, type CounterRange } from "./dialogs";
 import { ScopeItemsCard } from "./ScopeItemsCard";
 
 const LINK_PRIMARY =
@@ -81,7 +82,8 @@ type DialogState =
   | { kind: "dates"; decision: typeof AlternateDateStatus.accepted | typeof AlternateDateStatus.rejected }
   | { kind: "counter" }
   | { kind: "propose" }
-  | { kind: "edit" };
+  | { kind: "edit" }
+  | { kind: "assign" };
 
 export function QuotationView({
   data,
@@ -95,6 +97,7 @@ export function QuotationView({
   patch: (update: (data: QuotationDetailData) => QuotationDetailData) => void;
 }) {
   const { online } = useConnection();
+  const { download } = useDownload();
   const { hasPermission } = useSession();
   const backHref = useListBackHref("quotations", "/quotations");
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -118,6 +121,8 @@ export function QuotationView({
   const assetCode = q.machineAssetCode ?? data.machine?.assetCode ?? null;
   const machineName = q.productName ?? (data.product ? `${data.product.manufacturer} ${data.product.name}` : null);
   const machineLabel = assetCode ?? machineName ?? "the machine";
+  // Quoted by catalogue product: the company is still sourcing the machine.
+  const canSetMachine = isOwner && (q.status === CommercialQuotationStatus.draft || negotiable);
 
   // There is at most one pending offer at a time — a new one supersedes
   // whichever was pending before, from either party (offerRepository.
@@ -164,7 +169,9 @@ export function QuotationView({
         ? `Waiting for ${counterparty} to accept. Award needs their acceptance.`
         : !canAward
           ? "Awarding creates a rental, which needs the Rentals permission."
-          : null;
+          : !q.machineId
+            ? "Assign a machine from your fleet first. This quotation is for equipment you're still sourcing."
+            : null;
   const counterBlocker = !negotiable
     ? q.status === CommercialQuotationStatus.draft
       ? "Send it first — counter-offers need a sent quotation."
@@ -236,6 +243,16 @@ export function QuotationView({
   }
 
   const menuItems: MenuItem[] = [];
+  if (canSetMachine) {
+    menuItems.push({
+      key: "assign",
+      label: q.machineId ? "Change machine" : "Assign machine",
+      icon: "machine",
+      disabled: offline,
+      hint: offline ? OFFLINE_HINT : q.machineId ? "Picked the wrong one? Switch to another machine of this type." : "Link the machine you've bought or rehired.",
+      onSelect: () => setDialog({ kind: "assign" }),
+    });
+  }
   // Terms are edited only while drafting; once sent they change only through
   // offers and the alternate-dates flow, so the item is hidden, not disabled.
   if (isOwner) {
@@ -316,14 +333,23 @@ export function QuotationView({
       onSelect: () => setDialog({ kind: "reject" }),
     });
   }
+  menuItems.push({
+    key: "pdf",
+    label: "Download quotation PDF",
+    icon: "export",
+    separatorBefore: true,
+    disabled: offline,
+    hint: offline ? OFFLINE_HINT : `${q.referenceNumber} as a PDF to send or keep.`,
+    onSelect: () => void download(documentPaths.quotation(organizationId, q.id), "The quotation PDF"),
+  });
   if (workOrder) {
     menuItems.push({
-      key: "print",
-      label: "Print work order",
+      key: "work-order-pdf",
+      label: "Download work order PDF",
       icon: "export",
-      separatorBefore: true,
-      hint: `${workOrder.referenceNumber} as a printable page, in a new tab. FleetIP has no PDF of the quotation itself.`,
-      onSelect: () => window.open(apiClient.workOrderPrintUrl(organizationId, workOrder.id), "_blank", "noopener"),
+      disabled: offline,
+      hint: offline ? OFFLINE_HINT : `${workOrder.referenceNumber} as a PDF.`,
+      onSelect: () => void download(documentPaths.workOrder(organizationId, workOrder.id), "The work order PDF"),
     });
   }
   if (q.requirementId) {
@@ -457,7 +483,7 @@ export function QuotationView({
       title: "Machine and dates",
       items: [
         { label: "Machine", value: machineName },
-        { label: "Asset code", value: assetCode, mono: true },
+        { label: "Asset code", value: assetCode ?? (q.machineId ? null : "To be sourced"), mono: true },
         ...(isCompany ? [{ label: "Registration", value: data.machine?.registrationNumber, mono: true }] : []),
         party,
         { label: "Start date", value: formatDate(q.startDate), mono: true },
@@ -664,8 +690,8 @@ export function QuotationView({
             </div>
 
             <p className="m-0 px-1 text-[11px] leading-[1.5] text-meta-light">
-              Created {formatDateTime(q.createdAt)} · last changed {formatDateTime(q.updatedAt)}. FleetIP has no PDF or share link for a
-              quotation yet{workOrder ? "; the work order can be printed" : ""}.
+              Created {formatDateTime(q.createdAt)} · last changed {formatDateTime(q.updatedAt)}. Download the quotation{workOrder ? " or the work order" : ""} as a PDF
+              from the menu above.
             </p>
           </aside>
         </div>
@@ -1042,6 +1068,15 @@ function QuotationDialogs({
         defaultUnit={decisionUnit}
         otherParty={counterparty}
         range={counterRange}
+        onDone={done}
+      />
+      <AssignMachineDialog
+        open={dialog?.kind === "assign"}
+        onClose={onClose}
+        organizationId={organizationId}
+        quotation={q}
+        productId={data.product?.id ?? q.productId ?? data.machine?.productId ?? null}
+        productLabel={data.product ? `${data.product.manufacturer} ${data.product.name}` : "this equipment"}
         onDone={done}
       />
       <ProposeDatesDialog open={dialog?.kind === "propose"} onClose={onClose} organizationId={organizationId} quotation={q} customer={counterparty} onDone={done} />

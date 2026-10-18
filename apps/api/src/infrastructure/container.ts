@@ -9,7 +9,10 @@ import { SessionRepository } from "../modules/identity/infrastructure/session-re
 import { UserRepository } from "../modules/identity/infrastructure/user-repository.js";
 import { PasswordResetService } from "../modules/identity/application/password-reset-service.js";
 import { PasswordResetTokenRepository } from "../modules/identity/infrastructure/password-reset-token-repository.js";
-import { LogMailer } from "./mail/log-mailer.js";
+import { DocumentService } from "../modules/documents/document-service.js";
+import { createMailer } from "./mail/create-mailer.js";
+import { EmailVerificationService } from "../modules/identity/application/email-verification-service.js";
+import { EmailVerificationTokenRepository } from "../modules/identity/infrastructure/email-verification-token-repository.js";
 import { logger } from "./logging/logger.js";
 import { AuctionService } from "../modules/marketplace/auction/application/auction-service.js";
 import { AuctionRepository } from "../modules/marketplace/auction/infrastructure/auction-repository.js";
@@ -63,8 +66,10 @@ import { env } from "./config/env.js";
  */
 const userRepository = new UserRepository(db);
 const sessionRepository = new SessionRepository(db);
-// ponytail: dev-only mailer that logs messages — swap for a real provider here.
-const mailer = new LogMailer();
+const { mailer, delivers: emailVerificationRequired } = createMailer(env);
+if (!emailVerificationRequired && env.NODE_ENV === "production") {
+  logger.warn("MAIL_PROVIDER=log: emails (password reset, verification) are only logged");
+}
 const organizationRepository = new OrganizationRepository(db);
 const inviteRepository = new InviteRepository(db);
 const membershipRepository = new MembershipRepository(db);
@@ -140,12 +145,21 @@ const platformAdminService = new PlatformAdminService(
   sessionRepository,
 );
 
+const emailVerificationService = new EmailVerificationService(
+  userRepository,
+  new EmailVerificationTokenRepository(db),
+  mailer,
+  env.WEB_ORIGIN,
+  (error) => logger.error({ err: error }, "email verification mail send failed"),
+);
+
 const authService = new AuthService(
   userRepository,
   sessionRepository,
   organizationRepository,
   membershipRepository,
   roleRepository,
+  emailVerificationRequired ? emailVerificationService : undefined,
 );
 
 const inviteService = new InviteService(
@@ -157,8 +171,9 @@ const inviteService = new InviteService(
   env.WEB_ORIGIN,
 );
 
-export const container = {
+const services = {
   authService,
+  emailVerificationService,
   passwordResetService: new PasswordResetService(
     userRepository,
     new PasswordResetTokenRepository(db),
@@ -284,5 +299,20 @@ export const container = {
     rentalRepository,
     organizationRepository,
     permissionService,
+  ),
+};
+
+export const container = {
+  ...services,
+  documentService: new DocumentService(
+    services.commercialQuotationService,
+    workOrderService,
+    workOrderRepository,
+    rentalService,
+    services.logsheetService,
+    services.billingService,
+    machineRepository,
+    productRepository,
+    organizationRepository,
   ),
 };

@@ -17,7 +17,8 @@ export interface CommercialQuotationRecord {
   quotation_response_id: string | null;
   source_auction_id: string | null;
   reference_number: string;
-  machine_id: string;
+  machine_id: string | null;
+  product_id: string | null;
   start_date: string;
   end_date: string | null;
   rate: number;
@@ -60,7 +61,9 @@ export interface CreateCommercialQuotationInput {
   quotationResponseId?: string;
   sourceAuctionId?: string;
   referenceNumber: string;
-  machineId: string;
+  // Exactly one of machineId / productId (productId = equipment still to be sourced).
+  machineId?: string;
+  productId?: string;
   startDate: string;
   endDate?: string;
   rate: number;
@@ -146,6 +149,8 @@ export interface CommercialQuotationRepositoryPort {
     input: ApplyAcceptedOfferInput,
   ): Promise<CommercialQuotationRecord>;
   updateStatus(id: string, status: CommercialQuotationStatus): Promise<CommercialQuotationRecord>;
+  // Attaches the real machine to a quotation that was quoted by product.
+  assignMachine(id: string, machineId: string): Promise<CommercialQuotationRecord>;
   // Sets/clears renter_accepted_at — the Renter's explicit "I accept these
   // terms" signal, independent of `status` (see 0018's migration comment).
   // Any subsequent term change (a direct edit or a new negotiation offer)

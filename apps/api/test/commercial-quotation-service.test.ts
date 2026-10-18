@@ -686,7 +686,8 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         quotation_response_id: input.quotationResponseId ?? null,
         source_auction_id: input.sourceAuctionId ?? null,
         reference_number: input.referenceNumber,
-        machine_id: input.machineId,
+        machine_id: input.machineId ?? null,
+        product_id: input.productId ?? null,
         start_date: input.startDate,
         end_date: input.endDate ?? null,
         rate: input.rate,
@@ -797,6 +798,13 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       const existing = quotations.get(id);
       if (!existing) throw new Error("not used in this test");
       const updated = { ...existing, status, updated_at: new Date() };
+      quotations.set(id, updated);
+      return updated;
+    },
+    assignMachine: async (id, machineId) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not found");
+      const updated = { ...existing, machine_id: machineId, updated_at: new Date() };
       quotations.set(id, updated);
       return updated;
     },
@@ -1825,5 +1833,58 @@ describe("CommercialQuotationService", () => {
     const page = await service.listQuotationsPage("user-1", RC_ORG_ID, query);
     expect(page.items.map((q) => q.id)).toEqual([first.id]);
     expect(page.nextCursor).toEqual(expect.any(String));
+  });
+
+  describe("equipment still to be sourced", () => {
+    const sourced = { ...pathBInput, machineId: undefined, productId: "product-1" };
+
+    it("quotes a catalogue product with no machine", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, sourced);
+      expect(quotation.machineId).toBeNull();
+      expect(quotation.productId).toBe("product-1");
+    });
+
+    it("rejects an unknown product", async () => {
+      const service = buildService();
+      await expect(service.createQuotation("user-1", RC_ORG_ID, { ...sourced, productId: "nope" })).rejects.toThrow("Product not found");
+    });
+
+    it("refuses to award until a machine is assigned, then awards", async () => {
+      const service = buildService();
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, sourced);
+      await service.sendQuotation("user-1", RC_ORG_ID, quotation.id);
+      await expect(service.awardQuotation("user-1", RC_ORG_ID, quotation.id)).rejects.toThrow("Assign a machine");
+      const assigned = await service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: MACHINE_ID });
+      expect(assigned.machineId).toBe(MACHINE_ID);
+      const awarded = await service.awardQuotation("user-1", RC_ORG_ID, quotation.id);
+      expect(awarded.status).toBe("awarded");
+    });
+
+    it("only assigns a machine of the quoted product, and refuses the one already assigned", async () => {
+      const other = machine({ id: "machine-2", product_id: "product-2" });
+      const service = buildService([machine(), other]);
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, sourced);
+      await expect(service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: "machine-2" })).rejects.toThrow("isn't the equipment");
+      await service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: MACHINE_ID });
+      await expect(service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: MACHINE_ID })).rejects.toThrow("already assigned");
+    });
+
+    it("refuses a machine booked on another rental, and lets the assignment be switched", async () => {
+      const second = machine({ id: "machine-2" });
+      const service = buildService([machine(), second]);
+      const first = await service.createQuotation("user-1", RC_ORG_ID, pathBInput);
+      await service.sendQuotation("user-1", RC_ORG_ID, first.id);
+      await service.awardQuotation("user-1", RC_ORG_ID, first.id); // books MACHINE_ID for the same dates
+
+      const quotation = await service.createQuotation("user-1", RC_ORG_ID, sourced);
+      await expect(service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: MACHINE_ID })).rejects.toThrow("booked on this machine");
+      const switched = await service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: "machine-2" });
+      expect(switched.machineId).toBe("machine-2");
+      // The booked machine stays refused after a switch, and the assignment is unchanged.
+      const retry = await service.assignMachine("user-1", RC_ORG_ID, quotation.id, { machineId: MACHINE_ID }).catch((e) => e);
+      expect(retry.message).toContain("booked on this machine");
+      expect((await service.getQuotation("user-1", RC_ORG_ID, quotation.id)).machineId).toBe("machine-2");
+    });
   });
 });

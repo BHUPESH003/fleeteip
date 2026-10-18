@@ -24,6 +24,7 @@ const QUOTATION_COLUMNS = [
   "source_auction_id",
   "reference_number",
   "machine_id",
+  "product_id",
   "start_date",
   "end_date",
   "rate",
@@ -114,7 +115,8 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
         quotation_response_id: input.quotationResponseId ?? null,
         source_auction_id: input.sourceAuctionId ?? null,
         reference_number: input.referenceNumber,
-        machine_id: input.machineId,
+        machine_id: input.machineId ?? null,
+        product_id: input.productId ?? null,
         start_date: input.startDate,
         end_date: input.endDate ?? null,
         rate: input.rate,
@@ -266,6 +268,16 @@ export class CommercialQuotationRepository implements CommercialQuotationReposit
     const row = await this.db
       .updateTable("commercial_quotations")
       .set({ status, updated_at: new Date() })
+      .where("id", "=", id)
+      .returning(QUOTATION_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toQuotationRecord(row);
+  }
+
+  async assignMachine(id: string, machineId: string) {
+    const row = await this.db
+      .updateTable("commercial_quotations")
+      .set({ machine_id: machineId, updated_at: new Date() })
       .where("id", "=", id)
       .returning(QUOTATION_COLUMNS)
       .executeTakeFirstOrThrow();

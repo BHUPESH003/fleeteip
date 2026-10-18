@@ -24,9 +24,10 @@ import {
 } from "@fleetip/ui";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { apiClient } from "../../../lib/api-client";
+import { apiClient, documentPaths } from "../../../lib/api-client";
 import { OFFLINE_HINT, describeError, errorStatus } from "../../../lib/errors";
 import { useForm } from "../../../lib/form";
+import { useDownload } from "../../../lib/use-download";
 import {
   formatDate,
   formatDateRange,
@@ -118,6 +119,7 @@ export function InvoiceDrawer({
     // load() reads the latest invoiceId/organizationId
   }, [invoiceId, organizationId, refreshKey]);
 
+  const { download, busy: downloading } = useDownload();
   const today = todayIsoDate();
   const current = detail?.invoice ?? invoice;
   const status = current ? effectiveStatus(current, detail, today) : null;
@@ -206,9 +208,23 @@ export function InvoiceDrawer({
                         ? "Paid in full"
                         : "Kept on record as cancelled"}
               </span>
-              {canManage && menuItems.length > 0 && (
-                <Menu className="ml-auto" label={`More actions for ${number}`} items={menuItems} width={292} triggerSize="sm" />
-              )}
+              <span className="ml-auto flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon="export"
+                  busy={downloading}
+                  busyLabel="Preparing…"
+                  disabled={!online}
+                  title={online ? undefined : OFFLINE_HINT}
+                  onClick={() => void download(documentPaths.invoice(organizationId, current.id), "The invoice PDF")}
+                >
+                  Download PDF
+                </Button>
+                {canManage && menuItems.length > 0 && (
+                  <Menu label={`More actions for ${number}`} items={menuItems} width={292} triggerSize="sm" />
+                )}
+              </span>
             </div>
 
             {detail ? (

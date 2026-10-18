@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Archivo, IBM_Plex_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Open_Sans } from "next/font/google";
 import { Providers } from "../components/Providers";
 import "./globals.css";
 
-const archivo = Archivo({
+const openSans = Open_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
-  variable: "--font-archivo",
+  variable: "--font-open-sans",
 });
 
 const plexMono = IBM_Plex_Mono({
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${archivo.variable} ${plexMono.variable}`}>
+    <html lang="en" className={`${openSans.variable} ${plexMono.variable}`}>
       <body>
         <Providers>{children}</Providers>
       </body>

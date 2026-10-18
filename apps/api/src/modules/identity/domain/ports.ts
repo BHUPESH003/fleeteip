@@ -11,6 +11,8 @@ export interface UserRecord {
   password_hash: string;
   display_name: string;
   status: string;
+  // Optional so fakes that predate email verification still satisfy the port.
+  email_verified_at?: Date | string | null;
   created_at: Date | string;
 }
 
@@ -27,6 +29,8 @@ export interface UserRepositoryPort {
   // Platform Admin only — see OrganizationRepositoryPort.listAllForPlatformAdmin.
   listAllForPlatformAdmin(): Promise<PublicUserRecord[]>;
   updateStatus(id: string, status: "active" | "suspended"): Promise<PublicUserRecord>;
+  /** Stamps email_verified_at (keeps an earlier stamp). */
+  markEmailVerified(id: string): Promise<unknown>;
   findPasswordHashById(id: string): Promise<string | undefined>;
   updatePasswordHash(id: string, passwordHash: string): Promise<unknown>;
 }
@@ -81,6 +85,15 @@ export interface PasswordResetTokenRepositoryPort {
    * concurrent redeem) — the password is then left untouched.
    */
   redeem(input: { tokenId: string; userId: string; passwordHash: string }): Promise<boolean>;
+}
+
+export interface EmailVerificationTokenRepositoryPort {
+  create(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<unknown>;
+  /** Stamps used_at on every still-unused token of this user, so only the newest link works. */
+  invalidateUnusedByUserId(userId: string): Promise<unknown>;
+  findByTokenHash(tokenHash: string): Promise<PasswordResetTokenRecord | undefined>;
+  /** Marks the token used AND the user's email verified atomically; false if the token was already used. */
+  redeem(input: { tokenId: string; userId: string }): Promise<boolean>;
 }
 
 export interface MailMessage {

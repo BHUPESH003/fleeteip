@@ -43,7 +43,6 @@ import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
 import { statusLabel } from "../../../lib/status";
 import { optional } from "../../../lib/use-load";
-import { RegisterMachineDialog } from "../machines/RegisterMachineDialog";
 import { productName } from "../machines/shared";
 import { auctionRef } from "../auctions/shared";
 import {
@@ -187,6 +186,8 @@ interface QuotationContext {
   today: string;
   /** Only Active machines can be quoted. */
   activeIds: Set<string>;
+  /** Catalogue product chosen for equipment still to be sourced (replaces machines). */
+  sourceProductId: string;
   requirementId: string | null;
   responseId: string | null;
   sourceAuctionId: string | null;
@@ -206,7 +207,8 @@ function quotationSchema(ctx: QuotationContext) {
       const startDate = ctx.lockedStartDate ?? values.startDate;
       const endDate = ctx.lockedEndDate ?? values.endDate;
       const renterId = ctx.lockedRenterId ?? values.renterOrganizationId;
-      if (!values.machines.some((id) => ctx.activeIds.has(id))) errors.machines = "Choose at least one machine to quote.";
+      if (!ctx.sourceProductId && !values.machines.some((id) => ctx.activeIds.has(id)))
+        errors.machines = "Choose at least one machine, or equipment you're still sourcing.";
       if (ctx.customerMode === "renter" && !renterId) errors.renterOrganizationId = "Choose the FleetIP customer this is for.";
       if (ctx.customerMode === "external") {
         if (!values.clientName.trim()) errors.clientName = "Enter the customer's name as it should appear on the quotation.";
@@ -244,8 +246,9 @@ function quotationSchema(ctx: QuotationContext) {
         if (message) issues.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
       }
     })
-    .transform((values): { machineIds: string[]; terms: Omit<CreateCommercialQuotationRequest, "machineId"> } => ({
-      machineIds: values.machines.filter((id) => ctx.activeIds.has(id)),
+    .transform((values): { machineIds: string[]; productId: string; terms: Omit<CreateCommercialQuotationRequest, "machineId" | "productId"> } => ({
+      machineIds: ctx.sourceProductId ? [] : values.machines.filter((id) => ctx.activeIds.has(id)),
+      productId: ctx.sourceProductId,
       terms: {
         requirementId: ctx.requirementId ?? undefined,
         quotationResponseId: ctx.responseId ?? undefined,
@@ -334,9 +337,6 @@ export function CreateQuotationDialog({
 
   const [machines, setMachines] = useState<Machine[] | null>(null);
   const [machinesFailed, setMachinesFailed] = useState(false);
-  // Lets a user quote a machine they don't own yet (planning to purchase or
-  // rehire from the market): register it inline, then quote it immediately.
-  const [registerOpen, setRegisterOpen] = useState(false);
   const [products, setProducts] = useState<Map<string, Product>>(new Map());
   const [renters, setRenters] = useState<Organization[] | null>(null);
   const [rentersFailed, setRentersFailed] = useState(false);
@@ -361,6 +361,8 @@ export function CreateQuotationDialog({
 
   const [mode, setMode] = useState<"external" | "renter">("external");
   const [machineFilter, setMachineFilter] = useState("");
+  // Equipment the company is still buying/rehiring: quoted by catalogue product, a machine is assigned before award.
+  const [sourceProductId, setSourceProductId] = useState("");
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [results, setResults] = useState<MachineResult[] | null>(null);
 
@@ -405,11 +407,12 @@ export function CreateQuotationDialog({
         lockedRateUnit,
         today,
         activeIds,
+        sourceProductId,
         requirementId,
         responseId,
         sourceAuctionId,
       }),
-    [customerMode, lockedRenterId, lockedStartDate, lockedEndDate, lockedRateUnit, today, activeIds, requirementId, responseId, sourceAuctionId],
+    [customerMode, lockedRenterId, lockedStartDate, lockedEndDate, lockedRateUnit, today, activeIds, sourceProductId, requirementId, responseId, sourceAuctionId],
   );
   const form = useForm({ schema, initial: blank(initialMachineIds), failTitle: "No quotation was created" });
   const { values, busy, online, reset } = form;
@@ -419,6 +422,7 @@ export function CreateQuotationDialog({
     if (!open) return;
     reset(blank(initialMachineIds));
     setMachineFilter("");
+    setSourceProductId("");
     setMode("external");
     setResults(null);
     setProgress(null);
@@ -466,8 +470,8 @@ export function CreateQuotationDialog({
         setQuotedOnRequirement(
           new Map(
             ownQuotations
-              .filter((q) => q.requirementId === requirementId && LIVE_STATUSES.has(q.status))
-              .map((q) => [q.machineId, q.referenceNumber]),
+              .filter((q) => q.requirementId === requirementId && q.machineId && LIVE_STATUSES.has(q.status))
+              .map((q) => [q.machineId as string, q.referenceNumber]),
           ),
         );
         setRequirement(req);
@@ -593,30 +597,20 @@ export function CreateQuotationDialog({
   }
 
   function toggleMachine(id: string, checked: boolean) {
+    if (checked) setSourceProductId("");
     form.set("machines", checked ? [...values.machines, id] : values.machines.filter((m) => m !== id));
     form.field("machines").onBlur();
   }
 
-  // A machine registered from inside the quote dialog (one the company is
-  // planning to purchase or rehire): add it to the fleet list, make sure its
-  // catalogue product is known, clear the filter so it's visible, and
-  // preselect it so the user can quote it straight away.
-  function onInlineRegistered(machine: Machine) {
-    setMachines((list) => [...(list ?? []), machine]);
-    if (!products.has(machine.productId)) {
-      void (async () => {
-        try {
-          const list = (await apiClient.listProducts()) as Product[];
-          setProducts(new Map(list.map((p) => [p.id, p])));
-        } catch {
-          // The picker still works; the product line just shows the asset code.
-        }
-      })();
-    }
-    setMachineFilter("");
-    form.set("machines", [...values.machines, machine.id]);
-    form.field("machines").onBlur();
-  }
+  // Catalogue products to quote when the machine isn't in the fleet yet; against
+  // a requirement, only its own equipment type (the API refuses others).
+  const sourceProductOptions: SearchSelectOption[] = useMemo(
+    () =>
+      [...products.values()]
+        .filter((p) => !requirement || p.productSubcategoryId === requirement.productSubcategoryId)
+        .map((p) => ({ value: p.id, label: productName(p) ?? p.name, keywords: `${p.manufacturer} ${p.name}` })),
+    [products, requirement],
+  );
 
   const customerName =
     customerMode === "renter" ? (renters?.find((r) => r.id === renterId)?.name ?? "the customer") : values.clientName.trim() || "the customer";
@@ -625,8 +619,11 @@ export function CreateQuotationDialog({
   // quotation), so the save reports per machine: form.fail() puts a
   // shared-terms problem under its fields, and the results list says which
   // machines were quoted and which weren't.
-  const handleSubmit = form.submit(async ({ machineIds, terms }) => {
-    const targets = activeMachines.filter((m) => machineIds.includes(m.id));
+  const handleSubmit = form.submit(async ({ machineIds, productId, terms }) => {
+    const sourcedLabel = productName(products.get(productId)) ?? "Equipment to be sourced";
+    const targets: { id: string; assetCode: string; body: { machineId: string } | { productId: string } }[] = productId
+      ? [{ id: productId, assetCode: sourcedLabel, body: { productId } }]
+      : activeMachines.filter((m) => machineIds.includes(m.id)).map((m) => ({ id: m.id, assetCode: m.assetCode, body: { machineId: m.id } }));
     const out: MachineResult[] = [];
     let stopReason: string | null = null;
     let fieldProblem = false;
@@ -638,7 +635,7 @@ export function CreateQuotationDialog({
         continue;
       }
       try {
-        const quotation = (await apiClient.createQuotation(organizationId, { ...terms, machineId: machine.id })) as CommercialQuotation;
+        const quotation = (await apiClient.createQuotation(organizationId, { ...terms, ...machine.body })) as CommercialQuotation;
         out.push({ machineId: machine.id, assetCode: machine.assetCode, outcome: "created", quotation });
       } catch (err) {
         const error = toFormPaths(err);
@@ -666,14 +663,18 @@ export function CreateQuotationDialog({
     const created = out.filter((r) => r.outcome === "created");
     if (created.length > 0) onCreated();
     // Created machines leave the selection, so going back and trying again never duplicates them.
-    form.set("machines", out.filter((r) => r.outcome !== "created").map((r) => r.machineId));
+    if (productId) {
+      if (created.length > 0) setSourceProductId("");
+    } else {
+      form.set("machines", out.filter((r) => r.outcome !== "created").map((r) => r.machineId));
+    }
 
     const single = out.length === 1 ? out[0] : undefined;
     if (single?.outcome === "created" && single.quotation) {
       const quotation = single.quotation;
       toast.success({
         title: `Quotation ${quotation.referenceNumber} created`,
-        body: `Saved as a draft for ${customerName} on ${single.assetCode}. Send it from its page when it's ready.`,
+        body: `Saved as a draft for ${customerName} on ${single.assetCode}. ${productId ? "Assign a machine from its page before awarding. " : ""}Send it from its page when it's ready.`,
         action: { label: "Open", onClick: () => router.push(`/quotations/${quotation.id}`) },
       });
       onClose();
@@ -720,7 +721,7 @@ export function CreateQuotationDialog({
         type="submit"
         busy={busy}
         busyLabel={progress && progress.total > 1 ? `Creating ${progress.done + 1} of ${progress.total}…` : "Creating…"}
-        disabled={!online || loading || noMachines || machinesFailed || !canListMachines || Boolean(contextError)}
+        disabled={!online || loading || (noMachines && !sourceProductId) || (!sourceProductId && (machinesFailed || !canListMachines)) || Boolean(contextError)}
         title={!online ? OFFLINE_HINT : undefined}
       >
         {selectedActive.length > 1 ? `Create ${selectedActive.length} quotations` : "Create quotation"}
@@ -772,21 +773,14 @@ export function CreateQuotationDialog({
 
           {loading && canListMachines && !machinesFailed ? (
             <LoadingState label={loadingContext ? "Loading the requirement…" : loadingAuctionPrefill ? "Loading your last bid…" : "Loading machines…"} />
-          ) : noMachines ? (
+          ) : (
+            <>
+              {noMachines &&
             requirement ? (
               <FormBanner tone="info" title={`No machine of this type to quote${requirementEquipment ? `: ${requirementEquipment}` : ""}`}>
                 {quotedOnRequirement.size > 0
                   ? `Every matching machine is already quoted on ${requirementRef(requirement.id)} (${[...quotedOnRequirement.values()].join(", ")}). Open that quotation to change it.`
-                  : `${requirementRef(requirement.id)} asks for equipment your fleet has no machine of that type. Register one (even one you plan to buy or rehire) to quote it.`}
-                <Button
-                  variant="tertiary"
-                  size="sm"
-                  icon="plus"
-                  className="mt-1.5 !h-auto !px-0 !text-accent-text hover:underline"
-                  onClick={() => setRegisterOpen(true)}
-                >
-                  Register a machine
-                </Button>
+                  : `${requirementRef(requirement.id)} asks for equipment your fleet has no machine of that type. Quote the equipment below if you're still buying or rehiring it.`}
                 {offerRequirementPicker && (
                   <Button variant="tertiary" size="sm" className="mt-1.5 !h-auto !px-0 !text-accent-text hover:underline" onClick={() => onRequirementChange?.(null)}>
                     Quote without a requirement
@@ -795,20 +789,10 @@ export function CreateQuotationDialog({
               </FormBanner>
             ) : (
               <FormBanner tone="info" title="No machine can be quoted right now">
-                Register a machine — including one you&apos;re planning to buy or
-                rehire — or bring one back from the workshop, first.
-                <Button
-                  variant="tertiary"
-                  size="sm"
-                  icon="plus"
-                  className="mt-1.5 !h-auto !px-0 !text-accent-text hover:underline"
-                  onClick={() => setRegisterOpen(true)}
-                >
-                  Register a machine
-                </Button>
+                No machine in your fleet can be quoted. You can still quote equipment you&apos;re planning to buy or rehire, below.
               </FormBanner>
-            )
-          ) : canListMachines && !machinesFailed ? (
+            )}
+              {(noMachines || (canListMachines && !machinesFailed)) && (
             <>
               {offerRequirementPicker && !requirementId && (
                 <SearchSelect
@@ -853,6 +837,7 @@ export function CreateQuotationDialog({
                 </Alert>
               )}
 
+              {!noMachines && (
               <FormSection
                 title="Machines"
                 description={
@@ -875,13 +860,7 @@ export function CreateQuotationDialog({
                       onChange={(event) => setMachineFilter(event.target.value)}
                       className="flex-1"
                     />
-                    <Button type="button" variant="secondary" size="sm" icon="plus" onClick={() => setRegisterOpen(true)}>
-                      Register a machine
-                    </Button>
                   </div>
-                  <p className="m-0 text-[11px] leading-[1.4] text-meta-light">
-                    Planning to buy or rehire a machine from the market? Register it here and quote it right away.
-                  </p>
                   <div
                     role="group"
                     aria-label="Machines to quote"
@@ -936,6 +915,26 @@ export function CreateQuotationDialog({
                     </FormBanner>
                   )}
                 </div>
+              </FormSection>
+              )}
+
+              <FormSection
+                title="Equipment you're still sourcing"
+                description="Planning to buy or rehire it? Quote the catalogue equipment instead of a machine. Nothing is added to your fleet — assign the real machine to the quotation before awarding it."
+                className={noMachines ? undefined : "border-t border-border pt-4"}
+              >
+                <SearchSelect
+                  label="Equipment"
+                  options={sourceProductOptions}
+                  value={sourceProductId}
+                  onChange={(id) => {
+                    setSourceProductId(id);
+                    if (id) form.set("machines", []);
+                  }}
+                  placeholder="Not quoting sourced equipment"
+                  emptyText="No equipment matches."
+                  hint={sourceProductId ? "Quoted instead of the machines above." : requirement ? "Only equipment of the requested type is listed." : undefined}
+                />
               </FormSection>
 
               <FormSection title="Customer" className="border-t border-border pt-4">
@@ -1155,21 +1154,12 @@ export function CreateQuotationDialog({
                 </div>
               </FormSection>
             </>
-          ) : null}
+              )}
+            </>
+          )}
         </>
       )}
     </Dialog>
-    {registerOpen && (
-      <RegisterMachineDialog
-        open
-        organizationId={organizationId}
-        onClose={() => setRegisterOpen(false)}
-        onRegistered={(machine) => {
-          onInlineRegistered(machine);
-          setRegisterOpen(false);
-        }}
-      />
-    )}
     </>
   );
 }

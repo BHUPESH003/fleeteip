@@ -40,6 +40,8 @@ const WORK_ORDER_COLUMNS = [
   "notice_period_days",
   "commercial_notes",
   "company_terms",
+  "customer_work_order_number",
+  "customer_work_order_date",
   "status",
   "created_at",
   "updated_at",
@@ -175,6 +177,20 @@ export class WorkOrderRepository implements WorkOrderRepositoryPort {
       .orderBy("created_at", "desc")
       .execute();
     return rows.map(toWorkOrderRecord);
+  }
+
+  async setCustomerOrder(id: string, customerOrder: { number: string | null; date: string | null }) {
+    const row = await this.db
+      .updateTable("work_orders")
+      .set({
+        customer_work_order_number: customerOrder.number,
+        customer_work_order_date: customerOrder.date,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returning(WORK_ORDER_COLUMNS)
+      .executeTakeFirstOrThrow();
+    return toWorkOrderRecord(row);
   }
 
   async updateStatus(id: string, status: WorkOrderStatus) {

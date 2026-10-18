@@ -8,7 +8,7 @@ export class UserRepository implements UserRepositoryPort {
   findByEmail(email: string) {
     return this.db
       .selectFrom("users")
-      .select(["id", "email", "password_hash", "display_name", "status", "created_at"])
+      .select(["id", "email", "password_hash", "display_name", "status", "email_verified_at", "created_at"])
       .where("email", "=", email)
       .executeTakeFirst();
   }
@@ -16,7 +16,7 @@ export class UserRepository implements UserRepositoryPort {
   findById(id: string) {
     return this.db
       .selectFrom("users")
-      .select(["id", "email", "display_name", "status", "created_at"])
+      .select(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
       .where("id", "=", id)
       .executeTakeFirst();
   }
@@ -49,6 +49,14 @@ export class UserRepository implements UserRepositoryPort {
       .where("id", "=", id)
       .returning(["id", "email", "display_name", "status", "created_at"])
       .executeTakeFirstOrThrow();
+  }
+
+  markEmailVerified(id: string) {
+    return this.db
+      .updateTable("users")
+      .set((eb) => ({ email_verified_at: eb.fn.coalesce("email_verified_at", eb.val(new Date())) }))
+      .where("id", "=", id)
+      .execute();
   }
 
   async findPasswordHashById(id: string) {

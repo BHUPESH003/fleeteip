@@ -34,17 +34,19 @@ import {
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ForbiddenPage, PageLoadError } from "../../../../components/PageStates";
-import { apiClient } from "../../../../lib/api-client";
+import { apiClient, documentPaths } from "../../../../lib/api-client";
 import { useConnection } from "../../../../lib/connection";
 import { OFFLINE_HINT, describeError } from "../../../../lib/errors";
 import { useAction } from "../../../../lib/form";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatRateUnit, humanize, plural, rentalRef } from "../../../../lib/format";
 import { useListBackHref } from "../../../../lib/list-state";
+import { useDownload } from "../../../../lib/use-download";
 import { useSession } from "../../../../lib/session-context";
 import { Status, statusLabel } from "../../../../lib/status";
 import { optional, useLoad } from "../../../../lib/use-load";
 import { productName } from "../../machines/shared";
 import { TEXT_LINK } from "../../../../components/list-kit";
+import { CustomerOrderDialog } from "./CustomerOrderDialog";
 import { RESPONSIBLE_WORD, accommodationScopeText, fuelScopeText, periodText, workOrderMismatch } from "../shared";
 
 interface WorkOrderData {
@@ -180,7 +182,8 @@ function WorkOrderView({
   const counterpart = isRenter ? (rental?.rentalCompanyOrganizationName ?? null) : data.customerName;
   const mismatch = workOrderMismatch(wo, rental);
   const issued = wo.status === WorkOrderStatus.issued;
-  const printUrl = apiClient.workOrderPrintUrl(organizationId, wo.id);
+  const { download, busy: downloading } = useDownload();
+  const [customerOrderOpen, setCustomerOrderOpen] = useState(false);
 
   const scope = useLoad(
     () => apiClient.listWorkOrderScopeItems(organizationId, wo.id) as Promise<WorkOrderScopeItem[]>,
@@ -219,6 +222,14 @@ function WorkOrderView({
     ...(canOpenMachine && data.machine ? [{ key: "machine", label: `Open ${data.machine.assetCode}`, icon: "machine" as const, href: `/machines/${data.machine.id}` }] : []),
     ...(canManage
       ? [
+          {
+            key: "customer-order",
+            label: wo.customerWorkOrderNumber ? "Edit customer's work order" : "Add customer's work order",
+            icon: "edit" as const,
+            disabled: !online,
+            hint: online ? "Their own work order or PO number and date, printed on documents." : OFFLINE_HINT,
+            onSelect: () => setCustomerOrderOpen(true),
+          },
           {
             key: "cancel",
             label: "Cancel work order",
@@ -271,16 +282,17 @@ function WorkOrderView({
         description={[rentalLabel, assetCode, counterpart].filter(Boolean).join(" · ")}
         actions={
           <>
-            <a
-              href={printUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-[34px] items-center gap-[7px] rounded-control border border-border-control bg-surface px-[13px] text-sm font-medium text-ink-strong no-underline hover:bg-surface-hover"
+            <Button
+              variant="secondary"
+              icon="export"
+              busy={downloading}
+              busyLabel="Preparing…"
+              disabled={!online}
+              title={online ? undefined : OFFLINE_HINT}
+              onClick={() => void download(documentPaths.workOrder(organizationId, wo.id), "The work order PDF")}
             >
-              <Icon name="export" size={15} />
-              Print / save PDF
-              <span className="sr-only"> (opens in a new tab)</span>
-            </a>
+              Download PDF
+            </Button>
             {primary}
             {menuItems.length > 0 && <Menu label={`More actions for ${ref}`} items={menuItems} width={300} />}
           </>
@@ -300,6 +312,14 @@ function WorkOrderView({
             <DescriptionList
               layout="grid"
               items={[
+                {
+                  label: "Customer's work order",
+                  value: wo.customerWorkOrderNumber
+                    ? `${wo.customerWorkOrderNumber}${wo.customerWorkOrderDate ? ` · ${formatDate(wo.customerWorkOrderDate)}` : ""}`
+                    : canManage
+                      ? "Not recorded. Add it from the menu."
+                      : null,
+                },
                 {
                   label: "Quotation",
                   value: canOpenQuotation ? (
@@ -446,6 +466,10 @@ function WorkOrderView({
           )}
         </Panel>
       </PageBody>
+
+      {canManage && (
+        <CustomerOrderDialog open={customerOrderOpen} onClose={() => setCustomerOrderOpen(false)} organizationId={organizationId} workOrder={wo} onDone={() => void reload()} />
+      )}
 
       {canManage && (
         <ConfirmDialog

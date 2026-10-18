@@ -4,12 +4,13 @@ import { OrganizationTypeCode } from "@fleetip/contracts/organization";
 import { Button, FormBanner, FormSection, Input, RadioGroup, useToast } from "@fleetip/ui";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { z } from "zod";
 import { apiClient } from "../../../lib/api-client";
 import { useForm } from "../../../lib/form";
 import { useSession } from "../../../lib/session-context";
 import { AUTH_LINK, AuthCard } from "../AuthShell";
+import { VerifyEmailNotice } from "../VerifyEmailNotice";
 import { PasswordInput, emailField, newPasswordField } from "../fields";
 import { nextQuery, safeNextPath } from "../next-param";
 
@@ -59,6 +60,7 @@ export default function SignupPage() {
     conflicts: { email: EMAIL_TAKEN },
   });
   const problem = form.banner;
+  const [verifyEmail, setVerifyEmail] = useState<string | null>(null);
   const password = form.values.password;
 
   const passwordHint =
@@ -69,7 +71,12 @@ export default function SignupPage() {
         : "Long enough.";
 
   const save = form.submit(async (body) => {
-    await apiClient.signup(body);
+    const result = (await apiClient.signup(body)) as { verificationRequired?: boolean } | undefined;
+    // No session yet: the account signs in after following the emailed link.
+    if (result?.verificationRequired) {
+      setVerifyEmail(body.email);
+      return;
+    }
     toast.success({
       title: `${body.organizationName} is set up`,
       body: "You're its owner. Invite your team from Organization & team.",
@@ -93,6 +100,8 @@ export default function SignupPage() {
     ) : (
       email.error
     );
+
+  if (verifyEmail) return <VerifyEmailNotice email={verifyEmail} onBack={() => setVerifyEmail(null)} />;
 
   return (
     <AuthCard
