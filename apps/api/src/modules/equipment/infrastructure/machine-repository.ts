@@ -42,9 +42,12 @@ export class MachineRepository implements MachineRepositoryPort {
         .values({
           organization_id: input.organizationId,
           product_id: input.productId,
-          asset_code: input.assetCode,
+          // The application layer always resolves/auto-assigns an asset code
+          // before reaching the repository; the empty-string fallback only
+          // satisfies the optional port type and never actually inserts.
+          asset_code: input.assetCode ?? "",
           chassis_number: input.chassisNumber ?? null,
-          registration_number: input.registrationNumber,
+          registration_number: input.registrationNumber ?? null,
           year_of_manufacture: input.yearOfManufacture ?? null,
           status: MachineStatus.active,
         })
@@ -135,7 +138,8 @@ export class MachineRepository implements MachineRepositoryPort {
           ...(updates.assetCode !== undefined && { asset_code: updates.assetCode }),
           ...(updates.chassisNumber !== undefined && { chassis_number: updates.chassisNumber }),
           ...(updates.registrationNumber !== undefined && {
-            registration_number: updates.registrationNumber,
+            // An empty string means "clear it" — store NULL, not "".
+            registration_number: updates.registrationNumber || null,
           }),
           ...(updates.yearOfManufacture !== undefined && {
             year_of_manufacture: updates.yearOfManufacture,
@@ -164,6 +168,15 @@ export class MachineRepository implements MachineRepositoryPort {
       }
       throw error;
     }
+  }
+
+  async countByOrganization(organizationId: string) {
+    const row = await this.db
+      .selectFrom("machines")
+      .select((eb) => eb.fn.countAll().as("count"))
+      .where("organization_id", "=", organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
   }
 
   assetCodeExists(organizationId: string, assetCode: string, excludeMachineId?: string) {

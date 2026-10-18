@@ -46,7 +46,15 @@ Related: `docs/risk-register.md` (why each item matters),
 ## 2. Database
 
 - [ ] `pnpm migrate` has run against production, and every migration up to
-  the latest (currently 0037) is listed in `kysely_migration`.
+  the latest (currently 0040) is listed in `kysely_migration`.
+  0038 makes `machines.registration_number` nullable, 0039 seeds the
+  construction-equipment taxonomy (10 categories, 51 subcategories) beside the
+  old 0005 starter categories, and 0040 adds `organization_profiles` and
+  `organization_contacts`.
+- [ ] After 0039, the category/subcategory pickers show the new taxonomy.
+  Decide whether the old starter categories (Excavator, Crane, Loader,
+  Generator, Compactor) stay visible or are disabled. Check production for
+  machines and products under them first.
 - [ ] No applied migration file has been edited since it ran. Compare with git.
 - [ ] Automated backups are on, with point-in-time recovery if available.
   **A restore has actually been tested** into a scratch database.

@@ -542,7 +542,7 @@ export default function MaintenancePage() {
           description: [productName(data?.products.get(m.productId)), m.registrationNumber, m.status === MachineStatus.under_maintenance ? "Under maintenance" : null]
             .filter(Boolean)
             .join(" · "),
-          keywords: m.registrationNumber,
+          keywords: m.registrationNumber ?? undefined,
         }))}
         emptyText="There's no machine to log against. Retired machines can't get new workshop jobs."
         hint="Retired machines aren't listed."

@@ -2,6 +2,7 @@ import {
   createInviteRequestSchema,
   createRoleRequestSchema,
   updateMemberRoleRequestSchema,
+  updateOrganizationProfileRequestSchema,
   updateOrganizationRequestSchema,
   updateRoleRequestSchema,
 } from "@fleetip/contracts/organization";
@@ -30,6 +31,31 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
       const userId = await getAuthenticatedUserId(request);
       const body = parseWithSchema(updateOrganizationRequestSchema, request.body);
       return container.organizationService.updateOrganization(
+        userId,
+        request.params.organizationId,
+        body,
+      );
+    },
+  );
+
+  // Company details (0040): address, GST, bank, logo, website, contacts.
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/profile",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.organizationService.getOrganizationProfile(
+        userId,
+        request.params.organizationId,
+      );
+    },
+  );
+
+  fastify.put<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/profile",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(updateOrganizationProfileRequestSchema, request.body);
+      return container.organizationService.updateOrganizationProfile(
         userId,
         request.params.organizationId,
         body,
@@ -99,6 +125,19 @@ export async function organizationRoutes(fastify: FastifyInstance): Promise<void
     async (request) => {
       const userId = await getAuthenticatedUserId(request);
       return container.organizationService.listRolesAndPermissions(
+        userId,
+        request.params.organizationId,
+      );
+    },
+  );
+
+  // Roles a membership.manage holder may assign — same list, lighter gate,
+  // so changing a member's role / inviting works without organization.manage.
+  fastify.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/assignable-roles",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      return container.organizationService.listAssignableRoles(
         userId,
         request.params.organizationId,
       );

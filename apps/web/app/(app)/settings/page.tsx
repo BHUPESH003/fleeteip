@@ -60,14 +60,20 @@ export default function SettingsPage() {
     [organizationId],
     Boolean(organizationId) && canManageMembers,
   );
-  // Both the Members tab (role picker, invite) and the Roles tab need the
-  // role list — fetched once, shared by both. Only an organization.manage
-  // holder can list it; a membership.manage-only role simply can't pick a
-  // role (see docs/decisions.md's known limitation).
+  // The Roles-and-permissions tab needs the full org-managed role list
+  // (organization.manage). The Members tab (role picker, invite) only needs
+  // to pick a target role, which now works for a membership.manage holder
+  // via the lighter assignable-roles endpoint. We prefer the org-manage
+  // endpoint when available (so the Roles tab is populated too) and fall
+  // back to assignable-roles for a membership.manage-only admin.
   const roles = useLoad(
-    () => apiClient.listRolesAndPermissions(organizationId!).then((list) => list ?? []),
+    () =>
+      (canManageOrganization
+        ? apiClient.listRolesAndPermissions(organizationId!)
+        : apiClient.listAssignableRoles(organizationId!)
+      ).then((list) => list ?? []),
     [organizationId],
-    Boolean(organizationId) && canManageOrganization,
+    Boolean(organizationId) && (canManageOrganization || canManageMembers),
   );
 
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -88,8 +94,11 @@ export default function SettingsPage() {
   }
   const { organization } = currentMembership;
 
-  const roleList = canManageOrganization && roles.data ? roles.data : null;
-  const rolesProblem = !canManageOrganization
+  // A role can be picked (change-role / invite) by anyone who can manage
+  // members — the role list now loads for them via assignable-roles.
+  const canPickRole = canManageOrganization || canManageMembers;
+  const roleList = canPickRole && roles.data ? roles.data : null;
+  const rolesProblem = !canPickRole
     ? ROLES_NEED_ORGANIZATION
     : roles.error
       ? "Roles didn't load, so a role can't be picked. Open Roles and permissions to try again."

@@ -45,6 +45,54 @@ export interface OrganizationRepositoryPort {
 // it; OrganizationRepository implements both.
 export interface OrganizationProfileRepositoryPort {
   updateName(id: string, name: string): Promise<OrganizationRecord>;
+  // Company details (0040). Returns undefined when a profile row hasn't been
+  // created yet (the service treats that as an empty profile).
+  findProfile(organizationId: string): Promise<OrganizationProfileRecord | undefined>;
+  listContacts(organizationId: string): Promise<OrganizationContactRecord[]>;
+  // Full replace: upserts the profile row and replaces the contacts list
+  // with the supplied one in a single transaction.
+  saveProfile(
+    organizationId: string,
+    profile: OrganizationProfileUpdate,
+    contacts: OrganizationContactInputRecord[] | null,
+  ): Promise<void>;
+}
+
+// 0040 — all fields nullable; a profile is filled in gradually.
+export interface OrganizationProfileRecord {
+  organization_id: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  gst_number: string | null;
+  pan_number: string | null;
+  bank_name: string | null;
+  bank_account_name: string | null;
+  bank_account_number: string | null;
+  bank_ifsc: string | null;
+  bank_branch: string | null;
+  website: string | null;
+  logo_url: string | null;
+}
+
+export interface OrganizationContactRecord {
+  id: string;
+  name: string;
+  designation: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
+export type OrganizationProfileUpdate = Omit<OrganizationProfileRecord, "organization_id">;
+
+export interface OrganizationContactInputRecord {
+  name: string;
+  designation: string | null;
+  phone: string | null;
+  email: string | null;
 }
 
 export interface MembershipRecord {

@@ -276,6 +276,7 @@ function fakeMachineRepository(machines: MachineRecord[]): MachineRepositoryPort
     assetCodeExists: async () => {
       throw new Error("not used in this test");
     },
+    countByOrganization: async () => 0,
   };
 }
 

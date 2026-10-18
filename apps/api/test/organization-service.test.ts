@@ -114,6 +114,11 @@ function fakeOrganizationTypeRepository(
     listByType: async () => {
       throw new Error("not used in this test");
     },
+    findProfile: async () => undefined,
+    listContacts: async () => [],
+    saveProfile: async () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 

@@ -61,23 +61,46 @@ export class EquipmentService {
       const message = "This product is disabled in the catalogue";
       throw new ValidationError(message, [{ path: "productId", message }]);
     }
-    const assetCodeExists = await this.machineRepository.assetCodeExists(
-      organizationId,
-      input.assetCode,
-    );
-    if (assetCodeExists) {
+    // Asset code is assigned automatically first when the caller doesn't
+    // supply one, so a machine always has a stable fleet identifier even
+    // before the rest of its details are filled in. A caller may still
+    // override it with its own fleet code.
+    const supplied = input.assetCode?.trim();
+    if (supplied && (await this.machineRepository.assetCodeExists(organizationId, supplied))) {
       throw new ConflictError("Asset code already exists", "assetCode");
     }
 
-    const record = await this.machineRepository.create({
-      organizationId,
-      productId: input.productId,
-      assetCode: input.assetCode,
-      chassisNumber: input.chassisNumber,
-      registrationNumber: input.registrationNumber,
-      yearOfManufacture: input.yearOfManufacture,
-    });
+    const base = { organizationId, productId: input.productId, chassisNumber: input.chassisNumber, registrationNumber: input.registrationNumber, yearOfManufacture: input.yearOfManufacture };
+    // An auto-assigned code can lose a race with a concurrent registration;
+    // the unique index rejects the loser, so pick the next code and retry.
+    let record: MachineRecord | undefined;
+    for (let attempt = 0; !record; attempt += 1) {
+      try {
+        record = await this.machineRepository.create({ ...base, assetCode: supplied || (await this.nextAssetCode(organizationId)) });
+      } catch (error) {
+        if (supplied || !(error instanceof ConflictError) || attempt >= 4) throw error;
+      }
+    }
     return toMachine(record);
+  }
+
+  // Generates the next free sequential asset code for an organization
+  // (AST-0001, AST-0002, ...). Seeded from the current machine count, then
+  // advanced past any collision — covers the case where a user previously
+  // typed a code that happens to match the generated pattern.
+  private async nextAssetCode(organizationId: string): Promise<string> {
+    const count = await this.machineRepository.countByOrganization(organizationId);
+    let n = count + 1;
+    // Bounded loop: at most one probe per existing machine plus a safety cap.
+    for (let attempts = 0; attempts <= count + 1; attempts += 1) {
+      const candidate = `AST-${String(n).padStart(4, "0")}`;
+      if (!(await this.machineRepository.assetCodeExists(organizationId, candidate))) {
+        return candidate;
+      }
+      n += 1;
+    }
+    // Fallback that can't collide with the sequential scheme.
+    return `AST-${Date.now()}`;
   }
 
   async updateMachineStatus(

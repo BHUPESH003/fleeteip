@@ -171,9 +171,9 @@ function fakeMachineRepository(): MachineRepositoryPort {
         id: `machine-${nextId++}`,
         organization_id: input.organizationId,
         product_id: input.productId,
-        asset_code: input.assetCode,
+        asset_code: input.assetCode ?? "",
         chassis_number: input.chassisNumber ?? null,
-        registration_number: input.registrationNumber,
+        registration_number: input.registrationNumber ?? null,
         year_of_manufacture: input.yearOfManufacture ?? null,
         status: "active",
         created_at: new Date(),
@@ -181,6 +181,8 @@ function fakeMachineRepository(): MachineRepositoryPort {
       machines.set(record.id, record);
       return record;
     },
+    countByOrganization: async (organizationId) =>
+      [...machines.values()].filter((m) => m.organization_id === organizationId).length,
     findById: async (id) => machines.get(id),
     listByOrganization: async (organizationId) =>
       [...machines.values()].filter((machine) => machine.organization_id === organizationId),

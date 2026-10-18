@@ -5,6 +5,7 @@ import type { Machine } from "@fleetip/contracts/equipment";
 import {
   Button,
   DescriptionList,
+  Checkbox,
   Dialog,
   FormBanner,
   FormSection,
@@ -67,15 +68,17 @@ function registerMachineSchema(subcategories: ProductSubcategory[] | null, produ
       categoryId: z.string(),
       subcategoryId: z.string(),
       productId: z.string(),
+      // Optional: the server auto-assigns a fleet code (AST-0001, …) when
+      // this is left blank. A team may still type its own code.
       assetCode: z
         .string()
         .trim()
-        .min(1, "Enter the asset code your team uses for this machine.")
         .refine((value) => value.length <= 50, upTo50("Asset codes")),
+      // Optional: crawler/tracked equipment has no road registration, so
+      // this is "not applicable" rather than required.
       registrationNumber: z
         .string()
         .trim()
-        .min(1, "Enter the registration number.")
         .refine((value) => value.length <= 50, upTo50("Registration numbers")),
       chassisNumber: z
         .string()
@@ -114,8 +117,8 @@ function registerMachineSchema(subcategories: ProductSubcategory[] | null, produ
     .transform(
       (values): CreateMachineInput => ({
         productId: values.productId,
-        assetCode: values.assetCode,
-        registrationNumber: values.registrationNumber,
+        assetCode: values.assetCode || undefined,
+        registrationNumber: values.registrationNumber || undefined,
         chassisNumber: values.chassisNumber || undefined,
         yearOfManufacture: values.yearOfManufacture ? Number(values.yearOfManufacture) : undefined,
       }),
@@ -279,11 +282,26 @@ export function RegisterMachineDialog({
   const subcategory = subcategories?.find((s) => s.id === values.subcategoryId) ?? null;
   const product = products?.find((p) => p.id === values.productId) ?? null;
 
+  // Crawler/tracked equipment runs on tracks, not road wheels, so it has no
+  // road registration number. Defaults on for crawler/track subcategories
+  // (e.g. "Crawler Cranes", "Compact Track Loaders"); the user can flip it
+  // for mixed subcategories such as Excavators, where only some are tracked.
+  const [naOverride, setNaOverride] = useState<boolean | null>(null);
+  const registrationNotApplicable =
+    naOverride ?? /crawl|track/i.test(`${subcategory?.name ?? ""} ${subcategory?.code ?? ""}`);
+
+  // Clear any typed registration number once the chosen subcategory makes it
+  // not applicable (crawler/tracked), so a disabled field never submits a
+  // stale value.
+  useEffect(() => {
+    if (registrationNotApplicable && values.registrationNumber) set("registrationNumber", "");
+  }, [registrationNotApplicable, values.registrationNumber, set]);
+
   const save = form.submit(async (body) => {
     const machine = (await apiClient.createMachine(organizationId, body)) as Machine;
     toast.success({
       title: `${machine.assetCode} registered`,
-      body: `${productName(product) ?? "Catalogue product"} · registration ${machine.registrationNumber}. It's Active, so it can be quoted and rented now.`,
+      body: `${productName(product) ?? "Catalogue product"}${machine.registrationNumber ? ` · registration ${machine.registrationNumber}` : ""}. It's Active, so it can be quoted and rented now.`,
       action: { label: "Open", onClick: () => router.push(`/machines/${machine.id}`) },
     });
     onRegistered(machine);
@@ -415,8 +433,8 @@ export function RegisterMachineDialog({
             <DescriptionList
               layout="rows"
               items={[
-                { label: "Manufacturer", value: product.manufacturer },
-                { label: "Model", value: product.name },
+                { label: "OEM", value: product.manufacturer },
+                { label: "Model number", value: product.name },
                 { label: "Rated capacity", value: capacity, mono: true },
               ]}
             />
@@ -448,23 +466,29 @@ export function RegisterMachineDialog({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input
             label="Asset code"
-            required
             mono
             maxLength={60}
             autoComplete="off"
             {...form.field("assetCode")}
             // Opened from a catalogue product: the cascade is pre-filled, so start on the first code.
             {...(initialProductId ? { "data-autofocus": "" } : {})}
-            hint="Your own fleet code, e.g. KPH-BP-036. Up to 50 characters."
+            placeholder="Assigned automatically"
+            hint="Leave blank to assign one automatically (e.g. AST-0001), or enter your own fleet code like KPH-BP-036."
           />
           <Input
             label="Registration number"
-            required
             mono
             maxLength={60}
             autoComplete="off"
+            disabled={registrationNotApplicable}
             {...form.field("registrationNumber")}
-            hint="Up to 50 characters."
+            placeholder={registrationNotApplicable ? "Not applicable" : undefined}
+            hint={registrationNotApplicable ? "Not applicable for this machine." : "Optional. Leave blank if there's none."}
+          />
+          <Checkbox
+            label="Registration not applicable (crawler/tracked)"
+            checked={registrationNotApplicable}
+            onChange={(event) => setNaOverride(event.target.checked)}
           />
           <Input label="Chassis number" mono maxLength={60} autoComplete="off" {...form.field("chassisNumber")} hint="Up to 50 characters." />
           <Input

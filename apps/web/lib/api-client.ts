@@ -38,8 +38,10 @@ import type {
   Organization,
   OrganizationInvite,
   OrganizationMember,
+  OrganizationProfile,
   RoleName,
   RoleWithPermissions,
+  UpdateOrganizationProfileRequest,
   UpdateOrganizationRequest,
   UpdateRoleRequest,
 } from "@fleetip/contracts/organization";
@@ -255,9 +257,11 @@ export interface LoginInput {
 
 export interface CreateMachineInput {
   productId: string;
-  assetCode: string;
+  // Optional: the server auto-assigns an asset code when omitted.
+  assetCode?: string;
   chassisNumber?: string;
-  registrationNumber: string;
+  // Optional/not applicable for crawler/tracked equipment with no road registration.
+  registrationNumber?: string;
   yearOfManufacture?: number;
 }
 
@@ -302,6 +306,14 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify(input),
     }),
+  // Company details (0040): address, GST, bank, logo, website, contacts.
+  getCompanyProfile: (organizationId: string) =>
+    apiRequest<OrganizationProfile>(`/organizations/${organizationId}/profile`, { method: "GET" }),
+  saveCompanyProfile: (organizationId: string, input: UpdateOrganizationProfileRequest) =>
+    apiRequest<OrganizationProfile>(`/organizations/${organizationId}/profile`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
   updateMemberRole: (organizationId: string, membershipId: string, roleId: string) =>
     apiRequest<OrganizationMember>(`/organizations/${organizationId}/members/${membershipId}`, {
       method: "PATCH",
@@ -309,6 +321,12 @@ export const apiClient = {
     }),
   listRolesAndPermissions: (organizationId: string) =>
     apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/roles`, {
+      method: "GET",
+    }),
+  // Roles a membership.manage holder may assign — used by the members/invite
+  // flows so a non-owner admin can pick a role without organization.manage.
+  listAssignableRoles: (organizationId: string) =>
+    apiRequest<RoleWithPermissions[]>(`/organizations/${organizationId}/assignable-roles`, {
       method: "GET",
     }),
   createRole: (organizationId: string, input: CreateRoleRequest) =>

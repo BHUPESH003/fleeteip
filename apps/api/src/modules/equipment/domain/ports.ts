@@ -8,7 +8,7 @@ export interface MachineRecord {
   product_id: string;
   asset_code: string;
   chassis_number: string | null;
-  registration_number: string;
+  registration_number: string | null;
   year_of_manufacture: number | null;
   status: MachineStatus;
   created_at: Date | string;
@@ -17,9 +17,11 @@ export interface MachineRecord {
 export interface CreateMachineInput {
   organizationId: string;
   productId: string;
-  assetCode: string;
+  // Optional: EquipmentService auto-assigns one when omitted.
+  assetCode?: string;
   chassisNumber?: string;
-  registrationNumber: string;
+  // Optional/not-applicable for crawler/tracked equipment with no road registration.
+  registrationNumber?: string;
   yearOfManufacture?: number;
 }
 
@@ -48,6 +50,10 @@ export interface MachineRepositoryPort {
     assetCode: string,
     excludeMachineId?: string,
   ): Promise<boolean>;
+  // Backs auto-assignment of an asset code when the caller doesn't supply
+  // one: the count seeds the next sequential number (collisions are still
+  // re-checked via assetCodeExists before insert).
+  countByOrganization(organizationId: string): Promise<number>;
   // Global search — asset code/registration number match, this org's own
   // fleet only. Capped (see implementation) since it backs a type-ahead box,
   // not a paginated list.

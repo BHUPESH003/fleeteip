@@ -343,7 +343,7 @@ export function CreateRentalDialog({
     value: m.id,
     label: m.assetCode,
     description: [productName(products.get(m.productId)), m.registrationNumber].filter(Boolean).join(" · "),
-    keywords: m.registrationNumber,
+    keywords: m.registrationNumber ?? undefined,
   }));
 
   return (

@@ -763,10 +763,10 @@ export function ProductFormDialog({
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div data-field="manufacturer">
-              <Input label="Manufacturer" required maxLength={220} placeholder="e.g. Putzmeister" {...form.field("manufacturer")} />
+              <Input label="OEM name" required maxLength={220} placeholder="e.g. Putzmeister" {...form.field("manufacturer")} />
             </div>
             <div data-field="name">
-              <Input label="Product name" required maxLength={220} placeholder="e.g. M36-4" {...form.field("name")} />
+              <Input label="Model number" required maxLength={220} placeholder="e.g. M36-4" {...form.field("name")} />
             </div>
             <div data-field="capacity">
               <Input

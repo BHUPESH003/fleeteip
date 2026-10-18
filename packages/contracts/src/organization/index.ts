@@ -243,3 +243,77 @@ export const updateMemberRoleRequestSchema = z.object({
   roleId: z.string().uuid(),
 });
 export type UpdateMemberRoleRequest = z.infer<typeof updateMemberRoleRequestSchema>;
+
+// --- Company details (0040): a tenant-editable profile with address,
+// tax/GST, bank details, website, logo, and a list of contact persons.
+// Separate from the identity-only `organizations` record; gated by
+// organization.manage for writes, readable by any member. Every field is
+// optional — a company fills its profile in over time. ---
+
+const optionalText = (max: number) => z.string().trim().max(max).optional();
+
+export const organizationContactSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  designation: z.string().max(200).nullable(),
+  phone: z.string().max(60).nullable(),
+  email: z.string().max(200).nullable(),
+});
+export type OrganizationContact = z.infer<typeof organizationContactSchema>;
+
+export const organizationProfileSchema = z.object({
+  organizationId: z.string().uuid(),
+  addressLine1: z.string().nullable(),
+  addressLine2: z.string().nullable(),
+  city: z.string().nullable(),
+  state: z.string().nullable(),
+  postalCode: z.string().nullable(),
+  country: z.string().nullable(),
+  gstNumber: z.string().nullable(),
+  panNumber: z.string().nullable(),
+  bankName: z.string().nullable(),
+  bankAccountName: z.string().nullable(),
+  bankAccountNumber: z.string().nullable(),
+  bankIfsc: z.string().nullable(),
+  bankBranch: z.string().nullable(),
+  website: z.string().nullable(),
+  logoUrl: z.string().nullable(),
+  contacts: z.array(organizationContactSchema),
+});
+export type OrganizationProfile = z.infer<typeof organizationProfileSchema>;
+
+// A contact person on the way in — no id (the server assigns one). Name is
+// the only required field; a company might only know a number or a title.
+export const organizationContactInputSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  designation: optionalText(200),
+  phone: optionalText(60),
+  // Validated as an email only when non-empty.
+  email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional(),
+});
+export type OrganizationContactInput = z.infer<typeof organizationContactInputSchema>;
+
+// Full replace of the profile — the caller sends the complete desired
+// state. The contacts array (when present) replaces the whole list.
+export const updateOrganizationProfileRequestSchema = z.object({
+  addressLine1: optionalText(200),
+  addressLine2: optionalText(200),
+  city: optionalText(120),
+  state: optionalText(120),
+  postalCode: optionalText(20),
+  country: optionalText(120),
+  gstNumber: optionalText(30),
+  panNumber: optionalText(30),
+  bankName: optionalText(200),
+  bankAccountName: optionalText(200),
+  bankAccountNumber: optionalText(60),
+  bankIfsc: optionalText(20),
+  bankBranch: optionalText(200),
+  // Validated as a URL only when non-empty.
+  website: z.union([z.literal(""), z.string().trim().url().max(500)]).optional(),
+  logoUrl: z.union([z.literal(""), z.string().trim().url().max(1000)]).optional(),
+  contacts: z.array(organizationContactInputSchema).max(50).optional(),
+});
+export type UpdateOrganizationProfileRequest = z.infer<
+  typeof updateOrganizationProfileRequestSchema
+>;

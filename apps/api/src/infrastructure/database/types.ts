@@ -167,6 +167,43 @@ export interface Database {
   notifications: NotificationsTable;
   projects: ProjectsTable;
   project_reference_sequences: ProjectReferenceSequencesTable;
+  organization_profiles: OrganizationProfilesTable;
+  organization_contacts: OrganizationContactsTable;
+}
+
+// 0040: tenant-editable company details, one row per organization. Every
+// field is nullable — a profile may be filled in gradually.
+export interface OrganizationProfilesTable {
+  organization_id: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  gst_number: string | null;
+  pan_number: string | null;
+  bank_name: string | null;
+  bank_account_name: string | null;
+  bank_account_number: string | null;
+  bank_ifsc: string | null;
+  bank_branch: string | null;
+  website: string | null;
+  logo_url: string | null;
+  created_at: CreatedAt;
+  updated_at: UpdatedAt;
+}
+
+// 0040: contact persons for an organization (name, designation, numbers).
+export interface OrganizationContactsTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  designation: string | null;
+  phone: string | null;
+  email: string | null;
+  sort_order: Generated<number>;
+  created_at: CreatedAt;
 }
 
 export interface ProductCategoriesTable {
@@ -207,7 +244,7 @@ export interface MachinesTable {
   product_id: string;
   asset_code: string;
   chassis_number: string | null;
-  registration_number: string;
+  registration_number: string | null;
   year_of_manufacture: number | null;
   status: string;
   created_at: CreatedAt;

@@ -2,9 +2,11 @@ import type {
   CreateRoleRequest,
   Organization,
   OrganizationMember,
+  OrganizationProfile,
   OrganizationTypeCode,
   PermissionCode,
   RoleWithPermissions,
+  UpdateOrganizationProfileRequest,
   UpdateOrganizationRequest,
   UpdateRoleRequest,
 } from "@fleetip/contracts/organization";
@@ -14,7 +16,9 @@ import { PermissionService } from "../../permissions/application/permission-serv
 import type { RoleRecord, RoleRepositoryPort } from "../../permissions/domain/ports.js";
 import type {
   MembershipRepositoryPort,
+  OrganizationContactRecord,
   OrganizationMemberRow,
+  OrganizationProfileRecord,
   OrganizationProfileRepositoryPort,
   OrganizationRepositoryPort,
   OrganizationWithTypeRecord,
@@ -42,6 +46,44 @@ function toMember(row: OrganizationMemberRow): OrganizationMember {
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
+
+function toProfile(
+  organizationId: string,
+  record: OrganizationProfileRecord | undefined,
+  contacts: OrganizationContactRecord[],
+): OrganizationProfile {
+  return {
+    organizationId,
+    addressLine1: record?.address_line1 ?? null,
+    addressLine2: record?.address_line2 ?? null,
+    city: record?.city ?? null,
+    state: record?.state ?? null,
+    postalCode: record?.postal_code ?? null,
+    country: record?.country ?? null,
+    gstNumber: record?.gst_number ?? null,
+    panNumber: record?.pan_number ?? null,
+    bankName: record?.bank_name ?? null,
+    bankAccountName: record?.bank_account_name ?? null,
+    bankAccountNumber: record?.bank_account_number ?? null,
+    bankIfsc: record?.bank_ifsc ?? null,
+    bankBranch: record?.bank_branch ?? null,
+    website: record?.website ?? null,
+    logoUrl: record?.logo_url ?? null,
+    contacts: contacts.map((contact) => ({
+      id: contact.id,
+      name: contact.name,
+      designation: contact.designation,
+      phone: contact.phone,
+      email: contact.email,
+    })),
+  };
+}
+
+// Trims an optional free-text field to a stored value: "" / undefined -> null.
+const text = (value: string | undefined): string | null => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
 
 function toRoleWithPermissions(role: RoleRecord, permissions: PermissionCode[]): RoleWithPermissions {
   return {
@@ -88,6 +130,73 @@ export class OrganizationService {
     if (!existing) throw new NotFoundError("Organization not found");
     const updated = await this.organizationRepository.updateName(organizationId, request.name);
     return toOrganization({ ...existing, name: updated.name });
+  }
+
+  // --- Company details (0040): address, GST, bank, logo, website, contacts.
+  // Readable by any member (organization.manage not required to view your own
+  // company's details — same low bar as seeing the org name); editable with
+  // organization.manage. ---
+
+  async getOrganizationProfile(
+    userId: string,
+    organizationId: string,
+  ): Promise<OrganizationProfile> {
+    // Reading company details is limited to members who can reach Settings
+    // (membership.manage); editing needs organization.manage.
+    await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
+    const existing = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!existing) throw new NotFoundError("Organization not found");
+    const [profile, contacts] = await Promise.all([
+      this.organizationRepository.findProfile(organizationId),
+      this.organizationRepository.listContacts(organizationId),
+    ]);
+    return toProfile(organizationId, profile, contacts);
+  }
+
+  async updateOrganizationProfile(
+    userId: string,
+    organizationId: string,
+    request: UpdateOrganizationProfileRequest,
+  ): Promise<OrganizationProfile> {
+    await this.permissionService.requirePermission(userId, organizationId, "organization.manage");
+    const existing = await this.organizationRepository.findWithTypeById(organizationId);
+    if (!existing) throw new NotFoundError("Organization not found");
+
+    await this.organizationRepository.saveProfile(
+      organizationId,
+      {
+        address_line1: text(request.addressLine1),
+        address_line2: text(request.addressLine2),
+        city: text(request.city),
+        state: text(request.state),
+        postal_code: text(request.postalCode),
+        country: text(request.country),
+        gst_number: text(request.gstNumber),
+        pan_number: text(request.panNumber),
+        bank_name: text(request.bankName),
+        bank_account_name: text(request.bankAccountName),
+        bank_account_number: text(request.bankAccountNumber),
+        bank_ifsc: text(request.bankIfsc),
+        bank_branch: text(request.bankBranch),
+        website: text(request.website),
+        logo_url: text(request.logoUrl),
+      },
+      // Only replace the contacts list when the caller actually sent one.
+      request.contacts
+        ? request.contacts.map((contact) => ({
+            name: contact.name.trim(),
+            designation: text(contact.designation),
+            phone: text(contact.phone),
+            email: text(contact.email),
+          }))
+        : null,
+    );
+
+    const [profile, contacts] = await Promise.all([
+      this.organizationRepository.findProfile(organizationId),
+      this.organizationRepository.listContacts(organizationId),
+    ]);
+    return toProfile(organizationId, profile, contacts);
   }
 
   async listMembers(userId: string, organizationId: string): Promise<OrganizationMember[]> {
@@ -139,6 +248,26 @@ export class OrganizationService {
     organizationId: string,
   ): Promise<RoleWithPermissions[]> {
     await this.permissionService.requirePermission(userId, organizationId, "organization.manage");
+    return this.loadRolesWithPermissions(organizationId);
+  }
+
+  // Same role list, but gated by membership.manage instead of
+  // organization.manage. Moving a member to a role (and inviting into one)
+  // needs membership.manage, but *picking* the target role needs to see the
+  // role list — previously only exposed under organization.manage, so a
+  // membership.manage-only admin could never actually change a role or
+  // invite. This closes that gap: anyone allowed to manage memberships can
+  // read the roles they're allowed to assign. Returns full permissions so
+  // the change-role UI can still show the access each role grants.
+  async listAssignableRoles(
+    userId: string,
+    organizationId: string,
+  ): Promise<RoleWithPermissions[]> {
+    await this.permissionService.requirePermission(userId, organizationId, "membership.manage");
+    return this.loadRolesWithPermissions(organizationId);
+  }
+
+  private async loadRolesWithPermissions(organizationId: string): Promise<RoleWithPermissions[]> {
     const organization = await this.organizationRepository.findWithTypeById(organizationId);
     if (!organization) throw new NotFoundError("Organization not found");
 

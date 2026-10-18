@@ -43,10 +43,11 @@ function editMachineSchema(machine: Machine) {
         .trim()
         .min(1, "Enter the asset code your team uses for this machine.")
         .max(50, "Asset codes are up to 50 characters."),
+      // Optional and clearable — crawler/tracked equipment has no road
+      // registration number.
       registrationNumber: z
         .string()
         .trim()
-        .min(1, "Enter the registration number.")
         .max(50, "Registration numbers are up to 50 characters."),
       chassisNumber: z
         .string()
@@ -62,7 +63,8 @@ function editMachineSchema(machine: Machine) {
     .transform((values): UpdateMachineRequest => {
       const changes: UpdateMachineRequest = {};
       if (values.assetCode !== machine.assetCode) changes.assetCode = values.assetCode;
-      if (values.registrationNumber !== machine.registrationNumber) changes.registrationNumber = values.registrationNumber;
+      // Empty string clears the registration number server-side (-> NULL).
+      if (values.registrationNumber !== (machine.registrationNumber ?? "")) changes.registrationNumber = values.registrationNumber;
       if (values.chassisNumber && values.chassisNumber !== (machine.chassisNumber ?? "")) changes.chassisNumber = values.chassisNumber;
       const year = Number(values.yearOfManufacture);
       if (values.yearOfManufacture && year !== machine.yearOfManufacture) changes.yearOfManufacture = year;
@@ -78,7 +80,7 @@ function isYearBuilt(value: string): boolean {
 function initialValues(machine: Machine): Values {
   return {
     assetCode: machine.assetCode,
-    registrationNumber: machine.registrationNumber,
+    registrationNumber: machine.registrationNumber ?? "",
     chassisNumber: machine.chassisNumber ?? "",
     yearOfManufacture: machine.yearOfManufacture ? String(machine.yearOfManufacture) : "",
   };
@@ -147,7 +149,13 @@ export function EditMachineDialog({ open, onClose, organizationId, machine, prod
       </Alert>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Input label="Asset code" required mono maxLength={60} {...form.field("assetCode")} hint="Your own fleet code, e.g. KPH-BP-036." />
-        <Input label="Registration number" required mono maxLength={60} {...form.field("registrationNumber")} />
+        <Input
+          label="Registration number"
+          mono
+          maxLength={60}
+          {...form.field("registrationNumber")}
+          hint="Optional. Clear it for crawler/tracked equipment with no road registration."
+        />
         <Input label="Chassis number" mono maxLength={60} {...form.field("chassisNumber")} />
         <Input label="Year built" mono inputMode="numeric" maxLength={4} {...form.field("yearOfManufacture")} hint={`1980 to ${THIS_YEAR}.`} />
       </div>
