@@ -19,6 +19,7 @@ await build({
     "@fastify/rate-limit",
     "pg",
     "kysely",
+    "pdfmake",
     "pino",
     "pino-pretty",
     "zod",
