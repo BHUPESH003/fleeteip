@@ -2,11 +2,10 @@ import type { MailerPort, MailMessage } from "../../modules/identity/domain/port
 import { logger } from "../logging/logger.js";
 
 /**
- * ponytail: no email provider yet — this logs the message (recipient,
- * subject, body with any link) instead of sending it. This is THE swap
- * point: implement MailerPort against SES/SMTP/etc. and change the one
- * `new LogMailer()` in container.ts. Never ship this to production — reset
- * links in logs are live credentials.
+ * Dev/default MailerPort: logs the message (recipient, subject, body with any
+ * link) instead of sending it. Provider selection lives in create-mailer.ts.
+ * Never use in production — reset and verification links in logs are live
+ * credentials.
  */
 export class LogMailer implements MailerPort {
   async send(message: MailMessage): Promise<void> {

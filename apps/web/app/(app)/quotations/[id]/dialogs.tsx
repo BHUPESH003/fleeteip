@@ -6,6 +6,7 @@ import {
   type CreateQuotationOfferRequest,
   type QuotationOffer,
 } from "@fleetip/contracts/quotation";
+import { MachineStatus, type Machine } from "@fleetip/contracts/equipment";
 import type { RateUnit } from "@fleetip/contracts/rental";
 import {
   Alert,
@@ -390,5 +391,107 @@ export function ProposedDates({ quotation }: { quotation: CommercialQuotation })
       <span className="font-mono">{formatDateRange(quotation.startDate, quotation.endDate)}</span>.
       {quotation.alternateDateReason ? ` Reason: ${quotation.alternateDateReason}` : " No reason given."}
     </Alert>
+  );
+}
+
+/** Gives a quotation made for equipment still to be sourced its real fleet machine. */
+export function AssignMachineDialog({
+  open,
+  onClose,
+  organizationId,
+  quotation,
+  productId,
+  productLabel,
+  onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  organizationId: string;
+  quotation: CommercialQuotation;
+  productId: string | null;
+  productLabel: string;
+  onDone: () => void;
+}) {
+  const action = useAction();
+  const { online } = useConnection();
+  const [machines, setMachines] = useState<Machine[] | null>(null);
+  const [machineId, setMachineId] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setMachineId("");
+    setMachines(null);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = (await apiClient.listMachines(organizationId)) as Machine[];
+        if (!cancelled) setMachines(list.filter((m) => m.productId === productId && m.id !== quotation.machineId && m.status !== MachineStatus.retired));
+      } catch {
+        if (!cancelled) setMachines([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, organizationId, productId, quotation.machineId]);
+
+  const save = () =>
+    action.run(() => apiClient.assignQuotationMachine(organizationId, quotation.id, { machineId }), {
+      failTitle: "The machine wasn't changed",
+      success: () => ({ title: `Machine ${quotation.machineId ? "changed" : "assigned"} on ${quotation.referenceNumber}` }),
+      onDone: () => {
+        onDone();
+        onClose();
+      },
+    });
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`${quotation.machineId ? "Change the machine on" : "Assign a machine to"} ${quotation.referenceNumber}`}
+      description={
+        quotation.machineId
+          ? `Switch to another ${productLabel}. A machine that's booked on a rental or in the workshop for these dates can't be chosen.`
+          : `This quotation is for ${productLabel}, which isn't in your fleet yet. Register it under Machines once you have it, then assign it here before awarding.`
+      }
+      icon="machine"
+      size="md"
+      dismissible={!action.busy}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (machineId) void save();
+      }}
+      footer={
+        <>
+          <Button variant="tertiary" onClick={onClose} disabled={action.busy}>
+            Cancel
+          </Button>
+          <Button type="submit" busy={action.busy} busyLabel="Saving…" disabled={!online || !machineId}>
+            {quotation.machineId ? "Change machine" : "Assign machine"}
+          </Button>
+        </>
+      }
+    >
+      {action.banner && (
+        <FormBanner tone="error" title={action.banner.title}>
+          {action.banner.body}
+        </FormBanner>
+      )}
+      {machines !== null && machines.length === 0 ? (
+        <FormBanner tone="info" title="No matching machine yet">
+          Register a {productLabel} under Machines first. It will appear here.
+        </FormBanner>
+      ) : (
+        <Select
+          label="Machine"
+          required
+          placeholder={machines === null ? "Loading…" : "Choose a machine"}
+          value={machineId}
+          onChange={(event) => setMachineId(event.target.value)}
+          options={(machines ?? []).map((m) => ({ value: m.id, label: `${m.assetCode}${m.registrationNumber ? ` · ${m.registrationNumber}` : ""}` }))}
+        />
+      )}
+    </Dialog>
   );
 }

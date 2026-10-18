@@ -61,6 +61,7 @@ import type {
   QuotationScopeItem,
   QuotationResponse,
   SubmitQuotationResponseRequest,
+  AssignQuotationMachineRequest,
   UpdateCommercialQuotationTermsRequest,
 } from "@fleetip/contracts/quotation";
 import type {
@@ -87,7 +88,7 @@ import type {
   Project,
   UpdateProjectRequest,
 } from "@fleetip/contracts/project";
-import type { WorkOrder, WorkOrderScopeItem, WorkOrderStatus } from "@fleetip/contracts/work-order";
+import type { UpdateCustomerWorkOrderRequest, WorkOrder, WorkOrderScopeItem, WorkOrderStatus } from "@fleetip/contracts/work-order";
 import type {
   InvoiceListQuery,
   LogsheetListQuery,
@@ -242,6 +243,36 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
   return body as T;
 }
 
+/** Saves a generated document (PDF) the API returns as an attachment. The session cookie rides along, so it can't be a plain link. */
+export async function downloadDocument(path: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  } catch {
+    setReachable(false);
+    throw new ApiError("Could not reach FleetIP", 0, "network");
+  }
+  setReachable(true);
+  if (!response.ok) throw errorFromBody(await response.json().catch(() => undefined), response.status);
+  const filename = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "document.pdf";
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+export const documentPaths = {
+  quotation: (organizationId: string, quotationId: string) => `/organizations/${organizationId}/quotations/${quotationId}/pdf`,
+  workOrder: (organizationId: string, workOrderId: string) => `/organizations/${organizationId}/work-orders/${workOrderId}/pdf`,
+  timesheet: (organizationId: string, rentalId: string, month: string) =>
+    `/organizations/${organizationId}/rentals/${rentalId}/timesheet.pdf?month=${month}`,
+  invoice: (organizationId: string, invoiceId: string) => `/organizations/${organizationId}/invoices/${invoiceId}/pdf`,
+};
+
 export interface SignupInput {
   email: string;
   password: string;
@@ -274,6 +305,10 @@ export const apiClient = {
   me: () => apiRequest("/auth/me", { method: "GET" }),
   requestPasswordReset: (input: { email: string }) =>
     apiRequest("/auth/password-reset/request", { method: "POST", body: JSON.stringify(input) }),
+  confirmEmailVerification: (input: { token: string }) =>
+    apiRequest("/auth/email-verification/confirm", { method: "POST", body: JSON.stringify(input) }),
+  resendEmailVerification: (input: { email: string }) =>
+    apiRequest("/auth/email-verification/resend", { method: "POST", body: JSON.stringify(input) }),
   confirmPasswordReset: (input: { token: string; password: string }) =>
     apiRequest("/auth/password-reset/confirm", { method: "POST", body: JSON.stringify(input) }),
   // Signed-in account security (Settings > Security).
@@ -645,6 +680,11 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  assignQuotationMachine: (organizationId: string, quotationId: string, input: AssignQuotationMachineRequest) =>
+    apiRequest<CommercialQuotation>(`/organizations/${organizationId}/quotations/${quotationId}/machine`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
   updateQuotationTerms: (
     organizationId: string,
     quotationId: string,
@@ -753,6 +793,11 @@ export const apiClient = {
     apiRequest<WorkOrder>(`/organizations/${organizationId}/work-orders/${workOrderId}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    }),
+  updateCustomerWorkOrder: (organizationId: string, workOrderId: string, input: UpdateCustomerWorkOrderRequest) =>
+    apiRequest<WorkOrder>(`/organizations/${organizationId}/work-orders/${workOrderId}/customer-order`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
     }),
   workOrderPrintUrl: (organizationId: string, workOrderId: string) =>
     `${API_URL}/organizations/${organizationId}/work-orders/${workOrderId}/print`,

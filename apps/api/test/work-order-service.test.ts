@@ -284,6 +284,9 @@ function fakeWorkOrderRepository(): WorkOrderRepositoryPort {
       ),
     listByRenter: async (renterOrganizationId) =>
       [...workOrders.values()].filter((w) => w.renter_organization_id === renterOrganizationId),
+    setCustomerOrder: async () => {
+      throw new Error("not used in this test");
+    },
     updateStatus: async (id: string, status: WorkOrderStatus) => {
       const existing = workOrders.get(id);
       if (!existing) throw new Error("not found");

@@ -1,4 +1,5 @@
 import {
+  assignQuotationMachineRequestSchema,
   createCommercialQuotationRequestSchema,
   createQuotationOfferRequestSchema,
   createQuotationScopeItemRequestSchema,
@@ -82,6 +83,20 @@ export async function commercialQuotationRoutes(fastify: FastifyInstance): Promi
         userId,
         request.params.organizationId,
         request.params.quotationId,
+      );
+    },
+  );
+
+  fastify.patch<{ Params: { organizationId: string; quotationId: string } }>(
+    "/organizations/:organizationId/quotations/:quotationId/machine",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(assignQuotationMachineRequestSchema, request.body);
+      return container.commercialQuotationService.assignMachine(
+        userId,
+        request.params.organizationId,
+        request.params.quotationId,
+        body,
       );
     },
   );

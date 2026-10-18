@@ -17,6 +17,7 @@ import { quotationResponseRoutes } from "./modules/marketplace/quotation-respons
 import { rentalRoutes } from "./modules/marketplace/rental/presentation/routes.js";
 import { requirementRoutes } from "./modules/marketplace/rfq/presentation/routes.js";
 import { projectRoutes } from "./modules/marketplace/project/presentation/routes.js";
+import { documentRoutes } from "./modules/documents/routes.js";
 import { workOrderRoutes } from "./modules/marketplace/work-order/presentation/routes.js";
 import { staffRoutes } from "./modules/staff/presentation/routes.js";
 import { platformAdminRoutes } from "./modules/platform-admin/presentation/routes.js";
@@ -41,7 +42,7 @@ export async function buildApp() {
     logController: new LogController({ requestIdLogLabel: "reqId" }),
   });
 
-  await app.register(cors, { origin: env.WEB_ORIGIN, credentials: true });
+  await app.register(cors, { origin: env.WEB_ORIGIN, credentials: true, exposedHeaders: ["Content-Disposition"] });
   await app.register(cookie, { secret: env.SESSION_COOKIE_SECRET });
   // Global default: GLOBAL_RATE_LIMIT_PER_MINUTE per signed-in session (a
   // validly signed session cookie — a forged one can't mint fresh buckets),
@@ -102,6 +103,7 @@ export async function buildApp() {
   await app.register(quotationResponseRoutes);
   await app.register(commercialQuotationRoutes);
   await app.register(workOrderRoutes);
+  await app.register(documentRoutes);
   await app.register(maintenanceRoutes);
   await app.register(transportRoutes);
   await app.register(logsheetRoutes);

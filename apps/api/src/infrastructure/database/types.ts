@@ -36,6 +36,8 @@ export interface UsersTable {
   password_hash: string;
   display_name: string;
   status: Generated<string>;
+  // 0042: null until the address is confirmed via the emailed link.
+  email_verified_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: CreatedAt;
 }
 
@@ -123,6 +125,15 @@ export interface PasswordResetTokensTable {
   created_at: CreatedAt;
 }
 
+export interface EmailVerificationTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  created_at: CreatedAt;
+}
+
 export interface Database {
   organization_types: OrganizationTypesTable;
   organizations: OrganizationsTable;
@@ -133,6 +144,7 @@ export interface Database {
   memberships: MembershipsTable;
   sessions: SessionsTable;
   password_reset_tokens: PasswordResetTokensTable;
+  email_verification_tokens: EmailVerificationTokensTable;
   reminder_log: ReminderLogTable;
   product_categories: ProductCategoriesTable;
   product_subcategories: ProductSubcategoriesTable;
@@ -418,7 +430,9 @@ export interface CommercialQuotationsTable {
   quotation_response_id: string | null;
   source_auction_id: string | null;
   reference_number: string;
-  machine_id: string;
+  // 0041: null while the quotation is for equipment still to be sourced.
+  machine_id: string | null;
+  product_id: string | null;
   start_date: string;
   end_date: string | null;
   rate: number;
@@ -500,6 +514,9 @@ export interface WorkOrdersTable {
   notice_period_days: number | null;
   commercial_notes: string | null;
   company_terms: string | null;
+  // 0043: the customer's own work order / PO number and date.
+  customer_work_order_number: string | null;
+  customer_work_order_date: ColumnType<string | null, string | null | undefined, string | null>;
   status: string;
   created_at: CreatedAt;
   updated_at: UpdatedAt;

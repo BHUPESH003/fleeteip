@@ -24,6 +24,9 @@ export const workOrderSchema = z.object({
   rentalCompanyOrganizationId: z.string().uuid(),
   renterOrganizationId: z.string().uuid().nullable(),
   clientSnapshot: clientSnapshotSchema.nullable(),
+  // The customer's own work order / PO, recorded by the rental company.
+  customerWorkOrderNumber: z.string().nullable(),
+  customerWorkOrderDate: isoDate().nullable(),
   // Null when the source quotation had no Requirement (Path B: direct, known
   // customer) — a Project only exists on the Renter side of a Requirement.
   projectId: z.string().uuid().nullable(),
@@ -79,3 +82,10 @@ export const updateWorkOrderStatusRequestSchema = z.object({
   status: z.enum(["completed", "cancelled"]),
 });
 export type UpdateWorkOrderStatusRequest = z.infer<typeof updateWorkOrderStatusRequestSchema>;
+
+// Empty string clears the field.
+export const updateCustomerWorkOrderRequestSchema = z.object({
+  customerWorkOrderNumber: z.string().trim().max(100),
+  customerWorkOrderDate: z.union([z.literal(""), isoDate()]),
+});
+export type UpdateCustomerWorkOrderRequest = z.infer<typeof updateCustomerWorkOrderRequestSchema>;

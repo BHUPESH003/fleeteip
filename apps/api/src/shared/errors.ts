@@ -30,6 +30,13 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+/** 403 with a code the web uses to offer "resend the verification email". */
+export class EmailNotVerifiedError extends AppError {
+  constructor() {
+    super("Verify your email address first. We sent you a link.", 403, "email_not_verified");
+  }
+}
+
 export class ForbiddenError extends AppError {
   constructor(message = "You do not have permission to perform this action") {
     super(message, 403, "forbidden");

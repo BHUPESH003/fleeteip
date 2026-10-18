@@ -64,7 +64,8 @@ export async function loadQuotation(organizationId: string, id: string, viewer: 
       : Promise.resolve(null),
   ]);
   const machine = machines.find((m) => m.id === quotation.machineId) ?? null;
-  const product = machine ? (products.find((p) => p.id === machine.productId) ?? null) : null;
+  const productId = machine?.productId ?? quotation.productId;
+  const product = productId ? (products.find((p) => p.id === productId) ?? null) : null;
   const counterpartyId = isCompany ? quotation.renterOrganizationId : quotation.rentalCompanyOrganizationId;
   const counterpartyName = isCompany && quotation.clientSnapshot
     ? quotation.clientSnapshot.name

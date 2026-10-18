@@ -31,6 +31,12 @@ export const loginRequestSchema = z.object({
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
+export const emailVerificationConfirmSchema = z.object({ token: z.string().min(1).max(200) });
+export type EmailVerificationConfirmRequest = z.infer<typeof emailVerificationConfirmSchema>;
+
+export const emailVerificationResendSchema = z.object({ email: emailSchema });
+export type EmailVerificationResendRequest = z.infer<typeof emailVerificationResendSchema>;
+
 export const passwordResetRequestSchema = z.object({ email: emailSchema });
 export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
 

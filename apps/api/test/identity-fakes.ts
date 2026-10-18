@@ -7,6 +7,7 @@ const unused = async (): Promise<never> => {
 export const UNUSED_USER_PASSWORD_METHODS = {
   findPasswordHashById: unused,
   updatePasswordHash: unused,
+  markEmailVerified: async () => undefined,
 };
 
 export const UNUSED_SESSION_MANAGEMENT_METHODS = {

@@ -41,6 +41,7 @@ async function setup() {
     },
     listAllForPlatformAdmin: async () => [],
     updateStatus: async () => user,
+    markEmailVerified: async () => undefined,
     findPasswordHashById: async (id) => (id === user.id ? user.password_hash : undefined),
     updatePasswordHash: async (_id, hash) => {
       user.password_hash = hash;

@@ -1,5 +1,7 @@
 import {
   changePasswordRequestSchema,
+  emailVerificationConfirmSchema,
+  emailVerificationResendSchema,
   loginRequestSchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
@@ -31,8 +33,10 @@ export async function identityRoutes(fastify: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const body = parseWithSchema(signupRequestSchema, request.body);
       const result = await container.authService.signup(body, sessionMeta(request));
-      setSessionCookie(reply, result.token, result.expiresAt);
       reply.code(201);
+      // No session yet: the account signs in after following the emailed link.
+      if (result.verificationRequired) return { user: result.user, verificationRequired: true };
+      setSessionCookie(reply, result.token, result.expiresAt);
       return { user: result.user };
     },
   );
@@ -45,6 +49,27 @@ export async function identityRoutes(fastify: FastifyInstance): Promise<void> {
       const result = await container.authService.login(body, sessionMeta(request));
       setSessionCookie(reply, result.token, result.expiresAt);
       return { user: result.user };
+    },
+  );
+
+  // Public, no session. Both answer 204 whether or not the account exists.
+  fastify.post(
+    "/auth/email-verification/confirm",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const body = parseWithSchema(emailVerificationConfirmSchema, request.body);
+      await container.emailVerificationService.confirm(body);
+      reply.code(204);
+    },
+  );
+
+  fastify.post(
+    "/auth/email-verification/resend",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const body = parseWithSchema(emailVerificationResendSchema, request.body);
+      await container.emailVerificationService.resend(body);
+      reply.code(204);
     },
   );
 

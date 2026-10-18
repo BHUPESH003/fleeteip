@@ -380,7 +380,8 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
         quotation_response_id: input.quotationResponseId ?? null,
         source_auction_id: input.sourceAuctionId ?? null,
         reference_number: input.referenceNumber,
-        machine_id: input.machineId,
+        machine_id: input.machineId ?? null,
+        product_id: input.productId ?? null,
         start_date: input.startDate,
         end_date: input.endDate ?? null,
         rate: input.rate,
@@ -446,6 +447,13 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       const existing = quotations.get(id);
       if (!existing) throw new Error("not found");
       const updated = { ...existing, status, updated_at: new Date() };
+      quotations.set(id, updated);
+      return updated;
+    },
+    assignMachine: async (id, machineId) => {
+      const existing = quotations.get(id);
+      if (!existing) throw new Error("not found");
+      const updated = { ...existing, machine_id: machineId, updated_at: new Date() };
       quotations.set(id, updated);
       return updated;
     },

@@ -1,16 +1,18 @@
 "use client";
 
-import { LoadingState } from "@fleetip/ui";
+import { Button, ErrorState, LoadingState } from "@fleetip/ui";
 import { usePathname, useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { Header, TopBar } from "../../components/Header";
 import { MobileNav } from "../../components/MobileNav";
 import { OfflineBanner } from "../../components/OfflineBanner";
 import { Sidebar } from "../../components/Sidebar";
+import { useConnection } from "../../lib/connection";
 import { useSession } from "../../lib/session-context";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
-  const { status } = useSession();
+  const { status, refresh } = useSession();
+  const { online, retry } = useConnection();
   const router = useRouter();
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -24,6 +26,24 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
+
+  if (status === "loading" && !online) {
+    // The session check can't reach the API (down, or the browser blocked it,
+    // e.g. CORS from an origin the API doesn't allow). Say so; don't spin forever.
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface-page px-4">
+        <ErrorState
+          title="Can't reach the FleetIP server"
+          message="Check your connection. If you're running the app locally against a deployed API, that API must allow this address."
+          action={
+            <Button variant="secondary" size="sm" onClick={async () => ((await retry()) ? void refresh() : undefined)}>
+              Try again
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   if (status !== "authenticated") {
     return (

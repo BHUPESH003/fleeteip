@@ -12,7 +12,7 @@ import type {
   UserRecord,
   UserRepositoryPort,
 } from "../src/modules/identity/domain/ports.js";
-import { ForbiddenError, UnauthorizedError } from "../src/shared/errors.js";
+import { EmailNotVerifiedError, ForbiddenError, UnauthorizedError } from "../src/shared/errors.js";
 
 const REAL_PASSWORD = "CorrectHorse123!";
 
@@ -128,13 +128,14 @@ function fakeRoleRepository(): RoleRepositoryPort {
   };
 }
 
-async function buildService(users: UserRecord[]) {
+async function buildService(users: UserRecord[], emailVerification?: { sendVerification(user: unknown): Promise<void> }) {
   return new AuthService(
     fakeUserRepository(users),
     fakeSessionRepository(),
     fakeOrganizationRepository(),
     fakeMembershipRepository(),
     fakeRoleRepository(),
+    emailVerification,
   );
 }
 
@@ -194,5 +195,33 @@ describe("AuthService.login", () => {
     await expect(
       service.login({ email: "owner@example.com", password: REAL_PASSWORD }),
     ).rejects.toThrow(ForbiddenError);
+  });
+
+  describe("when email verification is enforced", () => {
+    const verifier = { sendVerification: async () => undefined };
+    const user = async (verified: boolean): Promise<UserRecord> => ({
+      id: "user-1",
+      email: "owner@example.com",
+      password_hash: await hashPassword(REAL_PASSWORD),
+      display_name: "Owner",
+      status: "active",
+      email_verified_at: verified ? new Date() : null,
+      created_at: new Date(),
+    });
+
+    it("refuses an unverified account after a correct password", async () => {
+      const service = await buildService([await user(false)], verifier);
+      await expect(service.login({ email: "owner@example.com", password: REAL_PASSWORD })).rejects.toThrow(EmailNotVerifiedError);
+    });
+
+    it("still answers a wrong password with the generic error", async () => {
+      const service = await buildService([await user(false)], verifier);
+      await expect(service.login({ email: "owner@example.com", password: "wrong-password" })).rejects.toThrow(UnauthorizedError);
+    });
+
+    it("lets a verified account in", async () => {
+      const service = await buildService([await user(true)], verifier);
+      expect((await service.login({ email: "owner@example.com", password: REAL_PASSWORD })).user.email).toBe("owner@example.com");
+    });
   });
 });

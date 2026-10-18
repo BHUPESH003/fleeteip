@@ -1,4 +1,4 @@
-import type { WorkOrder, WorkOrderScopeItem, WorkOrderStatus } from "@fleetip/contracts/work-order";
+import type { UpdateCustomerWorkOrderRequest, WorkOrder, WorkOrderScopeItem, WorkOrderStatus } from "@fleetip/contracts/work-order";
 import { ForbiddenError, ConflictError, NotFoundError } from "../../../../shared/errors.js";
 import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type { ProductRepositoryPort } from "../../../catalogue/domain/ports.js";
@@ -27,6 +27,8 @@ function toWorkOrder(
     rentalCompanyOrganizationId: record.rental_company_organization_id,
     renterOrganizationId: record.renter_organization_id,
     clientSnapshot: record.client_snapshot,
+    customerWorkOrderNumber: record.customer_work_order_number ?? null,
+    customerWorkOrderDate: record.customer_work_order_date ?? null,
     projectId: record.project_id,
     machineId: record.machine_id,
     startDate: record.start_date,
@@ -183,6 +185,30 @@ export class WorkOrderService {
       throw new ConflictError(`Cannot transition work order from ${existing.status} to ${newStatus}`);
     }
     const record = await this.workOrderRepository.updateStatus(workOrderId, newStatus);
+    return toWorkOrder(record);
+  }
+
+  // The customer's own work order / PO number and date, typed in by the rental
+  // company. Empty clears it. Allowed in any status (the paperwork can arrive late).
+  async updateCustomerOrder(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    workOrderId: string,
+    input: UpdateCustomerWorkOrderRequest,
+  ): Promise<WorkOrder> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "rental.manage",
+    );
+    const existing = await this.workOrderRepository.findById(workOrderId);
+    if (!existing || existing.rental_company_organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Work order not found in this organization");
+    }
+    const record = await this.workOrderRepository.setCustomerOrder(workOrderId, {
+      number: input.customerWorkOrderNumber || null,
+      date: input.customerWorkOrderDate || null,
+    });
     return toWorkOrder(record);
   }
 

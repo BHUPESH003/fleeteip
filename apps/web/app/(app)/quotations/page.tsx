@@ -233,8 +233,9 @@ function QuotationsList({ organizationId, viewer }: { organizationId: string; vi
         };
   const machineInfo = (q: CommercialQuotation): { code: string | null; name: string | null } => {
     if (!isCompany) return { code: q.machineAssetCode, name: q.productName };
-    const machine = data?.machines?.get(q.machineId);
-    return { code: machine?.assetCode ?? null, name: machine ? productName(data?.products.get(machine.productId)) : null };
+    const machine = q.machineId ? data?.machines?.get(q.machineId) : undefined;
+    const productId = machine?.productId ?? q.productId;
+    return { code: machine?.assetCode ?? null, name: productId ? productName(data?.products.get(productId)) : null };
   };
 
   const filtered = useMemo(() => {

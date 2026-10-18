@@ -40,5 +40,11 @@ services:
         generateValue: true
       - key: SESSION_COOKIE_NAME
         value: fleetip_session
+      - key: MAIL_PROVIDER
+        value: resend # "log" only logs emails and keeps email verification off
+      - key: MAIL_FROM
+        sync: false # e.g. FleetIP <no-reply@yourdomain.com>, a domain verified with the provider
+      - key: RESEND_API_KEY
+        sync: false
       - key: WEB_ORIGIN
         sync: false # set to your production frontend URL (e.g. https://app.yourdomain.com) once the custom domain is mapped in Vercel

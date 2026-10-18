@@ -85,7 +85,10 @@ export const commercialQuotationSchema = z.object({
   quotationResponseId: z.string().uuid().nullable(),
   sourceAuctionId: z.string().uuid().nullable(),
   referenceNumber: z.string(),
-  machineId: z.string().uuid(),
+  // Null while the quotation is for equipment still to be sourced
+  // (productId set); a machine is assigned before it can be awarded.
+  machineId: z.string().uuid().nullable(),
+  productId: z.string().uuid().nullable(),
   startDate: isoDate(),
   endDate: isoDate().nullable(),
   rate: z.number().positive(),
@@ -151,7 +154,10 @@ export const createCommercialQuotationRequestSchema = z
     requirementId: z.string().uuid().optional(),
     quotationResponseId: z.string().uuid().optional(),
     sourceAuctionId: z.string().uuid().optional(),
-    machineId: z.string().uuid(),
+    // Exactly one of: a machine from the fleet, or a catalogue product for
+    // equipment the company plans to buy or rehire.
+    machineId: z.string().uuid().optional(),
+    productId: z.string().uuid().optional(),
     startDate: isoDate(),
     endDate: isoDate().optional(),
     rate: z.number().positive(),
@@ -176,6 +182,10 @@ export const createCommercialQuotationRequestSchema = z
     validityDate: isoDate(),
     commercialNotes: z.string().min(1).max(2000).optional(),
     companyTerms: z.string().min(1).max(2000).optional(),
+  })
+  .refine((data) => Boolean(data.machineId) !== Boolean(data.productId), {
+    message: "Provide exactly one of machineId or productId",
+    path: ["machineId"],
   })
   .refine((data) => Boolean(data.renterOrganizationId) !== Boolean(data.clientSnapshot), {
     message: "Provide exactly one of renterOrganizationId or clientSnapshot",
@@ -202,6 +212,11 @@ export const createCommercialQuotationRequestSchema = z
 export type CreateCommercialQuotationRequest = z.infer<
   typeof createCommercialQuotationRequestSchema
 >;
+
+export const assignQuotationMachineRequestSchema = z.object({
+  machineId: z.string().uuid(),
+});
+export type AssignQuotationMachineRequest = z.infer<typeof assignQuotationMachineRequestSchema>;
 
 // Terms editable only while draft/sent/negotiating — same shape as
 // updateRentalTermsRequestSchema, minus party/machine/dates (those change

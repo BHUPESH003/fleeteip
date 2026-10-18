@@ -80,6 +80,7 @@ const QUOTATIONS: CommercialQuotationRecord[] = [
     source_auction_id: null,
     reference_number: "Q-2026-1",
     machine_id: "machine-1",
+    product_id: null,
     start_date: "2026-03-01",
     end_date: null,
     rate: 5000,
@@ -335,6 +336,9 @@ function fakeCommercialQuotationRepository(): CommercialQuotationRepositoryPort 
       throw new Error("not used in this test");
     },
     updateStatus: async () => {
+      throw new Error("not used in this test");
+    },
+    assignMachine: async () => {
       throw new Error("not used in this test");
     },
     setRenterAccepted: async () => {

@@ -1,5 +1,6 @@
 import type { Organization } from "@fleetip/contracts/organization";
 import type {
+  AssignQuotationMachineRequest,
   CommercialQuotation,
   CreateCommercialQuotationRequest,
   CreateQuotationOfferRequest,
@@ -24,7 +25,7 @@ import {
 import type { Page, QuotationListParams } from "@fleetip/contracts/list";
 import { mapPage, mapPageAsync, type ParsedListQuery } from "../../../../shared/list-query.js";
 import type { ProductRepositoryPort } from "../../../catalogue/domain/ports.js";
-import type { MachineRepositoryPort } from "../../../equipment/domain/ports.js";
+import type { MachineRecord, MachineRepositoryPort } from "../../../equipment/domain/ports.js";
 import type {
   OrganizationRepositoryPort,
   OrganizationWithTypeRecord,
@@ -60,6 +61,7 @@ function toQuotation(
     sourceAuctionId: record.source_auction_id,
     referenceNumber: record.reference_number,
     machineId: record.machine_id,
+    productId: record.product_id,
     startDate: record.start_date,
     endDate: record.end_date,
     rate: record.rate,
@@ -140,6 +142,13 @@ function toScopeItem(record: QuotationScopeItemRecord): QuotationScopeItem {
 // what the Renter accepted is what was sent.
 const EDITABLE_STATUSES = new Set<string>([CommercialQuotationStatus.draft]);
 
+// A product-quoted quotation can be given its machine until it's awarded or dead.
+const ASSIGNABLE_STATUSES = new Set<string>([
+  CommercialQuotationStatus.draft,
+  CommercialQuotationStatus.sent,
+  CommercialQuotationStatus.negotiating,
+]);
+
 // Quotations still in play for their requirement (not rejected, expired or withdrawn).
 const LIVE_QUOTATION_STATUSES = new Set<string>([
   CommercialQuotationStatus.draft,
@@ -187,12 +196,26 @@ export class CommercialQuotationService {
       "quotation.manage",
     );
 
-    const machine = await this.machineRepository.findById(input.machineId);
-    if (!machine || machine.organization_id !== rentalCompanyOrganizationId) {
-      throw new NotFoundError("Machine not found in this organization");
-    }
-    if (machine.status === MachineStatus.retired) {
-      throw new ConflictError("Machine is retired and cannot be quoted");
+    // Either a fleet machine, or a catalogue product for equipment the
+    // company doesn't own yet (assigned a machine before award).
+    let machine: MachineRecord | undefined;
+    let productId: string;
+    if (input.machineId) {
+      machine = await this.machineRepository.findById(input.machineId);
+      if (!machine || machine.organization_id !== rentalCompanyOrganizationId) {
+        throw new NotFoundError("Machine not found in this organization");
+      }
+      if (machine.status === MachineStatus.retired) {
+        throw new ConflictError("Machine is retired and cannot be quoted");
+      }
+      productId = machine.product_id;
+    } else {
+      const product = await this.productRepository.findById(input.productId!);
+      if (!product) throw new NotFoundError("Product not found");
+      if (product.disabled_at) {
+        throw new ConflictError("This product is disabled in the catalogue");
+      }
+      productId = product.id;
     }
 
     if (input.renterOrganizationId) {
@@ -225,21 +248,21 @@ export class CommercialQuotationService {
       }
       // The requirement names the equipment type; a machine of another type
       // can't answer it.
-      const product = await this.productRepository.findById(machine.product_id);
+      const product = await this.productRepository.findById(productId);
       if (product?.product_subcategory_id !== requirement.product_subcategory_id) {
-        const message = `${machine.asset_code} isn't the equipment type this requirement asks for.`;
-        throw new ValidationError(message, [{ path: "machineId", message }]);
+        const message = `${machine?.asset_code ?? "This product"} isn't the equipment type this requirement asks for.`;
+        throw new ValidationError(message, [{ path: machine ? "machineId" : "productId", message }]);
       }
       // One live quotation per machine per requirement: a second one for
       // the same machine would offer it to the customer twice.
       // ponytail: scans the company's quotations; add a by-requirement query if that list grows large.
-      const duplicate = (await this.quotationRepository.listByRentalCompany(rentalCompanyOrganizationId)).find(
+      const duplicate = machine && (await this.quotationRepository.listByRentalCompany(rentalCompanyOrganizationId)).find(
         (quotation) =>
           quotation.requirement_id === requirement!.id &&
-          quotation.machine_id === machine.id &&
+          quotation.machine_id === machine!.id &&
           LIVE_QUOTATION_STATUSES.has(quotation.status),
       );
-      if (duplicate) {
+      if (machine && duplicate) {
         throw new ConflictError(
           `${machine.asset_code} is already quoted on this requirement (${duplicate.reference_number}). Change or withdraw that quotation instead.`,
           "machineId",
@@ -289,6 +312,7 @@ export class CommercialQuotationService {
       sourceAuctionId: input.sourceAuctionId,
       referenceNumber,
       machineId: input.machineId,
+      productId: machine ? undefined : productId,
       startDate,
       endDate,
       rate: input.rate,
@@ -390,11 +414,12 @@ export class CommercialQuotationService {
   private async resolveMachineInfoForRenter(
     record: CommercialQuotationRecord,
   ): Promise<{ machineAssetCode: string | null; productName: string | null }> {
-    const machine = await this.machineRepository.findById(record.machine_id);
-    if (!machine) return { machineAssetCode: null, productName: null };
-    const product = await this.productRepository.findById(machine.product_id);
+    const machine = record.machine_id ? await this.machineRepository.findById(record.machine_id) : undefined;
+    const productId = machine?.product_id ?? record.product_id;
+    if (!productId) return { machineAssetCode: null, productName: null };
+    const product = await this.productRepository.findById(productId);
     return {
-      machineAssetCode: machine.asset_code,
+      machineAssetCode: machine?.asset_code ?? null,
       productName: product ? `${product.manufacturer} ${product.name}` : null,
     };
   }
@@ -498,6 +523,47 @@ export class CommercialQuotationService {
     }
     const record = await this.quotationRepository.updateTerms(quotationId, updates);
     return toQuotation(record);
+  }
+
+  // Sets the machine on a quotation: attaches the real one to a quotation
+  // quoted by catalogue product, or switches it after a mistake. Allowed
+  // while the quotation is still in play (never once awarded), and only for a
+  // machine of the quoted equipment. The machine must be free for the
+  // quotation's dates — one already booked on a rental, or in the workshop,
+  // is refused with the booking named. Not a term change, so the Renter's
+  // acceptance stands.
+  async assignMachine(
+    userId: string,
+    rentalCompanyOrganizationId: string,
+    quotationId: string,
+    input: AssignQuotationMachineRequest,
+  ): Promise<CommercialQuotation> {
+    await this.permissionService.requirePermission(
+      userId,
+      rentalCompanyOrganizationId,
+      "quotation.manage",
+    );
+    const existing = await this.loadOwnedByRentalCompany(rentalCompanyOrganizationId, quotationId);
+    if (!ASSIGNABLE_STATUSES.has(existing.status)) {
+      throw new ConflictError(`Cannot change the machine on a quotation that is ${existing.status}`);
+    }
+    if (existing.machine_id === input.machineId) {
+      throw new ConflictError("This machine is already assigned to the quotation");
+    }
+    const machine = await this.machineRepository.findById(input.machineId);
+    if (!machine || machine.organization_id !== rentalCompanyOrganizationId) {
+      throw new NotFoundError("Machine not found in this organization");
+    }
+    if (machine.status === MachineStatus.retired) {
+      throw new ConflictError("Machine is retired and cannot be quoted");
+    }
+    const current = existing.machine_id ? await this.machineRepository.findById(existing.machine_id) : undefined;
+    if (machine.product_id !== (existing.product_id ?? current?.product_id)) {
+      const message = `${machine.asset_code} isn't the equipment this quotation is for.`;
+      throw new ValidationError(message, [{ path: "machineId", message }]);
+    }
+    await this.rentalService.assertMachineAvailable(machine.id, existing.start_date, existing.end_date);
+    return toQuotation(await this.quotationRepository.assignMachine(quotationId, machine.id));
   }
 
   // Category/equipment-specific responsibilities (wire rope scope, ground
@@ -877,6 +943,9 @@ export class CommercialQuotationService {
     if (existing.renter_organization_id && !existing.renter_accepted_at) {
       throw new ConflictError("The Renter has not accepted this quotation yet");
     }
+    if (!existing.machine_id) {
+      throw new ConflictError("Assign a machine to this quotation before awarding it");
+    }
 
     const rental = await this.rentalService.createRental(userId, rentalCompanyOrganizationId, {
       machineId: existing.machine_id,
@@ -921,7 +990,7 @@ export class CommercialQuotationService {
         renterOrganizationId: record.renter_organization_id ?? undefined,
         clientSnapshot: record.client_snapshot ?? undefined,
         projectId,
-        machineId: record.machine_id,
+        machineId: existing.machine_id,
         startDate: record.start_date,
         endDate: record.end_date ?? undefined,
         rate: record.rate,

@@ -35,6 +35,9 @@ export interface WorkOrderRecord {
   notice_period_days: number | null;
   commercial_notes: string | null;
   company_terms: string | null;
+  // Optional so fakes that predate 0043 still satisfy the record type.
+  customer_work_order_number?: string | null;
+  customer_work_order_date?: string | null;
   status: WorkOrderStatus;
   created_at: Date | string;
   updated_at: Date | string;
@@ -96,6 +99,10 @@ export interface WorkOrderRepositoryPort {
   listByRentalCompany(rentalCompanyOrganizationId: string): Promise<WorkOrderRecord[]>;
   listByRenter(renterOrganizationId: string): Promise<WorkOrderRecord[]>;
   updateStatus(id: string, status: WorkOrderStatus): Promise<WorkOrderRecord>;
+  setCustomerOrder(
+    id: string,
+    customerOrder: { number: string | null; date: string | null },
+  ): Promise<WorkOrderRecord>;
 }
 
 export interface WorkOrderScopeItemRecord {

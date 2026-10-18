@@ -733,6 +733,14 @@ export class RentalService {
     }));
   }
 
+  // Same availability rule as createRental, for callers that already checked
+  // permission and ownership (assigning/switching a quotation's machine).
+  // Throws the 409 naming the booking or workshop job in the way.
+  async assertMachineAvailable(machineId: string, startDate: string, endDate: string | null): Promise<void> {
+    const [blocker] = (await this.availabilityFor([machineId], startDate, endDate))[0]!.conflicts;
+    if (blocker) throw availabilityConflictError(blocker, "machineId");
+  }
+
   async checkAvailability(
     userId: string,
     rentalCompanyOrganizationId: string,

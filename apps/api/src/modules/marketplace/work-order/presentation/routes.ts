@@ -1,4 +1,4 @@
-import { updateWorkOrderStatusRequestSchema } from "@fleetip/contracts/work-order";
+import { updateCustomerWorkOrderRequestSchema, updateWorkOrderStatusRequestSchema } from "@fleetip/contracts/work-order";
 import type { FastifyInstance } from "fastify";
 import { container } from "../../../../infrastructure/container.js";
 import { getAuthenticatedUserId } from "../../../../shared/auth.js";
@@ -46,6 +46,20 @@ export async function workOrderRoutes(fastify: FastifyInstance): Promise<void> {
         userId,
         request.params.organizationId,
         request.params.workOrderId,
+      );
+    },
+  );
+
+  fastify.patch<{ Params: { organizationId: string; workOrderId: string } }>(
+    "/organizations/:organizationId/work-orders/:workOrderId/customer-order",
+    async (request) => {
+      const userId = await getAuthenticatedUserId(request);
+      const body = parseWithSchema(updateCustomerWorkOrderRequestSchema, request.body);
+      return container.workOrderService.updateCustomerOrder(
+        userId,
+        request.params.organizationId,
+        request.params.workOrderId,
+        body,
       );
     },
   );
